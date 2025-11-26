@@ -1,0 +1,18 @@
+# 上位机助手依赖包
+# Host Computer Assistant Requirements
+
+# PyQt5 - GUI框架
+PyQt5>=5.15.0
+
+# PySerial - UART串口通信
+pyserial>=3.5
+
+# PyQtGraph - 实时波形显示
+pyqtgraph>=0.13.0
+
+# 测试框架
+pytest>=7.0.0
+pytest-qt>=4.2.0
+
+# 可选：代码质量检查工具
+# flake8>=6.0.0
