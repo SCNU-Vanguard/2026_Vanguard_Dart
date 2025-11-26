@@ -1,0 +1,301 @@
+# ==========================================
+# 2026 Vanguard Dart Project .gitignore
+# ==========================================
+
+# ==========================================
+# Python
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# PyCharm
+.idea/
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# ==========================================
+# C/C++
+# ==========================================
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# ==========================================
+# STM32 / Keil MDK-ARM
+# ==========================================
+# Keil MDK-ARM specific
+*.uvguix
+*.uvguix.*
+*.uvopt
+*.uvoptx
+*.bak
+*.dep
+*.crf
+*.htm
+*.lnp
+*.sct
+*.map
+*.axf
+*.tra
+*.fed
+*.lst
+
+# Build output directories
+**/Objects/
+**/Listings/
+**/Output/
+**/DebugConfig/
+**/RTE/
+
+# Build artifacts
+*.hex
+*.bin
+*.elf
+
+# MDK-ARM user files (keep project files but ignore user settings)
+# Keep: *.uvprojx, *.uvproj
+# Ignore: *.uvguix.*, *.uvoptx
+
+# ==========================================
+# CMake
+# ==========================================
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+
+# ==========================================
+# Visual Studio Code
+# ==========================================
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# ==========================================
+# JetBrains IDEs (CLion, PyCharm, etc.)
+# ==========================================
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# ==========================================
+# Eclipse
+# ==========================================
+.metadata
+.project
+.cproject
+.settings/
+
+# ==========================================
+# Operating System
+# ==========================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ==========================================
+# Logs and Databases
+# ==========================================
+*.log
+*.sql
+*.sqlite
+*.db
+
+# ==========================================
+# Temporary files
+# ==========================================
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ==========================================
+# Archives
+# ==========================================
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# ==========================================
+# Backup files
+# ==========================================
+*.bak
+*.backup
+*.old
+
+# ==========================================
+# Vision / OpenCV
+# ==========================================
+# Image datasets (uncomment if needed)
+# *.jpg
+# *.jpeg
+# *.png
+# *.bmp
+
+# Video files
+*.avi
+*.mp4
+*.mov
+
+# Model files (if large)
+*.weights
+*.pt
+*.pth
+*.onnx
+*.h5
+
+# ==========================================
+# Documentation build
+# ==========================================
+docs/_build/
+docs/.doctrees/
+site/
+
+# ==========================================
+# Environment and Configuration
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.config.local
+
+# ==========================================
+# Test outputs
+# ==========================================
+test-results/
+test-reports/
+
+# ==========================================
+# Project Specific
+# ==========================================
+# Weekly reports media (if too large)
+# Weekly/**/media/*.mp4
+# Weekly/**/media/*.avi
+
+# User-specific settings
+user_settings.json
+local_config.ini
+
+# Calibration data
+calibration_data/
+calib_*.txt
+
+# ==========================================
+# Git
+# ==========================================
