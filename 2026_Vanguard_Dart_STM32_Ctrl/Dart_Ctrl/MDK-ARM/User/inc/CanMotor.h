@@ -25,11 +25,11 @@ typedef enum
 // CAN线挂载的电机（包含RM和DM电机）
 typedef enum
 {
-    RM_3508_YAW = 1,
-    RM_3508_GRIPPER,
+    RM_3508_GRIPPER = 1,
     RM_2006_TRIGGER,
     DM_3510_STRENTH_LEFT,
-    DM_3510_STRENTH_RIGHT
+    DM_3510_STRENTH_RIGHT,
+    DM_4310_YAW
 } can_motor_cfg;
 
 // 电机结构体定义
@@ -41,11 +41,11 @@ typedef struct _MotorTypeDef
     int8_t ReceiveMotorData[8];     // 电机接收数据存储
     int8_t SendMotorData[8];        // 电机发送数据存储
     CAN_TxHeaderTypeDef g_TxHeader; // 电机发送报文头
-    
+
     // PID控制器（可选择单环或串级）
-    PID_t speed_pid;                // 速度环PID（单环控制时使用）
-    CASCADE_PID_t cascade_pid;      // 串级PID（位置-速度双环控制时使用）
-    uint8_t use_cascade;            // 是否使用串级控制：0-单环，1-串级
+    PID_t speed_pid;           // 速度环PID（单环控制时使用）
+    CASCADE_PID_t cascade_pid; // 串级PID（位置-速度双环控制时使用）
+    uint8_t use_cascade;       // 是否使用串级控制：0-单环，1-串级
 } MotorTypeDef;
 
 // 电机管理器结构体

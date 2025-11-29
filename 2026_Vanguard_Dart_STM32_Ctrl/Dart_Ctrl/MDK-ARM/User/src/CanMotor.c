@@ -16,8 +16,8 @@
 
 // 电机管理表
 MotorManager_t MotorManager = {0};
-static float dm_motor_solved_data[5] = {0.0f}; // 存储达妙电机解算后的数据
-static float rm_motor_solved_data[5] = {0.0f}; // 存储RM电机解算后的数据
+float dm_motor_solved_data[5] = {0.0f}; // 存储达妙电机解算后的数据
+float rm_motor_solved_data[5] = {0.0f}; // 存储RM电机解算后的数据
 
 /**********************************************************电机初始化专用函数************************************************************************/
 
@@ -42,7 +42,7 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
 /// @param  无（按照已经配置的电机表注册）
 /// @return 注册是否成功
 /// @note   最后暴露的接口应该是更改电机发送数据和读取电机接收数据的接口，用户无需关心报文头等信息
-/// @todo
+/// @todo   达妙电机的PID可以不用调节，因为本身内置PID，但是这次调节的是前馈量，是为了速度响应更快，并且不影响期望位置和速度
 void MotorRegister(void)
 {
     // 手动申请接受头数组，似乎这里有点多余，也可以直接static一个接收头数组
@@ -51,19 +51,31 @@ void MotorRegister(void)
     // 注册电机应该包含电机的ID以及电机的发送地址和接收地址、发送数据存储地方
     // 注册RM电机
     // 发送之后需要memset()
-    MotorManager.MotorList[RM_3508_YAW - 1].MotorID = RM_3508_YAW;
-    MotorManager.MotorList[RM_3508_YAW - 1].MotorBand = RM_MOTOR_BAND;
-    MotorManager.MotorList[RM_3508_YAW - 1].SendMotorControl = RM_MotorSendControl;
 
     // 夹爪
     MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorID = RM_3508_GRIPPER;
     MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorBand = RM_MOTOR_BAND;
     MotorManager.MotorList[RM_3508_GRIPPER - 1].SendMotorControl = RM_MotorSendControl;
+    MotorManager.MotorList[RM_3508_GRIPPER - 1].use_cascade = 1;
+    // PID_Set_Coefficient(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
+    // PID_Set_Coefficient(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
+    // PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner);                               // 初始化
+    // PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer);                               // 初始化
+    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner, 0.0f, 0.0f);
+    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 扳机
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorBand = RM_MOTOR_BAND;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].SendMotorControl = RM_MotorSendControl;
+    // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
+    // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
+    // PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner);                               // 初始化
+    // PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer);                               // 初始化
+    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0f, 0.0f);
+    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 注册DM电机
     // 注意注册的DM电机发送和接收其实数据帧都不与RM电机冲突（在MIT模式、位置速度模式和PVT模式下，就完整通信帧而言）
@@ -74,6 +86,10 @@ void MotorRegister(void)
     MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorID = DM_3510_STRENTH_RIGHT - g_RM_MOTOR_NUM;
     MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorBand = DM_MOTOR_BAND;
     MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].SendMotorControl = DM_MotorSendControl;
+
+    MotorManager.MotorList[DM_4310_YAW - 1].MotorID = DM_4310_YAW;
+    MotorManager.MotorList[DM_4310_YAW - 1].MotorBand = DM_MOTOR_BAND;
+    MotorManager.MotorList[DM_4310_YAW - 1].SendMotorControl = DM_MotorSendControl;
 
     MotorManager.registered_count = 5;
 

@@ -9,7 +9,7 @@
 
 /*-------------------------RM电机的电调的偏移ID----------------------------------------------*/
 #define g_RM_MOTOR_BIAS_ADDR 0x200
-#define g_RM_MOTOR_NUM 3
+#define g_RM_MOTOR_NUM 2
 
 #define RM_TestUse 1U
 

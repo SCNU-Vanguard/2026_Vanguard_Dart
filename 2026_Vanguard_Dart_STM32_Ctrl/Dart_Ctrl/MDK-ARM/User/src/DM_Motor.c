@@ -12,9 +12,11 @@
 #include "CanMotor.h"
 #include "bsp_dwt.h"
 #include <stdbool.h>
+#include "usart.h"
 
 // 外部引用电机管理器
 extern MotorManager_t MotorManager;
+extern float dm_motor_solved_data[];
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
 #define SingleMotorTest 1
@@ -308,4 +310,10 @@ void DmTestMotorSingleRegister(void)
     MotorManager.registered_count = 1;
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
+}
+
+/// @brief RM电机输出
+void DmMotorPID_Calc(void)
+{
+    // PID数据输出
 }

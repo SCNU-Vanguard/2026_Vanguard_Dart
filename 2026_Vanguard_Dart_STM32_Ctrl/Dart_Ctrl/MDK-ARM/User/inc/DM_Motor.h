@@ -59,7 +59,7 @@ typedef enum
 } DM_DATA_BIT;
 #endif
 
-#define g_DM_MOTOR_NUM 2
+#define g_DM_MOTOR_NUM 3
 
 // 限幅,这里给的是电机默认的数值
 #define g_DM_UPPER_LIMITATION_KP 500.0 // hex:1F4

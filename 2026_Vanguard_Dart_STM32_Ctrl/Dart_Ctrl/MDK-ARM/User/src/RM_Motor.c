@@ -11,9 +11,12 @@
 #include "RM_Motor.h"
 #include "CanMotor.h"
 #include <stdbool.h>
+#include "usart.h"
+#include <stdio.h>
 
 // 外部引用电机管理器
 extern MotorManager_t MotorManager;
+extern float rm_motor_solved_data[]; // 存储RM电机解算后的数据
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
 #define SingleMotorTest 1
@@ -101,6 +104,9 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_dat
     solved_data[1] = RM_MOTOR_DATA_ROTARY_SPEED;                      // 单位为rpm
     solved_data[2] = RM_MOTOR_DATA_ROTARY_TORQUE / 16384.0f * 20;     // 单位为A，实际上是转矩电流
     // solved_data[4] = C620Temp; // 单位为℃
+
+    char DataFeedback[36] = "\0";
+    sprintf(DataFeedback, "Speed:%.1f, angle:%.1f\r\n", solved_data[1], solved_data[0]);
 }
 
 /**********************************************************暴露接口，下面是外部一般用于调用的函数******************************************************/
@@ -135,5 +141,34 @@ void RmTestMotorSingleRegister(void)
     MotorManager.MotorList[SingleMotorTest - 1].SendMotorControl = RM_MotorSendControl;
     MotorManager.registered_count = 1;
 
+    // MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 1;
+    // PID_Set_Coefficient(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
+    // PID_Set_Coefficient(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
+    // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner);                               // 初始化
+    // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.outer);                               // 初始化
+    // PID_Set_MaxOutput(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner, 0.0f, 0.0f);
+    // PID_Set_MaxOutput(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.outer, 0.0f, 0.0f);
+    // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+
+    MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 0;
+    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
+}
+
+/// @brief RM电机输出
+void RmMotorPID_Calc(void)
+{
+    uint8_t FeedString[128] = {0x00};
+    // PID数据输出
+
+    // CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]); // 目标角度，反馈角度，反馈速度
+    // sprintf((char *)FeedString, "targetAngle:.1%f, feedbackAngle:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
+    // printf(FeedString);
+
+    PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, 10, rm_motor_solved_data[1]);
+    sprintf((char *)FeedString, "targetSpeed:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
+    printf(FeedString);
+
+    // HAL_UART_Transmit_IT(&huart3, );
 }

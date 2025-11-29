@@ -1,7 +1,6 @@
 #include "PID.h"
 #include "CanMotor.h"
 #include <string.h>
-#include <math.h>
 
 /**
  * @brief PID初始化函数
@@ -30,24 +29,13 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
     pid->KF = kf;
     pid->max_output = max_out;
     pid->max_iout = max_iout;
+
+    // 设置初始化标志位
+    pid->initialized = 1;
 }
 
 /**
- * @brief PID初始化函数（使用配置结构体）
- * @param pid PID结构体指针
- * @param config PID配置参数指针
- */
-void PID_Init_Config(PID_t *pid, const PID_Config_t *config)
-{
-    if (pid == NULL || config == NULL)
-        return;
-
-    PID_Init(pid, config->mode, config->kp, config->ki, config->kd,
-             config->kf, config->max_out, config->max_iout);
-}
-
-/**
- * @brief 串级PID初始化函数（传统方式）
+ * @brief 串级PID初始化函数
  * @param cascade_pid 串级PID结构体指针
  * @param outer_kp 外环比例系数
  * @param outer_ki 外环积分系数
@@ -71,31 +59,13 @@ void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
     if (cascade_pid == NULL)
         return;
 
-    // 初始化外环（位置环，通常使用位置式）
-    PID_Init(&cascade_pid->outer, PID_POSITION, outer_kp, outer_ki, outer_kd, outer_kf,
+    // 初始化外环（位置环，通常使用增量式）
+    PID_Init(&cascade_pid->outer, PID_DELTA, outer_kp, outer_ki, outer_kd, outer_kf,
              outer_max_out, outer_max_iout);
 
-    // 初始化内环（速度环，通常使用位置式）
-    PID_Init(&cascade_pid->inner, PID_POSITION, inner_kp, inner_ki, inner_kd, inner_kf,
+    // 初始化内环（速度环，通常使用增量式）
+    PID_Init(&cascade_pid->inner, PID_DELTA, inner_kp, inner_ki, inner_kd, inner_kf,
              inner_max_out, inner_max_iout);
-}
-
-/**
- * @brief 串级PID初始化函数（使用配置结构体 - 推荐）
- * @param cascade_pid 串级PID结构体指针
- * @param outer_config 外环PID配置参数指针
- * @param inner_config 内环PID配置参数指针
- */
-void CASCADE_PID_Init_Config(CASCADE_PID_t *cascade_pid,
-                             const PID_Config_t *outer_config,
-                             const PID_Config_t *inner_config)
-{
-    if (cascade_pid == NULL || outer_config == NULL || inner_config == NULL)
-        return;
-
-    // 使用配置结构体初始化外环和内环
-    PID_Init_Config(&cascade_pid->outer, outer_config);
-    PID_Init_Config(&cascade_pid->inner, inner_config);
 }
 
 /**
@@ -123,15 +93,15 @@ static float float_constrain(float value, float min, float max)
  * @param feedforward 前馈值
  * @return PID输出值
  */
-float PID_Position_Calc(PID_t *pid, float target, float measure, float feedforward)
+float PID_Position_Calc(PID_t *pid, float target, float measure)
 {
-    if (pid == NULL)
+    if (pid == NULL || !pid->initialized)
         return 0.0f;
 
     // 更新目标值、测量值和前馈值
     pid->target = target;
     pid->measure = measure;
-    pid->feedforward = feedforward;
+    pid->feedforward = target - pid->feedforward;
 
     // 计算误差
     pid->error = target - measure;
@@ -144,7 +114,7 @@ float PID_Position_Calc(PID_t *pid, float target, float measure, float feedforwa
     float p_out = pid->KP * pid->error;
     float i_out = pid->KI * pid->sum_error;
     float d_out = pid->KD * (pid->error - pid->last_error);
-    float f_out = pid->KF * feedforward;
+    float f_out = pid->KF * pid->feedforward;
 
     // 积分输出限幅
     i_out = float_constrain(i_out, -pid->max_iout, pid->max_iout);
@@ -158,6 +128,9 @@ float PID_Position_Calc(PID_t *pid, float target, float measure, float feedforwa
     // 更新上次误差
     pid->last_error = pid->error;
 
+    // 更新前馈
+    pid->feedforward = target;
+
     return pid->output;
 }
 
@@ -169,15 +142,15 @@ float PID_Position_Calc(PID_t *pid, float target, float measure, float feedforwa
  * @param feedforward 前馈值
  * @return PID增量输出值（需要累加到总输出上）
  */
-float PID_Incremental_Calc(PID_t *pid, float target, float measure, float feedforward)
+float PID_Incremental_Calc(PID_t *pid, float target, float measure)
 {
-    if (pid == NULL)
+    if (pid == NULL || !pid->initialized)
         return 0.0f;
 
     // 更新目标值、测量值和前馈值
     pid->target = target;
     pid->measure = measure;
-    pid->feedforward = feedforward;
+    pid->feedforward = target - pid->feedforward;
 
     // 计算误差
     pid->error = target - measure;
@@ -187,7 +160,7 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure, float feedfo
     float p_out = pid->KP * (pid->error - pid->last_error);
     float i_out = pid->KI * pid->error;
     float d_out = pid->KD * (pid->error - 2.0f * pid->last_error + pid->prev_error);
-    float f_out = pid->KF * feedforward;
+    float f_out = pid->KF * pid->feedforward;
 
     // 积分输出限幅
     i_out = float_constrain(i_out, -pid->max_iout, pid->max_iout);
@@ -204,6 +177,7 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure, float feedfo
     // 更新历史误差
     pid->prev_error = pid->last_error;
     pid->last_error = pid->error;
+    pid->feedforward = target;
 
     return pid->output;
 }
@@ -216,18 +190,18 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure, float feedfo
  * @param feedforward 前馈值
  * @return PID输出值
  */
-float PID_Calculate(PID_t *pid, float target, float measure, float feedforward)
+float PID_Calculate(PID_t *pid, float target, float measure)
 {
-    if (pid == NULL)
+    if (pid == NULL || !pid->initialized)
         return 0.0f;
 
     if (pid->mode == PID_POSITION)
     {
-        return PID_Position_Calc(pid, target, measure, feedforward);
+        return PID_Position_Calc(pid, target, measure);
     }
     else if (pid->mode == PID_DELTA)
     {
-        return PID_Incremental_Calc(pid, target, measure, feedforward);
+        return PID_Incremental_Calc(pid, target, measure);
     }
 
     return 0.0f;
@@ -246,18 +220,16 @@ float PID_Calculate(PID_t *pid, float target, float measure, float feedforward)
 float CASCADE_PID_Calculate(CASCADE_PID_t *cascade_pid,
                             float outer_target,
                             float outer_measure,
-                            float inner_measure,
-                            float outer_feedforward,
-                            float inner_feedforward)
+                            float inner_measure)
 {
     if (cascade_pid == NULL)
         return 0.0f;
 
     // 外环计算，输出作为内环的目标值
-    float inner_target = PID_Calculate(&cascade_pid->outer, outer_target, outer_measure, outer_feedforward);
+    float inner_target = PID_Calculate(&cascade_pid->outer, outer_target, outer_measure);
 
     // 内环计算，输出作为最终控制量
-    float output = PID_Calculate(&cascade_pid->inner, inner_target, inner_measure, inner_feedforward);
+    float output = PID_Calculate(&cascade_pid->inner, inner_target, inner_measure);
 
     return output;
 }
@@ -329,7 +301,7 @@ void CASCADE_PID_Clear_Integral(CASCADE_PID_t *cascade_pid)
  * @param kd 微分系数
  * @param kf 前馈系数
  */
-void PID_Set_Param(PID_t *pid, float kp, float ki, float kd, float kf)
+void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf)
 {
     if (pid == NULL)
         return;
@@ -353,4 +325,17 @@ void PID_Set_MaxOutput(PID_t *pid, float max_output, float max_iout)
 
     pid->max_output = max_output;
     pid->max_iout = max_iout;
+}
+
+/**
+ * @brief 检查PID是否已初始化
+ * @param pid PID结构体指针
+ * @return 1:已初始化, 0:未初始化
+ */
+uint8_t PID_Is_Initialized(PID_t *pid)
+{
+    if (pid == NULL)
+        return 0;
+
+    return pid->initialized;
 }
