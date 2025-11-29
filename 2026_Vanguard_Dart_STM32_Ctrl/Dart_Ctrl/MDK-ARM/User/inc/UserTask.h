@@ -3,6 +3,11 @@
 
 #include "main.h"
 #include "FreeRTOS.h"
+#include "task.h"
+#include "event_groups.h" // ARM.FreeRTOS::RTOS:Event Groups
+#include "semphr.h"       // ARM.FreeRTOS::RTOS:Core
+#include "queue.h"
+
 #include "bsp_dwt.h"
 #include "bsp_can.h"
 #include "bsp_uart.h"
