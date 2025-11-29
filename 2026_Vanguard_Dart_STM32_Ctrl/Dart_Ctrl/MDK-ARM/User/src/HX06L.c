@@ -6,7 +6,7 @@
 /// @param prtSendData 发送数据的指针（包含包头0x55 0x55）
 /// @param DataLength 数据长度（不包含包头和CRC）
 /// @return CRC校验码数据
-static inline uint8_t CRC_GNERATOR(uint8_t *prtSendData, uint8_t DataLength) __attribute__((__always_inline__))
+static inline uint8_t CRC_GNERATOR(uint8_t *prtSendData, uint8_t DataLength)
 {
     // 调用bsp_uart中的统一CRC函数
     // prtSendData[2]开始是ID，DataLength是从ID到参数的长度
@@ -62,9 +62,23 @@ static inline uint8_t get_servo_command_value(ServoCommandName cmd_name)
  *
  * @todo 要增加一个通讯延时从而保证舵机执行完指令
  *************************************/
-static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) __attribute__((__always_inline__))
+
+/// @brief 换弹舵机初始化
+/// @param ServoID 舵机ID
+/// @param Bias 舵机角度偏差
+/// @param vlimit_l 舵机工作电压下限
+/// @param vlimit_h 舵机工作电压上限
+/// @param Temp 舵机温度
+/// @param alimit_l 舵机角度下限
+/// @param alimit_h 舵机角度上限
+/// @param on 舵机启动，1为启动，0为关闭
+/// @return
+static inline uint8_t SerovoInit(uint8_t ServoID, uint8_t Bias, uint32_t vlimit_l, uint32_t vlimit_h, uint8_t Temp, uint32_t alimit_l, uint32_t alimit_h, uint8_t on)
 {
     // 设置协议
+    bool SERVO_COM = true;
+    ServoPacket_t HxFb;
+    UART_SetProtocol(BSP_UART6, SERVO_COM); // true为舵机, false为DART上位机通信协议
 
     uint8_t InitDataArr[16] = {0}; // 发送数据的暂存数组
     uint8_t DataLength = 0;
@@ -74,15 +88,17 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     InitDataArr[3] = get_servo_command_value(SERVO_ID_READ);
     DataLength = get_servo_data_length(SERVO_ID_READ);
     InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
+    UART_GetServoPacket(BSP_UART6, &HxFb);
 
     InitDataArr[3] = get_servo_command_value(SERVO_ID_WRITE);
     DataLength = get_servo_data_length(SERVO_ID_WRITE);
     InitDataArr[4] = 0x0D;
     InitDataArr[5] = ServoID; // 设置ID
     InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_GetServoPacket(BSP_UART6, &HxFb);
     HAL_Delay(1);
 
     // 初始化舵机的工作模式(读写) ？？？？似乎不用
@@ -98,7 +114,7 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_READ);
     DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_READ);
     InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_ADJUST);
@@ -106,7 +122,7 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     InitDataArr[4] = 0x11;
     InitDataArr[5] = Bias;
     InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     InitDataArr[2] = ServoID;
@@ -114,7 +130,7 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);
     InitDataArr[4] = 0x12;
     InitDataArr[5] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     // 初始话舵机的温度阈值 电压阈值 角度阈值 上电状态(读写)
@@ -124,21 +140,16 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     InitDataArr[3] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_READ);
     DataLength = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ);
     InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     InitDataArr[3] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_WRITE);
     DataLength = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE);
-    InitDataArr[4] = 0x16;
-    InitDataArr[5] = Bias; // todo
-    InitDataArr[6] = ;     // 最小输入电压低8位
-    InitDataArr[7] = ;     // 最小输入电压高8位
-    InitDataArr[8] = ;     // 最大输入电压低8位
-    InitDataArr[9] = ;     // 最大输入电压高8位
+    InitDataArr[4] = 0x18;
+    InitDataArr[5] = Temp;
+    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
     // 输入电压4500-14000mV
-
-    InitDataArr[10] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     // 电压阈值
@@ -146,31 +157,58 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     InitDataArr[3] = get_servo_command_value(SERVO_VIN_LIMIT_READ);
     DataLength = get_servo_data_length(SERVO_VIN_LIMIT_READ);
     InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     InitDataArr[3] = get_servo_command_value(SERVO_VIN_LIMIT_WRITE);
     DataLength = get_servo_data_length(SERVO_VIN_LIMIT_WRITE);
-    InitDataArr[4] = ;
-    InitDataArr[5] = Bias; // todo
-    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    InitDataArr[4] = 0x16;
+    vlimit_l = vlimit_l < 4500 ? 4500 : vlimit_l;
+    vlimit_h = vlimit_h > 14000 ? 14000 : vlimit_h;
+    uint32_t real_limit_l = vlimit_l > vlimit_h ? vlimit_h : vlimit_l;
+    uint32_t real_limit_h = vlimit_l > vlimit_h ? vlimit_l : vlimit_h;
+    InitDataArr[5] = (uint8_t)real_limit_l;        // 最小输入电压低8位
+    InitDataArr[6] = (uint8_t)(real_limit_l >> 8); // 最小输入电压高8位
+    InitDataArr[7] = (uint8_t)real_limit_h;        // 最大输入电压低8位
+    InitDataArr[8] = (uint8_t)(real_limit_l << 8); // 最大输入电压高8位
+    InitDataArr[9] = CRC_GNERATOR(InitDataArr, DataLength);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
+
+    // // 回读确认数据之后再次保存防止掉电丢失
+    // InitDataArr[3] = get_servo_command_value(SERVO_VIN_LIMIT_READ);
+    // DataLength = get_servo_data_length(SERVO_VIN_LIMIT_READ);
+    // InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
+    // UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
+    // HAL_Delay(1);
+
+    // InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_WRITE);
+    // DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);
+    // InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
+    // UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
+    // HAL_Delay(1);
 
     // 角度阈值
     InitDataArr[2] = ServoID;
     InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_LIMIT_READ);
     DataLength = get_servo_data_length(SERVO_ANGLE_LIMIT_READ);
     InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_LIMIT_WRITE);
     DataLength = get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE);
-    InitDataArr[4] = ;
-    InitDataArr[5] = Bias; // todo
-    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    InitDataArr[4] = 0x14;
+    alimit_l = alimit_l > 1000 ? 1000 : alimit_l;
+    alimit_h = alimit_h > 1000 ? 1000 : alimit_h;
+    real_limit_l = alimit_l > alimit_h ? alimit_h : alimit_l;
+    real_limit_h = alimit_l > alimit_h ? alimit_l : alimit_h;
+    InitDataArr[5] = (uint8_t)real_limit_l;        // 最低角度低位
+    InitDataArr[6] = (uint8_t)(real_limit_l >> 8); // 最低角度高位
+    InitDataArr[7] = (uint8_t)real_limit_h;        // 最高角度低位
+    InitDataArr[8] = (uint8_t)(real_limit_h >> 8); // 最高角度高位
+    InitDataArr[9] = CRC_GNERATOR(InitDataArr, DataLength);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     // 上电状态
@@ -178,14 +216,14 @@ static inline uint8_t SerovoInit(uint8_t ServoID, WorkMode Mode, uint8_t Bias) _
     InitDataArr[3] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_READ);
     DataLength = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ);
     InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 
     InitDataArr[3] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_WRITE);
     DataLength = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE);
-    InitDataArr[4] = ;
-    InitDataArr[5] = Bias; // todo
+    InitDataArr[4] = 0x1F;
+    InitDataArr[5] = on; // todo
     InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    UART_Send(BSP_UART1, (const uint8_t *)InitDataArr, DataLength + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
     HAL_Delay(1);
 }

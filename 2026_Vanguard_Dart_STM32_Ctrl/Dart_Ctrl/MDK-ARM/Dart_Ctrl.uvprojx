@@ -625,6 +625,11 @@
               <FileType>1</FileType>
               <FilePath>.\User\src\RM_Motor.c</FilePath>
             </File>
+            <File>
+              <FileName>UserTask.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\src\UserTask.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

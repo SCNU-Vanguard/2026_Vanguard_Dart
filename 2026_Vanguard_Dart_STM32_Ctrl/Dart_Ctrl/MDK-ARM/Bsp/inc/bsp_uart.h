@@ -7,25 +7,64 @@
 #include "usart.h"
 
 /* 循环缓冲区大小定义 */
-#define UART_TX_BUFFER_SIZE 256
-#define UART_RX_BUFFER_SIZE 256
+#define UART_TX_BUFFER_SIZE 64
+#define UART_RX_BUFFER_SIZE 64
+
+/* 帧头帧尾位置记录数组大小定义 */
+// DART协议（4字节帧头）：64字节缓冲区最多装16个协议帧
+#define DART_FRAME_INDEX_SIZE 16
+// 0x55 0x55协议（2字节帧头）：64字节缓冲区最多装32个协议帧
+#define SERVO_FRAME_INDEX_SIZE 32
 
 /* UART编号枚举 */
 typedef enum
 {
-    BSP_UART1 = 0,
+    BSP_UART3 = 0,
     BSP_UART6,
     BSP_UART_MAX
 } BSP_UART_NUM_e;
 
-/* 接收缓冲区结构体 */
+/* 帧位置记录结构体 - 环形缓冲区记录帧头帧尾在数据缓冲区中的位置 */
+typedef struct
+{
+    // DART协议帧位置记录（4字节帧头，最多16帧）
+    uint8_t DartHeaderIndex[DART_FRAME_INDEX_SIZE]; // DART帧头在RxDataBuffer中的位置
+    uint8_t DartTailIndex[DART_FRAME_INDEX_SIZE];   // DART帧尾在RxDataBuffer中的位置
+    uint8_t DartFrameCount;                         // 有效帧数量
+    uint8_t DartWritePtr;                           // DART帧位置写指针（中断中使用）
+    uint8_t DartReadPtr;                            // DART帧位置读指针（用户读取时使用）
+    bool DartFrameValid[DART_FRAME_INDEX_SIZE];     // 帧有效标志（用于标记被覆盖的帧）
+
+    // 0x55 0x55协议帧位置记录（2字节帧头，最多32帧）
+    uint8_t ServoHeaderIndex[SERVO_FRAME_INDEX_SIZE]; // Servo帧头在RxDataBuffer中的位置
+    uint8_t ServoTailIndex[SERVO_FRAME_INDEX_SIZE];   // Servo帧尾在RxDataBuffer中的位置
+    uint8_t ServoFrameCount;                          // 有效帧数量
+    uint8_t ServoWritePtr;                            // Servo帧位置写指针（中断中使用）
+    uint8_t ServoReadPtr;                             // Servo帧位置读指针（用户读取时使用）
+    bool ServoFrameValid[SERVO_FRAME_INDEX_SIZE];     // 帧有效标志
+} FrameIndexBuffer;
+
+/* 接收缓冲区结构体 - 真正的环形缓冲区 */
 typedef struct
 {
     uint8_t RxDataBuffer[UART_RX_BUFFER_SIZE];
-    uint8_t *ReadPtr;  // 读数据指针，这个要按照帧尾给（用户读取数据时移动）
-    uint8_t *WritePtr; // 写数据指针，这个要按照帧头算（接收中断时移动）
-    uint16_t DataLen;  // 数据长度（WritePtr - ReadPtr）
-    bool OverflowFlag; // 溢出标志位
+    uint16_t ReadIndex;  // 读索引（用户读取数据时移动），指向待读取的位置
+    uint16_t WriteIndex; // 写索引（接收中断时移动），指向待写入的位置
+    // 环形缓冲区特性：
+    // - 空状态: WriteIndex == ReadIndex
+    // - 满状态: (WriteIndex + 1) % SIZE == ReadIndex
+    // - 可用数据长度: (WriteIndex - ReadIndex + SIZE) % SIZE
+    // - 写指针可循环回绕到数组开头，覆盖旧数据
+    bool OverflowFlag;   // 溢出标志位（表示发生了数据覆盖）
+    bool WrapAroundFlag; // 环绕标志位（表示写指针已经从末尾回绕到开头）
+
+    // 帧头帧尾位置记录
+    FrameIndexBuffer FrameIndex;
+
+    // 帧头识别状态机
+    uint8_t HeaderMatchCount; // 帧头匹配字节计数
+    uint8_t PendingHeaderPos; // 待确认的帧头起始位置
+    bool HeaderCrossWrap;     // 帧头跨越缓冲区边界标志
 } DataBuffer;
 
 /* 循环发送缓冲区结构体 */
@@ -78,9 +117,11 @@ typedef enum
     PARSE_SERVO_CMD,    // 解析指令
     PARSE_SERVO_PARAMS, // 解析参数
     PARSE_SERVO_CRC,    // 解析CRC
-    PARSE_DART_DATA,    // 解析DART数据
-    PARSE_DART_CRC,     // 解析DART的CRC
-    PARSE_COMPLETE      // 解析完成
+
+    PARSE_DART_LENGTH, // DART数据长度
+    PARSE_DART_DATA,   // 解析DART数据
+    PARSE_DART_CRC,    // 解析DART的CRC
+    PARSE_COMPLETE     // 解析完成
 } ParseState_e;
 
 /* 循环接收缓冲区结构体 */
