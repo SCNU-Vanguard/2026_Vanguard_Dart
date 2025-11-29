@@ -1,0 +1,101 @@
+# ========================================
+# STM32 MDK-ARM (Keil) 编译输出
+# ========================================
+MDK-ARM/Dart_Ctrl/*.o
+MDK-ARM/Dart_Ctrl/*.d
+MDK-ARM/Dart_Ctrl/*.crf
+MDK-ARM/Dart_Ctrl/*.lst
+MDK-ARM/Dart_Ctrl/*.axf
+MDK-ARM/Dart_Ctrl/*.hex
+MDK-ARM/Dart_Ctrl/*.map
+MDK-ARM/Dart_Ctrl/*.htm
+MDK-ARM/Dart_Ctrl/*.lnp
+MDK-ARM/Dart_Ctrl/*.dep
+MDK-ARM/Dart_Ctrl/*.sct
+MDK-ARM/Dart_Ctrl/Dart_Ctrl.build_log.htm
+
+# ========================================
+# Keil IDE 用户配置文件
+# ========================================
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/DebugConfig/
+
+# ========================================
+# 通用系统文件
+# ========================================
+# Windows
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+
+# ========================================
+# IDE 和编辑器
+# ========================================
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# Eclipse
+.project
+.cproject
+.settings/
+
+# ========================================
+# 临时文件和日志
+# ========================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~.nib
+
+# ========================================
+# 保留的文件类型 (机械结构和文档)
+# ========================================
+# 以下文件类型将被保留，不会被忽略
+# - *.sldprt (SolidWorks 零件文件)
+# - *.sldasm (SolidWorks 装配文件)
+# - *.stl (3D模型文件)
+# - *.docx (Word文档)
+# - *.doc (Word文档)
+# - *.pdf (PDF文档)
+# - *.xlsx (Excel文档)
+# - *.pptx (PowerPoint文档)
+# - *.md (Markdown文档)
+# - *.txt (文本文档)
+
+# ========================================
+# 其他忽略项
+# ========================================
+# 编译器和构建工具生成的文件
+*.obj
+*.elf
+*.bin
+*.out
+*.exe
+
+# 依赖目录
+node_modules/
+.pnp/
+.pnp.js
+
+# 打包文件
+*.zip
+*.tar.gz
+*.rar
+*.7z
