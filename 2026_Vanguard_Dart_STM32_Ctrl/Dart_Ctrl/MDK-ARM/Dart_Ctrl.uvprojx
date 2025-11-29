@@ -341,7 +341,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F427xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;.\Bsp\inc;.\User\inc</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\User;..\Bsp;..\Bsp\inc;..\User\inc</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -598,57 +598,57 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>User</GroupName>
-          <Files>
-            <File>
-              <FileName>CanMotor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\User\src\CanMotor.c</FilePath>
-            </File>
-            <File>
-              <FileName>DM_Motor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\User\src\DM_Motor.c</FilePath>
-            </File>
-            <File>
-              <FileName>HX06L.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\User\src\HX06L.c</FilePath>
-            </File>
-            <File>
-              <FileName>PID.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\User\src\PID.c</FilePath>
-            </File>
-            <File>
-              <FileName>RM_Motor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\User\src\RM_Motor.c</FilePath>
-            </File>
-            <File>
-              <FileName>UserTask.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\User\src\UserTask.c</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
           <GroupName>Bsp</GroupName>
           <Files>
             <File>
               <FileName>bsp_can.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Bsp\src\bsp_can.c</FilePath>
+              <FilePath>..\Bsp\src\bsp_can.c</FilePath>
             </File>
             <File>
               <FileName>bsp_dwt.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Bsp\src\bsp_dwt.c</FilePath>
+              <FilePath>..\Bsp\src\bsp_dwt.c</FilePath>
             </File>
             <File>
               <FileName>bsp_uart.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Bsp\src\bsp_uart.c</FilePath>
+              <FilePath>..\Bsp\src\bsp_uart.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>User</GroupName>
+          <Files>
+            <File>
+              <FileName>CanMotor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\CanMotor.c</FilePath>
+            </File>
+            <File>
+              <FileName>DM_Motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\DM_Motor.c</FilePath>
+            </File>
+            <File>
+              <FileName>HX06L.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\HX06L.c</FilePath>
+            </File>
+            <File>
+              <FileName>PID.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\PID.c</FilePath>
+            </File>
+            <File>
+              <FileName>RM_Motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\RM_Motor.c</FilePath>
+            </File>
+            <File>
+              <FileName>UserTask.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\UserTask.c</FilePath>
             </File>
           </Files>
         </Group>
