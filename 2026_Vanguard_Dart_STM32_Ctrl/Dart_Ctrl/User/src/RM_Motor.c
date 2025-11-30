@@ -101,12 +101,13 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_dat
     // int8_t C620Temp = ReceiveData[6];
 
     solved_data[0] = RM_MOTOR_DATA_ROTARY_ANGLE / 8190.00f * 360.00f; // 单位为°
-    solved_data[1] = RM_MOTOR_DATA_ROTARY_SPEED;                      // 单位为rpm
+    solved_data[1] = RM_MOTOR_DATA_ROTARY_SPEED / 19.0f * 360.0f;     // 单位为rpm
     solved_data[2] = RM_MOTOR_DATA_ROTARY_TORQUE / 16384.0f * 20;     // 单位为A，实际上是转矩电流
     // solved_data[4] = C620Temp; // 单位为℃
 
-    char DataFeedback[36] = "\0";
-    sprintf(DataFeedback, "Speed:%.1f, angle:%.1f\r\n", solved_data[1], solved_data[0]);
+    // char DataFeedback[36] = "\0";
+    // sprintf(DataFeedback, "%.1f,%.1f\r\n", solved_data[1], solved_data[0]); // Speed:%.1f, Angle:%.1f\r\n
+    // HAL_UART_Transmit_IT(&huart6, (uint8_t *)DataFeedback, strlen(DataFeedback));
 }
 
 /**********************************************************暴露接口，下面是外部一般用于调用的函数******************************************************/
@@ -121,6 +122,10 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_dat
 void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent)
 {
     // 这里是建议只为8位数组，两位也行（前两位才是发送的电流的高低位）
+    if (TargetCurrent < 0)
+    {
+        TargetCurrent = ~(TargetCurrent & 0x7FFF);
+    }
     int8_t data[2] = {0};
     data[0] = TargetCurrent >> 8;
     data[1] = (int8_t)TargetCurrent;
@@ -151,24 +156,31 @@ void RmTestMotorSingleRegister(void)
     // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 0;
-    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    float p = 10.0f;
+    float i = 0.0f;
+    float d = 0.0f;
+    float f = 0.0f;
+    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 600.0f, 300.0f, 0.0f);
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
 }
 
+float output = 0.0f;
 /// @brief RM电机输出
-void RmMotorPID_Calc(void)
+/// @param target 目标值，单环时候为速度，串级为位置(暂定)
+void RmMotorPID_Calc(float target)
 {
-    uint8_t FeedString[128] = {0x00};
+    char FeedString[35] = "\0";
     // PID数据输出
 
     // CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]); // 目标角度，反馈角度，反馈速度
     // sprintf((char *)FeedString, "targetAngle:.1%f, feedbackAngle:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
     // printf(FeedString);
-
-    PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, 10, rm_motor_solved_data[1]);
-    sprintf((char *)FeedString, "targetSpeed:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
-    printf(FeedString);
+    float output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[1]);
+    RmMotorSendCfg(1, (int16_t)output);
+    sprintf(FeedString, "Speed=%.1f,Target=%.1f,output=%.1f,", rm_motor_solved_data[1], target, output);
+    // printf(FeedString);
+    HAL_UART_Transmit(&huart6, (uint8_t *)FeedString, 35, HAL_MAX_DELAY);
 
     // HAL_UART_Transmit_IT(&huart3, );
 }

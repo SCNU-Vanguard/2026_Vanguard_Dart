@@ -21,6 +21,8 @@ typedef enum
 {
     BSP_UART3 = 0,
     BSP_UART6,
+    BSP_UART7,
+    BSP_UART8,
     BSP_UART_MAX
 } BSP_UART_NUM_e;
 

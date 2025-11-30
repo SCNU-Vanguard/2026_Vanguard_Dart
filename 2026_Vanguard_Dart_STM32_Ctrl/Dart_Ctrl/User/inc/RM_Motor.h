@@ -60,4 +60,9 @@ void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent);
 /// @return 无
 void RmTestMotorSingleRegister(void);
 
+/// @brief RM电机输出
+/// @param target 目标值，单环时候为速度，串级为位置(暂定)
+/// @retval 无
+void RmMotorPID_Calc(float target);
+
 #endif

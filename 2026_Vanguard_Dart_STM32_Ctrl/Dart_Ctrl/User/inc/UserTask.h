@@ -11,6 +11,8 @@
 #include "bsp_dwt.h"
 #include "bsp_can.h"
 #include "bsp_uart.h"
+#include "bsp_pwr.h"
+
 #include "HX06L.h"
 #include "CanMotor.h"
 #include "DM_Motor.h"
