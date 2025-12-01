@@ -41,7 +41,7 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st);
 /// @brief 设置对应RM电机的发送数据
 /// @param motor_id 第几个大疆电机
 /// @param data 发送数据指针（必须8字节）
-void RM_MotorSetTxData(uint8_t motor_id, int8_t *data);
+void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 
 /// @brief RM电机接收数据解算
 /// @param motor_id_num 大疆电机的id号（无需管其他不同品牌的电机）

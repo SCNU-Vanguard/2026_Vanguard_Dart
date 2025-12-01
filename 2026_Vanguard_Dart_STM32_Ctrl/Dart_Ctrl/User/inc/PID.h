@@ -18,8 +18,9 @@ typedef enum
 typedef struct
 {
     // 初始化标志位
-    uint8_t initialized; // 是否已初始化
-    uint8_t calc_count;  // 计算次数计数器（用于首次计算判断）
+    uint8_t initialized;        // 是否已初始化
+    uint8_t calc_count;         // 计算次数计数器（用于首次计算判断）
+    uint8_t direction_changed;  // 换向标志位（用于换向补偿）
 
     // PID工作模式
     PID_MODE_e mode; // 位置式或增量式
@@ -31,8 +32,8 @@ typedef struct
     float KF; // 前馈系数
 
     // 限幅参数
-    float max_output; // 输出上限
-    float min_output; // 输出下限
+    float max_output; // 输出上限（实际输出范围为 [-max_output, +max_output]）
+    float min_output; // 死区补偿量（用于克服电机静摩擦力等）
     float max_iout;   // 积分限幅
 
     // 反馈值
@@ -44,7 +45,8 @@ typedef struct
     float sum_error;  // 误差积分
 
     // 前馈值
-    float feedforward; // 前馈输入值
+    float feedforward;  // 前馈输入值
+    float last_target;  // 上一次目标值（用于换向检测）
 
     // 输出值储存
     float output;      // 当前输出值

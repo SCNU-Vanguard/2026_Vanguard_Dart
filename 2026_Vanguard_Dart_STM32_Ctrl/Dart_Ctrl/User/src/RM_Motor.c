@@ -17,6 +17,7 @@
 // 外部引用电机管理器
 extern MotorManager_t MotorManager;
 extern float rm_motor_solved_data[]; // 存储RM电机解算后的数据
+float output = 0.0f;
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
 #define SingleMotorTest 1
@@ -58,7 +59,7 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st)
 /// @param motor_id 第几个大疆电机
 /// @param data 发送数据指针（必须8字节），似乎可以封装一下发送缓冲区
 /// @todo 分离一下，这里可以只设置发送函数，将发送任务放在其他地方（比如CAN通信发送任务）
-void RM_MotorSetTxData(uint8_t motor_id, int8_t *data)
+void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
 {
     assert_param(data != NULL);
     if (data == NULL)
@@ -101,13 +102,13 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_dat
     // int8_t C620Temp = ReceiveData[6];
 
     solved_data[0] = RM_MOTOR_DATA_ROTARY_ANGLE / 8190.00f * 360.00f; // 单位为°
-    solved_data[1] = RM_MOTOR_DATA_ROTARY_SPEED / 19.0f * 360.0f;     // 单位为rpm
+    solved_data[1] = RM_MOTOR_DATA_ROTARY_SPEED / 19.0f * 60.0f;      // 单位为°/s
     solved_data[2] = RM_MOTOR_DATA_ROTARY_TORQUE / 16384.0f * 20;     // 单位为A，实际上是转矩电流
     // solved_data[4] = C620Temp; // 单位为℃
 
     // char DataFeedback[36] = "\0";
     // sprintf(DataFeedback, "%.1f,%.1f\r\n", solved_data[1], solved_data[0]); // Speed:%.1f, Angle:%.1f\r\n
-    // HAL_UART_Transmit_IT(&huart6, (uint8_t *)DataFeedback, strlen(DataFeedback));
+    // HAL_UART_Transmit(&huart6, (uint8_t *)DataFeedback, strlen(DataFeedback), 1);
 }
 
 /**********************************************************暴露接口，下面是外部一般用于调用的函数******************************************************/
@@ -118,17 +119,19 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_dat
  * 参数：motor_id：RM电机ID
  * 参数：TargetCurrent：电流大小
  * 返回值：无
+ * 说明：大疆电机使用反码形式，负数需对绝对值取反
  ****************************************************/
 void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent)
 {
-    // 这里是建议只为8位数组，两位也行（前两位才是发送的电流的高低位）
     if (TargetCurrent < 0)
     {
-        TargetCurrent = ~(TargetCurrent & 0x7FFF);
+        // 负数：对绝对值取反（反码形式）
+        // 例如：-400 -> ~400 = ~0x0190 = 0xFE6F
+        TargetCurrent = (uint16_t)(~(-TargetCurrent));
     }
-    int8_t data[2] = {0};
-    data[0] = TargetCurrent >> 8;
-    data[1] = (int8_t)TargetCurrent;
+    uint8_t data[2] = {0};
+    data[0] = (uint8_t)(TargetCurrent >> 8); // 高字节
+    data[1] = (uint8_t)TargetCurrent;        // 低字节
     RM_MotorSetTxData(motor_id, data);
 }
 
@@ -156,31 +159,31 @@ void RmTestMotorSingleRegister(void)
     // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 0;
-    float p = 10.0f;
+    float p = 0.1f;
     float i = 0.0f;
     float d = 0.0f;
     float f = 0.0f;
-    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 600.0f, 300.0f, 0.0f);
+    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 350.0f, 300.0f, 0.0f);
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
 }
 
-float output = 0.0f;
 /// @brief RM电机输出
 /// @param target 目标值，单环时候为速度，串级为位置(暂定)
 void RmMotorPID_Calc(float target)
 {
-    char FeedString[35] = "\0";
+    char FeedString[60] = "\0";
     // PID数据输出
 
     // CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]); // 目标角度，反馈角度，反馈速度
     // sprintf((char *)FeedString, "targetAngle:.1%f, feedbackAngle:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
     // printf(FeedString);
-    float output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[1]);
+
+    output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[1]);
     RmMotorSendCfg(1, (int16_t)output);
-    sprintf(FeedString, "Speed=%.1f,Target=%.1f,output=%.1f,", rm_motor_solved_data[1], target, output);
+    // sprintf(FeedString, "Speed=%.1f,Target=%.1f,output=%.1f\r\n", rm_motor_solved_data[1], target, output);
     // printf(FeedString);
-    HAL_UART_Transmit(&huart6, (uint8_t *)FeedString, 35, HAL_MAX_DELAY);
+    // HAL_UART_Transmit(&huart6, (uint8_t *)FeedString, 60, 1);
 
     // HAL_UART_Transmit_IT(&huart3, );
 }

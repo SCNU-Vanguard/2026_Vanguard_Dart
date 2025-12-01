@@ -1,7 +1,6 @@
 #include "PID.h"
 #include "CanMotor.h"
 #include <string.h>
-#include <stdbool.h>
 
 /**
  * @brief PID初始化函数
@@ -11,8 +10,8 @@
  * @param ki 积分系数
  * @param kd 微分系数
  * @param kf 前馈系数
- * @param max_out 输出上限
- * @param min_out 输出下限
+ * @param max_out 输出上限（实际输出范围为 [-max_out, +max_out]）
+ * @param min_out 死区补偿量（用于克服电机静摩擦力等）
  * @param max_iout 积分限幅
  */
 void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout)
@@ -97,26 +96,29 @@ static float float_constrain(float value, float min, float max)
  * @param measure 测量值
  * @return PID输出值
  * @note 第一次计算只使用P项并加上最低限幅（目标为负时减去），第二次及之后使用完整P、I、D、F
+ * @note 当目标值符号发生变化时，会根据变化方向加减最低限幅（换向补偿）
  */
 float PID_Position_Calc(PID_t *pid, float target, float measure)
 {
     if (pid == NULL || !pid->initialized)
         return 0.0f;
 
-    // 更新目标值、测量值和前馈值
+    // 重置换向标志
+    pid->direction_changed = 0;
+
+    // 更新目标值、测量值
     pid->target = target;
     pid->measure = measure;
-    pid->feedforward = target - pid->feedforward;
 
     // 计算误差
     pid->error = target - measure;
 
-    // 第一次计算：只使用P项 + 最低限幅
+    // 第一次计算：只使用P项 + 死区补偿
     if (pid->calc_count == 0)
     {
         float p_out = pid->KP * pid->error;
         
-        // 根据目标值正负决定加减最低限幅
+        // 根据目标值正负决定加减死区补偿
         if (target >= 0)
         {
             pid->output = p_out + pid->min_output;
@@ -126,20 +128,36 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
             pid->output = p_out - pid->min_output;
         }
         
-        // 输出限幅
-        pid->output = float_constrain(pid->output, pid->min_output, pid->max_output);
+        // 输出限幅（正负对称限幅）
+        pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
         
-        // 更新上次误差
+        // 更新上次误差和目标值
         pid->last_error = pid->error;
+        pid->last_target = target;
         
-        // 更新前馈
-        pid->feedforward = target;
+        // 计算前馈值（目标值变化量）
+        pid->feedforward = 0.0f;  // 第一次无前馈
         
         // 增加计算次数
         pid->calc_count = 1;
         
         return pid->output;
     }
+
+    // 换向检测：检测目标值符号变化
+    // 从正到负（正转→反转）
+    if (pid->last_target >= 0 && target < 0)
+    {
+        pid->direction_changed = 1;
+    }
+    // 从负到正（反转→正转）
+    else if (pid->last_target < 0 && target >= 0)
+    {
+        pid->direction_changed = 1;
+    }
+
+    // 计算前馈值（目标值变化量）
+    pid->feedforward = target - pid->last_target;
 
     // 第二次及之后：使用完整P、I、D、F
     // 积分项累加（带限幅）
@@ -158,8 +176,8 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // 积分输出限幅
     i_out = float_constrain(i_out, -pid->max_iout, pid->max_iout);
 
-    // 总输出
-    if ((target > 0) && (target == 0))
+    // 总输出（根据目标值符号添加死区补偿）
+    if (target >= 0)
     {
         pid->output = p_out + i_out + d_out + f_out + pid->min_output;
     }
@@ -168,14 +186,12 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
         pid->output = p_out + i_out + d_out + f_out - pid->min_output;
     }
 
-    // 输出限幅
-    pid->output = float_constrain(pid->output, pid->min_output, pid->max_output);
+    // 输出限幅（正负对称限幅）
+    pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 更新上次误差
+    // 更新上次误差和目标值
     pid->last_error = pid->error;
-
-    // 更新前馈
-    pid->feedforward = target;
+    pid->last_target = target;
 
     return pid->output;
 }
@@ -187,50 +203,29 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
  * @param measure 测量值
  * @return PID增量输出值（需要累加到总输出上）
  * @note 第一次计算只使用P项并加上最低限幅（目标为负时减去），第二次及之后使用完整P、I、D、F
- * @note 当目标值符号发生变化时，会根据变化方向加减最低限幅
+ * @note 当目标值符号发生变化时，会根据变化方向加减最低限幅（换向补偿）
  */
 float PID_Incremental_Calc(PID_t *pid, float target, float measure)
 {
     if (pid == NULL || !pid->initialized)
         return 0.0f;
 
-    static bool change_flag = false;
-    
-    // 在更新目标值之前，检测目标值符号变化
-    // feedforward在上次计算结束时存储了上一次的target值
-        // 检测从正到负的变化 (上次>=0, 这次<0)
-        if (pid->feedforward >= 0 && target < 0)
-        {
-            change_flag = true;
-            // 正到负：减去最低限幅
-            pid->output -= pid->min_output;
-        }
-        // 检测从负到正的变化 (上次<0, 这次>=0)
-        else if (pid->feedforward < 0 && target >= 0)
-        {
-            change_flag = true;
-            // 负到正：加上最低限幅
-            pid->output += pid->min_output;
-        }
-        else
-        {
-            change_flag = false;
-        }
-    
-    // 更新目标值、测量值和前馈值
+    // 重置换向标志
+    pid->direction_changed = 0;
+
+    // 更新目标值、测量值
     pid->target = target;
     pid->measure = measure;
-    pid->feedforward = target - pid->feedforward;
 
     // 计算误差
     pid->error = target - measure;
 
-    // 第一次计算：只使用P项 + 最低限幅
+    // 第一次计算：只使用P项 + 死区补偿
     if (pid->calc_count == 0)
     {
         float p_out = pid->KP * pid->error;
         
-        // 根据目标值正负决定加减最低限幅
+        // 根据目标值正负决定加减死区补偿
         if (target >= 0)
         {
             pid->output = p_out + pid->min_output;
@@ -240,19 +235,43 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
             pid->output = p_out - pid->min_output;
         }
         
-        // 输出限幅
-        pid->output = float_constrain(pid->output, pid->min_output, pid->max_output);
+        // 输出限幅（正负对称限幅）
+        pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
         
-        // 更新历史误差
+        // 更新历史误差和目标值
         pid->prev_error = pid->last_error;
         pid->last_error = pid->error;
-        pid->feedforward = target;  // 存储当前目标值，供下次判断符号变化
+        pid->last_target = target;
+        
+        // 计算前馈值（目标值变化量）
+        pid->feedforward = 0.0f;  // 第一次无前馈
         
         // 增加计算次数
         pid->calc_count = 1;
         
         return pid->output;
     }
+
+    // 换向检测与补偿：检测目标值符号变化
+    // 从正到负（正转→反转）：减去死区补偿作为换向补偿
+    if (pid->last_target >= 0 && target < 0)
+    {
+        pid->direction_changed = 1;
+        pid->output -= pid->min_output;  // 补偿反转阻力
+        // 换向补偿后立即限幅，防止超限
+        pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
+    }
+    // 从负到正（反转→正转）：加上死区补偿作为换向补偿
+    else if (pid->last_target < 0 && target >= 0)
+    {
+        pid->direction_changed = 1;
+        pid->output += pid->min_output;  // 补偿正转阻力
+        // 换向补偿后立即限幅，防止超限
+        pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
+    }
+
+    // 计算前馈值（目标值变化量）
+    pid->feedforward = target - pid->last_target;
 
     // 第二次及之后：使用完整增量式P、I、D、F
     // Δu(k) = Kp[e(k) - e(k-1)] + Ki*e(k) + Kd[e(k) - 2e(k-1) + e(k-2)]
@@ -270,13 +289,13 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // 累加到总输出
     pid->output += pid->delta_out;
 
-    // 总输出限幅
-    pid->output = float_constrain(pid->output, pid->min_output, pid->max_output);
+    // 总输出限幅（正负对称限幅）
+    pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 更新历史误差
+    // 更新历史误差和目标值
     pid->prev_error = pid->last_error;
     pid->last_error = pid->error;
-    pid->feedforward = target;  // 存储当前目标值，供下次判断符号变化
+    pid->last_target = target;
 
     return pid->output;
 }
@@ -342,7 +361,8 @@ void PID_Clear(PID_t *pid)
     if (pid == NULL)
         return;
 
-    pid->calc_count = 0;  // 重置计算次数，下次计算将重新从首次开始
+    pid->calc_count = 0;           // 重置计算次数，下次计算将重新从首次开始
+    pid->direction_changed = 0;    // 重置换向标志
     pid->target = 0.0f;
     pid->measure = 0.0f;
     pid->error = 0.0f;
@@ -350,6 +370,7 @@ void PID_Clear(PID_t *pid)
     pid->prev_error = 0.0f;
     pid->sum_error = 0.0f;
     pid->feedforward = 0.0f;
+    pid->last_target = 0.0f;       // 重置上一次目标值
     pid->output = 0.0f;
     pid->last_output = 0.0f;
     pid->delta_out = 0.0f;
@@ -415,8 +436,8 @@ void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf)
 /**
  * @brief PID输出限幅设置函数
  * @param pid PID结构体指针
- * @param max_output 输出上限
- * @param min_output 输出下限
+ * @param max_output 输出上限（实际输出范围为 [-max_output, +max_output]）
+ * @param min_output 死区补偿量（用于克服电机静摩擦力等）
  * @param max_iout 积分限幅
  */
 void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout)

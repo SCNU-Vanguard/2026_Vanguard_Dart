@@ -124,17 +124,28 @@ void StartDefaultTask(void *argument)
   // DartPacket_t UpcFb;
   // UART_SetProtocol(BSP_UART3, SERVO_COM); // true为舵机, false为DART上位机通信协议
   /* Infinite loop */
-	// int16_t LimitCurrent = 300;
-	// vTaskDelay(1);
+  // int16_t LimitCurrent = 300;
+  // vTaskDelay(1);
+  float TargetSpeed = 15.0f;
+  vTaskDelay(100);
+  RmMotorSendCfg(1, 180);
   for (;;)
   {
     // 默认任务用来调电机
 #if DM_TestUse
     DmMotorSendCfg(1, 1.5, 1.5);
 #elif RM_TestUse
-    RmMotorPID_Calc(30.0);
-		vTaskDelay(100);
-		// RmMotorSendCfg(1, LimitCurrent);
+//    RmMotorPID_Calc(TargetSpeed);
+// if (TargetSpeed < 30)
+// {
+//   TargetSpeed += 5.0f;
+// }
+// else
+// {
+//   TargetSpeed = -10.0f;
+// }
+// vTaskDelay(100);
+// RmMotorSendCfg(1, 180);
 #endif
   }
   /* USER CODE END StartDefaultTask */
