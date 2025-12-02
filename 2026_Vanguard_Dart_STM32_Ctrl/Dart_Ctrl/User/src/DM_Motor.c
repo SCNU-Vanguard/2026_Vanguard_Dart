@@ -5,6 +5,7 @@
  * DM电机说明：
  * 支持MIT模式、位置速度模式、速度模式、PVT模式
  * 目前主要使用MIT模式进行控制
+ * todo:当前文件存在阻塞延时函数，替换成定时器中断解决延时或者vTaskDelay，现在先使用vTaskDelay
  ****************************************************/
 
 #include "DM_Motor.h"
@@ -13,6 +14,8 @@
 #include "bsp_dwt.h"
 #include <stdbool.h>
 #include "usart.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 // 外部引用电机管理器
 extern MotorManager_t MotorManager;
@@ -109,14 +112,16 @@ uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID)
     if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID - 1].g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
     {
         DM_ENABLE_ARR[DM_MOTOR_ID - 1] = false;
-        DWT_Delay_us(200); // 一个完整的8字节标准数据帧是108位，这里用一个200us的延时足以搞定
+        // DWT_Delay_us(200); // 一个完整的8字节标准数据帧是108位，这里用一个200us的延时足以搞定
+        vTaskDelay(1);
         return 1;
     }
 #else
     if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID + g_RM_MOTOR_NUM - 1].g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
     {
         DM_ENABLE_ARR[DM_MOTOR_ID - 1] = false;
-        DWT_Delay_us(200);
+        // DWT_Delay_us(200);
+        vTaskDelay(1);
         return 1;
     }
 #endif
@@ -132,14 +137,16 @@ static uint8_t DM_MotorEnable(uint8_t DM_MOTOR_ID)
     if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
     {
         DM_ENABLE_ARR[DM_MOTOR_ID - 1] = true;
-        DWT_Delay_us(200);
+        // DWT_Delay_us(200);
+        vTaskDelay(1);
         return 1;
     }
 #else
     if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID + g_RM_MOTOR_NUM - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
     {
         DM_ENABLE_ARR[DM_MOTOR_ID - 1] = true;
-        DWT_Delay_us(200);
+        // DWT_Delay_us(200);
+        vTaskDelay(1);
         return 1;
     }
 #endif

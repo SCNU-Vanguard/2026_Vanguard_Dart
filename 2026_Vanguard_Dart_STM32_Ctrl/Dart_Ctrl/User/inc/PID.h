@@ -4,6 +4,15 @@
 #include "main.h"
 #include "bsp_dwt.h"
 
+/*********************************************************配置宏***************************************************************/
+
+// 微分先行选择：1=启用微分先行，0=普通微分
+// 微分先行：D项对测量值变化进行微分，避免目标值突变时产生尖峰
+// 普通微分：D项对误差变化进行微分
+#define PID_DERIVATIVE_ON_MEASUREMENT 0U
+
+/*********************************************************类型定义*************************************************************/
+
 // PID计算模式枚举
 typedef enum
 {
@@ -18,9 +27,9 @@ typedef enum
 typedef struct
 {
     // 初始化标志位
-    uint8_t initialized;        // 是否已初始化
-    uint8_t calc_count;         // 计算次数计数器（用于首次计算判断）
-    uint8_t direction_changed;  // 换向标志位（用于换向补偿）
+    uint8_t initialized;       // 是否已初始化
+    uint8_t calc_count;        // 计算次数计数器（用于首次计算判断）
+    uint8_t direction_changed; // 换向标志位（用于换向补偿）
 
     // PID工作模式
     PID_MODE_e mode; // 位置式或增量式
@@ -37,16 +46,18 @@ typedef struct
     float max_iout;   // 积分限幅
 
     // 反馈值
-    float target;     // 目标值
-    float measure;    // 测量值（反馈值）
-    float error;      // 当前误差
-    float last_error; // 上次误差
-    float prev_error; // 上上次误差（增量式用）
-    float sum_error;  // 误差积分
+    float target;       // 目标值
+    float measure;      // 测量值（反馈值）
+    float last_measure; // 上次测量值（微分先行用）
+    float prev_measure; // 上上次测量值（增量式微分先行用）
+    float error;        // 当前误差
+    float last_error;   // 上次误差
+    float prev_error;   // 上上次误差（增量式用）
+    float sum_error;    // 误差积分
 
     // 前馈值
-    float feedforward;  // 前馈输入值
-    float last_target;  // 上一次目标值（用于换向检测）
+    float feedforward; // 前馈输入值
+    float last_target; // 上一次目标值（用于换向检测）
 
     // 输出值储存
     float output;      // 当前输出值

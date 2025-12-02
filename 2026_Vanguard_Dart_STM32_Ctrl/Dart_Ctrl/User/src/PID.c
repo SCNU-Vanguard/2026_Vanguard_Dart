@@ -131,8 +131,9 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
         // 输出限幅（正负对称限幅）
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
         
-        // 更新上次误差和目标值
+        // 更新上次误差、测量值和目标值
         pid->last_error = pid->error;
+        pid->last_measure = measure;
         pid->last_target = target;
         
         // 计算前馈值（目标值变化量）
@@ -170,7 +171,16 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // PID计算：P + I + D + F
     float p_out = pid->KP * pid->error;
     float i_out = pid->KI * pid->sum_error;
+    
+#if PID_DERIVATIVE_ON_MEASUREMENT
+    // 微分先行：对测量值变化进行微分（避免目标突变产生尖峰）
+    // D = Kd × (last_measure - measure)，测量值增加时产生负阻尼
+    float d_out = pid->KD * (pid->last_measure - measure);
+#else
+    // 普通微分：对误差变化进行微分
     float d_out = pid->KD * (pid->error - pid->last_error);
+#endif
+
     float f_out = pid->KF * pid->feedforward;
 
     // 积分输出限幅
@@ -189,8 +199,9 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // 输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 更新上次误差和目标值
+    // 更新上次误差、测量值和目标值
     pid->last_error = pid->error;
+    pid->last_measure = measure;
     pid->last_target = target;
 
     return pid->output;
@@ -238,9 +249,11 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
         // 输出限幅（正负对称限幅）
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
         
-        // 更新历史误差和目标值
+        // 更新历史误差、测量值和目标值
         pid->prev_error = pid->last_error;
         pid->last_error = pid->error;
+        pid->prev_measure = pid->last_measure;
+        pid->last_measure = measure;
         pid->last_target = target;
         
         // 计算前馈值（目标值变化量）
@@ -253,19 +266,20 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     }
 
     // 换向检测与补偿：检测目标值符号变化
-    // 从正到负（正转→反转）：减去死区补偿作为换向补偿
+    // 换向时需要补偿 2×min_output（去掉原方向补偿 + 加上新方向补偿）
+    // 从正到负（正转→反转）：原有+min_output，需变为-min_output，所以减去2×min_output
     if (pid->last_target >= 0 && target < 0)
     {
         pid->direction_changed = 1;
-        pid->output -= pid->min_output;  // 补偿反转阻力
+        pid->output -= 2.0f * pid->min_output;  // 补偿反转阻力
         // 换向补偿后立即限幅，防止超限
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
     }
-    // 从负到正（反转→正转）：加上死区补偿作为换向补偿
+    // 从负到正（反转→正转）：原有-min_output，需变为+min_output，所以加上2×min_output
     else if (pid->last_target < 0 && target >= 0)
     {
         pid->direction_changed = 1;
-        pid->output += pid->min_output;  // 补偿正转阻力
+        pid->output += 2.0f * pid->min_output;  // 补偿正转阻力
         // 换向补偿后立即限幅，防止超限
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
     }
@@ -277,7 +291,16 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // Δu(k) = Kp[e(k) - e(k-1)] + Ki*e(k) + Kd[e(k) - 2e(k-1) + e(k-2)]
     float p_out = pid->KP * (pid->error - pid->last_error);
     float i_out = pid->KI * pid->error;
+    
+#if PID_DERIVATIVE_ON_MEASUREMENT
+    // 微分先行：对测量值变化进行微分（避免目标突变产生尖峰）
+    // 增量式微分先行：Δd = Kd × (prev_measure - 2×last_measure + measure)
+    float d_out = pid->KD * (pid->prev_measure - 2.0f * pid->last_measure + measure);
+#else
+    // 普通微分：对误差变化进行微分
     float d_out = pid->KD * (pid->error - 2.0f * pid->last_error + pid->prev_error);
+#endif
+
     float f_out = pid->KF * pid->feedforward;
 
     // 积分输出限幅
@@ -292,9 +315,11 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // 总输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 更新历史误差和目标值
+    // 更新历史误差、测量值和目标值
     pid->prev_error = pid->last_error;
     pid->last_error = pid->error;
+    pid->prev_measure = pid->last_measure;
+    pid->last_measure = measure;
     pid->last_target = target;
 
     return pid->output;
@@ -365,6 +390,8 @@ void PID_Clear(PID_t *pid)
     pid->direction_changed = 0;    // 重置换向标志
     pid->target = 0.0f;
     pid->measure = 0.0f;
+    pid->last_measure = 0.0f;      // 重置上次测量值
+    pid->prev_measure = 0.0f;      // 重置上上次测量值
     pid->error = 0.0f;
     pid->last_error = 0.0f;
     pid->prev_error = 0.0f;

@@ -1,6 +1,24 @@
 /****************************************************************
- * 换弹结构总线舵机工程
+ * 换弹结构总线舵机
  * 创建时间：2025/11/24
+ *
+ * 改进可能：像下面这样创建一个共用体，优化一下
+ *
+ * #pragma pack(1)
+typedef struct {
+    uint8_t header_1;
+    uint8_t header_2;
+    union {
+        struct {
+            uint8_t servo_id;
+            uint8_t length;
+            uint8_t command;
+            uint8_t args[8];
+        } elements;
+        uint8_t data_raw[11];
+    };
+}SerialServoCmdTypeDef;
+#pragma pack()
  ****************************************************************/
 
 #ifndef __HX_06L_H_
@@ -20,7 +38,7 @@ typedef struct
 
 typedef enum
 {
-    SERVO_MOVE_TIME_WRITE,      // 写数据（立马）
+    SERVO_MOVE_TIME_WRITE,      // 写数据（立马），发送数值0 - 1000 ，对应0 - 240°，最小分度0.24°，存在转动时间参数，范围为0-30000ms
     SERVO_MOVE_TIME_READ,       // 读数据（立马）
     SERVO_MOVE_TIME_WAIT_WRITE, // 写数据（但是要等start之后才会启动）
     SERVO_MOVE_TIME_WAIT_READ,  // 读数据（和上面一样等待start）
@@ -114,5 +132,18 @@ typedef enum
 } WorkMode;
 
 /********************************************************************/
+
+/// @brief 换弹舵机初始化
+/// @param  无
+/// @todo 参数都是瞎几把填的
+void ServoInit(void);
+
+/// @brief 总线舵机控制函数
+/// @param ID 总线舵机ID
+/// @param Angle 总线舵机转过的角度
+/// @param Time 转动过程时间
+/// @retval 无
+/// @note 根据时间匀速转动到对应设置的角度
+void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time);
 
 #endif
