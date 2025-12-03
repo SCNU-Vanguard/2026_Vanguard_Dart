@@ -42,7 +42,6 @@ typedef struct
 
     // 限幅参数
     float max_output; // 输出上限（实际输出范围为 [-max_output, +max_output]）
-    float min_output; // 死区补偿量（用于克服电机静摩擦力等）
     float max_iout;   // 积分限幅
 
     // 反馈值
@@ -77,14 +76,14 @@ typedef struct
 /*********************************************************函数声明***************************************************************/
 
 // PID初始化函数
-void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout);
+void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float max_iout);
 
 // 串级PID初始化
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
                       float outer_kp, float outer_ki, float outer_kd, float outer_kf,
                       float inner_kp, float inner_ki, float inner_kd, float inner_kf,
-                      float outer_max_out, float outer_min_out, float outer_max_iout,
-                      float inner_max_out, float inner_min_out, float inner_max_iout);
+                      float outer_max_out, float outer_max_iout,
+                      float inner_max_out, float inner_max_iout);
 
 // PID计算函数（统一接口，根据mode自动选择位置式或增量式）
 float PID_Calculate(PID_t *pid, float target, float measure);
@@ -115,7 +114,7 @@ void CASCADE_PID_Clear_Integral(CASCADE_PID_t *cascade_pid);
 
 // PID参数设置函数
 void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf);
-void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout);
+void PID_Set_OutputLimit(PID_t *pid, float max_output, float max_iout);
 
 // 检查PID是否已初始化
 uint8_t PID_Is_Initialized(PID_t *pid);

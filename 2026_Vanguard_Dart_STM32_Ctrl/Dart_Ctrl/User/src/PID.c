@@ -11,10 +11,9 @@
  * @param kd 微分系数
  * @param kf 前馈系数
  * @param max_out 输出上限（实际输出范围为 [-max_out, +max_out]）
- * @param min_out 死区补偿量（用于克服电机静摩擦力等）
  * @param max_iout 积分限幅
  */
-void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout)
+void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float max_iout)
 {
     if (pid == NULL)
         return;
@@ -29,7 +28,6 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
     pid->KD = kd;
     pid->KF = kf;
     pid->max_output = max_out;
-    pid->min_output = min_out;
     pid->max_iout = max_iout;
 
     // 设置初始化标志位
@@ -48,28 +46,26 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
  * @param inner_kd 内环微分系数
  * @param inner_kf 内环前馈系数
  * @param outer_max_out 外环输出上限
- * @param outer_min_out 外环输出下限
  * @param outer_max_iout 外环积分限幅
  * @param inner_max_out 内环输出上限
- * @param inner_min_out 内环输出下限
  * @param inner_max_iout 内环积分限幅
  */
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
                       float outer_kp, float outer_ki, float outer_kd, float outer_kf,
                       float inner_kp, float inner_ki, float inner_kd, float inner_kf,
-                      float outer_max_out, float outer_min_out, float outer_max_iout,
-                      float inner_max_out, float inner_min_out, float inner_max_iout)
+                      float outer_max_out, float outer_max_iout,
+                      float inner_max_out, float inner_max_iout)
 {
     if (cascade_pid == NULL)
         return;
 
     // 初始化外环（位置环，通常使用增量式）
     PID_Init(&cascade_pid->outer, PID_DELTA, outer_kp, outer_ki, outer_kd, outer_kf,
-             outer_max_out, outer_min_out, outer_max_iout);
+             outer_max_out, outer_max_iout);
 
     // 初始化内环（速度环，通常使用增量式）
     PID_Init(&cascade_pid->inner, PID_DELTA, inner_kp, inner_ki, inner_kd, inner_kf,
-             inner_max_out, inner_min_out, inner_max_iout);
+             inner_max_out, inner_max_iout);
 }
 
 /**
@@ -95,8 +91,7 @@ static float float_constrain(float value, float min, float max)
  * @param target 目标值
  * @param measure 测量值
  * @return PID输出值
- * @note 第一次计算只使用P项并加上最低限幅（目标为负时减去），第二次及之后使用完整P、I、D、F
- * @note 当目标值符号发生变化时，会根据变化方向加减最低限幅（换向补偿）
+ * @note 第一次计算只使用P项，第二次及之后使用完整P、I、D、F
  */
 float PID_Position_Calc(PID_t *pid, float target, float measure)
 {
@@ -113,20 +108,12 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // 计算误差
     pid->error = target - measure;
 
-    // 第一次计算：只使用P项 + 死区补偿
+    // 第一次计算：只使用P项
     if (pid->calc_count == 0)
     {
         float p_out = pid->KP * pid->error;
         
-        // 根据目标值正负决定加减死区补偿
-        if (target >= 0)
-        {
-            pid->output = p_out + pid->min_output;
-        }
-        else
-        {
-            pid->output = p_out - pid->min_output;
-        }
+        pid->output = p_out;
         
         // 输出限幅（正负对称限幅）
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
@@ -186,15 +173,8 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // 积分输出限幅
     i_out = float_constrain(i_out, -pid->max_iout, pid->max_iout);
 
-    // 总输出（根据目标值符号添加死区补偿）
-    if (target >= 0)
-    {
-        pid->output = p_out + i_out + d_out + f_out + pid->min_output;
-    }
-    else
-    {
-        pid->output = p_out + i_out + d_out + f_out - pid->min_output;
-    }
+    // 总输出
+    pid->output = p_out + i_out + d_out + f_out;
 
     // 输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
@@ -213,8 +193,7 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
  * @param target 目标值
  * @param measure 测量值
  * @return PID增量输出值（需要累加到总输出上）
- * @note 第一次计算只使用P项并加上最低限幅（目标为负时减去），第二次及之后使用完整P、I、D、F
- * @note 当目标值符号发生变化时，会根据变化方向加减最低限幅（换向补偿）
+ * @note 第一次计算只使用P项，第二次及之后使用完整P、I、D、F
  */
 float PID_Incremental_Calc(PID_t *pid, float target, float measure)
 {
@@ -231,20 +210,12 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // 计算误差
     pid->error = target - measure;
 
-    // 第一次计算：只使用P项 + 死区补偿
+    // 第一次计算：只使用P项
     if (pid->calc_count == 0)
     {
         float p_out = pid->KP * pid->error;
         
-        // 根据目标值正负决定加减死区补偿
-        if (target >= 0)
-        {
-            pid->output = p_out + pid->min_output;
-        }
-        else
-        {
-            pid->output = p_out - pid->min_output;
-        }
+        pid->output = p_out;
         
         // 输出限幅（正负对称限幅）
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
@@ -265,23 +236,16 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
         return pid->output;
     }
 
-    // 换向检测与补偿：检测目标值符号变化
-    // 换向时需要补偿 2×min_output（去掉原方向补偿 + 加上新方向补偿）
-    // 从正到负（正转→反转）：原有+min_output，需变为-min_output，所以减去2×min_output
+    // 换向检测：检测目标值符号变化
+    // 从正到负（正转→反转）
     if (pid->last_target >= 0 && target < 0)
     {
         pid->direction_changed = 1;
-        pid->output -= 2.0f * pid->min_output;  // 补偿反转阻力
-        // 换向补偿后立即限幅，防止超限
-        pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
     }
-    // 从负到正（反转→正转）：原有-min_output，需变为+min_output，所以加上2×min_output
+    // 从负到正（反转→正转）
     else if (pid->last_target < 0 && target >= 0)
     {
         pid->direction_changed = 1;
-        pid->output += 2.0f * pid->min_output;  // 补偿正转阻力
-        // 换向补偿后立即限幅，防止超限
-        pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
     }
 
     // 计算前馈值（目标值变化量）
@@ -464,16 +428,14 @@ void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf)
  * @brief PID输出限幅设置函数
  * @param pid PID结构体指针
  * @param max_output 输出上限（实际输出范围为 [-max_output, +max_output]）
- * @param min_output 死区补偿量（用于克服电机静摩擦力等）
  * @param max_iout 积分限幅
  */
-void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout)
+void PID_Set_OutputLimit(PID_t *pid, float max_output, float max_iout)
 {
     if (pid == NULL)
         return;
 
     pid->max_output = max_output;
-    pid->min_output = min_output;
     pid->max_iout = max_iout;
 }
 

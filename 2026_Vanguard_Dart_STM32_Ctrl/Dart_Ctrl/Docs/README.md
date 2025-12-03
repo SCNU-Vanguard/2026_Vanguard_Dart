@@ -74,8 +74,8 @@ void DmMotorSendCfg(uint8_t motor_id, float TargetPos, float TargetVel);
 uint8_t DM_MotorEnable(uint8_t DM_MOTOR_ID);
 uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID);
 
-// 数据解算
-void DM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_data);
+// 数据解算 (注意: 参数已改为 uint8_t*)
+void DM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
 ```
 
 **使用示例**:
@@ -101,6 +101,7 @@ DmMotorSendCfg(1, 90.0f, 10.0f);  // 角度90°, 速度10rad/s
 - 电流控制模式
 - 支持M3508、M2006等系列
 - 统一发送机制
+- **多圈累计与过零检测**
 
 **关键API**:
 ```c
@@ -110,25 +111,35 @@ void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent);
 // 发送控制函数
 uint8_t RM_MotorSendControl(MotorTypeDef *st);
 
-// 数据解算
-void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_data);
+// 数据解算 (注意: 参数已改为 uint8_t*, 输出扩展为5个float)
+void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
+
+// 辅助函数 (新增)
+void RM_Motor_Reset_Zero(uint8_t motor_id_num);  // 重置单个电机零点
+void RM_Motor_Reset_All(void);                    // 重置所有电机状态
 ```
 
 **使用示例**:
 ```c
 // 控制RM电机电流
 RmMotorSendCfg(RM_3508_GRIPPER, 5000);  // 电流值 ±16384
+
+// 重置电机零点(当前位置设为0)
+RM_Motor_Reset_Zero(0);  // 重置电机0
 ```
 
-**数据解算输出**:
-- `solved_data[0]`: 角度(°)
+**数据解算输出** (5个float):
+- `solved_data[0]`: 单圈角度(°) 0~360
 - `solved_data[1]`: 速度(rpm)
 - `solved_data[2]`: 电流(A)
+- `solved_data[3]`: **累计角度(°)** - 可超过360°，用于位置闭环
+- `solved_data[4]`: **速度(rad/s)** - 弧度制速度
 
 **注意事项**:
 - RM电机采用统一发送(4个电机一帧)
 - 发送ID固定为0x200
 - 接收ID为0x200 + MotorID
+- 累计角度会自动处理编码器过零问题
 
 ---
 
@@ -439,7 +450,7 @@ printf("执行时间: %.6f s\n", time);
 ## 文档维护
 
 - **创建时间**: 2025/11/30
-- **最后更新**: 2025/11/30
+- **最后更新**: 2025/12/03
 - **维护者**: Vanguard Team
 - **文档版本**: v1.0
 

@@ -38,8 +38,8 @@ typedef struct _MotorTypeDef
     uint8_t MotorID;
     uint8_t MotorBand;
     uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);
-    int8_t ReceiveMotorData[8];     // 电机接收数据存储
-    int8_t SendMotorData[8];        // 电机发送数据存储
+    uint8_t ReceiveMotorData[8];    // 电机接收数据存储
+    uint8_t SendMotorData[8];       // 电机发送数据存储
     CAN_TxHeaderTypeDef g_TxHeader; // 电机发送报文头
 
     // PID控制器（可选择单环或串级）
@@ -54,7 +54,7 @@ typedef struct
     MotorTypeDef MotorList[g_CanMotorNum];
     // 记录当前已注册的数量
     uint8_t registered_count;
-    int8_t RM_MOTOR_DATA_ARRAY[8]; // 电机列表发送数据的数组，每次发送RM电机的控制数据发送的都是这个arr
+    uint8_t RM_MOTOR_DATA_ARRAY[8]; // 电机列表发送数据的数组，每次发送RM电机的控制数据发送的都是这个arr
 } MotorManager_t;
 
 extern MotorManager_t MotorManager;

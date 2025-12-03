@@ -44,10 +44,22 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st);
 void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 
 /// @brief RM电机接收数据解算
-/// @param motor_id_num 大疆电机的id号（无需管其他不同品牌的电机）
-/// @param ReceiveData 接收到的数据数组
-/// @param solved_data 解算后的数据数组（至少3个float）
-void RM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_data);
+/// @param motor_id_num 大疆电机的id号 (0~7，对应电调ID 1~8)
+/// @param ReceiveData 接收到的数据数组 (8字节CAN数据)
+/// @param solved_data 解算后的数据数组（至少5个float）
+/// @note solved_data[0]: 单圈角度(°)
+/// @note solved_data[1]: 速度(rpm)  
+/// @note solved_data[2]: 电流(A)
+/// @note solved_data[3]: 累计角度(°) - 用于位置闭环
+/// @note solved_data[4]: 速度(rad/s) - 弧度制速度
+void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
+
+/// @brief 重置电机零点（当前位置设为零点）
+/// @param motor_id_num 电机ID (0~7)
+void RM_Motor_Reset_Zero(uint8_t motor_id_num);
+
+/// @brief 重置所有电机状态（用于重新初始化）
+void RM_Motor_Reset_All(void);
 
 /// @brief 用于设置发送RM电机数据
 /// @param motor_id RM电机ID

@@ -63,7 +63,7 @@ void MotorRegister(void)
     // PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer);                               // 初始化
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner, 0.0f, 0.0f);
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer, 0.0f, 0.0f);
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 扳机
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
@@ -75,7 +75,7 @@ void MotorRegister(void)
     // PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer);                               // 初始化
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0f, 0.0f);
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0f, 0.0f);
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 注册DM电机
     // 注意注册的DM电机发送和接收其实数据帧都不与RM电机冲突（在MIT模式、位置速度模式和PVT模式下，就完整通信帧而言）
@@ -169,7 +169,7 @@ void CanFliterCfg(void)
     HAL_Delay(5);
 
     // FIFO1用于接收DM电机的反馈帧，达妙电机的反馈ID是加上一个两位的偏移
-    uint8_t PB_TempArray1[1] = {10};
+    // uint8_t PB_TempArray1[1] = {10};
     // PreserveBit(PB_TempArray1, 1, PreserveResult);
     // ID_ARR[0] = 0x0010;
     ID_MASK_ARR[1] = 0x0000;
@@ -191,14 +191,14 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
     static uint8_t MotorRxDataTempArray[8] = {0}; // 数据暂存
     CAN_RxHeaderTypeDef pRxHeader;
     uint8_t CAN_RX_DATA_COUNT = 0;
-    bool ID_MATCHED = false;
+    // bool ID_MATCHED = false;
 
     // 循环处理FIFO中的所有消息
     for (uint8_t a = 0; a < FIFOmessageNum; a++)
     {
         // 获取消息
         HAL_CAN_GetRxMessage(&hcan1, fifo_num, &pRxHeader, MotorRxDataTempArray);
-        ID_MATCHED = false;
+        // ID_MATCHED = false;
 
         // 遍历所有已注册的电机，查找匹配的ID
         for (uint8_t i = 0; i < MotorManager.registered_count; i++)
@@ -214,7 +214,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
                 RM_MOTOR_CALCU(i, MotorManager.MotorList[i].ReceiveMotorData, rm_motor_solved_data);
 
                 CAN_RX_DATA_COUNT++;
-                ID_MATCHED = true;
+                // ID_MATCHED = true;
                 break; // 找到匹配的电机后跳出内层循环
             }
             // 检查是否为DM电机的反馈帧
@@ -228,7 +228,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
                 DM_MOTOR_CALCU(i, MotorManager.MotorList[i].ReceiveMotorData, dm_motor_solved_data);
 
                 CAN_RX_DATA_COUNT++;
-                ID_MATCHED = true;
+                // ID_MATCHED = true;
                 break; // 找到匹配的电机后跳出内层循环
             }
         }

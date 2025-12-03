@@ -55,8 +55,8 @@ typedef struct _MotorTypeDef {
     uint8_t MotorID;                              // 电机ID
     uint8_t MotorBand;                            // 电机品牌
     uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);  // 发送函数指针
-    int8_t ReceiveMotorData[8];                   // 接收数据缓冲
-    int8_t SendMotorData[8];                      // 发送数据缓冲
+    uint8_t ReceiveMotorData[8];                  // 接收数据缓冲
+    uint8_t SendMotorData[8];                     // 发送数据缓冲
     CAN_TxHeaderTypeDef g_TxHeader;               // CAN发送报文头
     
     // PID控制器
@@ -71,7 +71,7 @@ typedef struct _MotorTypeDef {
 typedef struct {
     MotorTypeDef MotorList[g_CanMotorNum];       // 电机列表
     uint8_t registered_count;                     // 已注册电机数量
-    int8_t RM_MOTOR_DATA_ARRAY[8];               // RM电机发送数据数组
+    uint8_t RM_MOTOR_DATA_ARRAY[8];              // RM电机发送数据数组
 } MotorManager_t;
 
 extern MotorManager_t MotorManager;  // 全局电机管理器
@@ -239,10 +239,12 @@ DmMotorSendCfg(1, 90.0, 0.0);           // DM电机
 extern float rm_motor_solved_data[5];  // RM电机解算数据
 extern float dm_motor_solved_data[5];  // DM电机解算数据
 
-// 使用示例
-float angle = rm_motor_solved_data[0];    // 角度
-float speed = rm_motor_solved_data[1];    // 速度
-float current = rm_motor_solved_data[2];  // 电流
+// RM电机数据 (5个float)
+float angle = rm_motor_solved_data[0];        // 单圈角度(°) 0~360
+float speed_rpm = rm_motor_solved_data[1];    // 速度(rpm)
+float current = rm_motor_solved_data[2];      // 电流(A)
+float total_angle = rm_motor_solved_data[3];  // 累计角度(°) - 用于位置闭环
+float speed_rad = rm_motor_solved_data[4];    // 速度(rad/s)
 ```
 
 ---
