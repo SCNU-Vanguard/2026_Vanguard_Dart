@@ -25,7 +25,6 @@ extern float dm_motor_solved_data[];
 #define SingleMotorTest 1
 
 // DM电机控制标志和数据
-static bool g_DM_CONTROL_FLAG = false;                                                // DM电机的使能允许控制标志位
 const uint8_t DM_MOTOR_ENABLE[8] = {0xFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFC};  // DM电机使能控制数据帧
 const uint8_t DM_MOTOR_DISABLE[8] = {0xFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFD}; // DM电机失能控制数据值
 static int16_t KP_RESULT = 0;
@@ -34,71 +33,73 @@ static int16_t Torque_ff = 0;
 static bool DM_ENABLE_ARR[2] = {false};
 
 /************************************************************************
- * @brief:       uint_to_float: 无符号整数转换为浮点数函数
+ * @brief:       uint_to_float: 无符号整数转换为浮点数函数（通用版）
  * @param:       x_int: 待转换的无符号整数
- * @param:       DataMode: 转换的数据字节类型
- * @retval:      浮点数结果(再转换为整数，方便发送)
- * @details:     将给定的无符号整数 x_int 在指定范围 [ x_min, x_max ] 内进行线性映射，映射结果为一个浮点数
+ * @param:       x_min: 范围最小值
+ * @param:       x_max: 范围最大值
+ * @param:       bits:  位数
+ * @retval:      浮点数结果
  ************************************************************************/
+static inline float uint_to_float_generic(int x_int, float x_min, float x_max, int bits)
+{
+    float span = x_max - x_min;
+    return ((float)x_int) * span / ((float)((1 << bits) - 1)) + x_min;
+}
+
 static float uint_to_float(float x_int, DM_DATA DataMode)
 {
-    /* converts unsigned int to float, given range and number of bits */
-    float Result = 0.0f;
     switch (DataMode)
     {
     case DM_POS:
-        Result = ((float)x_int) * g_DM_POS_DIFFERENCE / ((float)((1 << DM_POS_BIT) - 1)) + g_DM_LOWER_LIMITATION_POS;
-        break;
+        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, DM_POS_BIT);
     case DM_VEL:
-        Result = ((float)x_int) * g_DM_VEL_DIFFERENCE / ((float)((1 << DM_VEL_BIT) - 1)) + g_DM_LOWER_LIMITATION_VEL;
-        break;
+        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, DM_VEL_BIT);
     case DM_KD:
-        Result = ((float)x_int) * g_DM_KD_DIFFERENCE / ((float)((1 << DM_KD_BIT) - 1)) + g_DM_LOWER_LIMITATION_KD;
-        break;
+        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KD, g_DM_UPPER_LIMITATION_KD, DM_KD_BIT);
     case DM_KP:
-        Result = ((float)x_int) * g_DM_KP_DIFFERENCE / ((float)((1 << DM_KP_BIT) - 1)) + g_DM_LOWER_LIMITATION_KP;
-        break;
+        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KP, g_DM_UPPER_LIMITATION_KP, DM_KP_BIT);
     case DM_TORQUE:
-        Result = ((float)x_int) * g_DM_TORQUE_DIFFERENCE / ((float)((1 << DM_TORQUE_BIT) - 1)) + g_DM_LOWER_LIMITATION_TORQUE;
-        break;
+        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, DM_TORQUE_BIT);
     default:
-        break;
+        return 0.0f;
     }
-    return Result;
 }
 
 /************************************************************************
- * @brief:       float_to_uint: 浮点数转换为无符号整数函数
- * @param:       x_int: 待转换的无符号整数
- * @param:       DataMode: 转换的数据字节类型
+ * @brief:       float_to_uint: 浮点数转换为无符号整数函数（通用版）
+ * @param:       x_float: 待转换的浮点数
+ * @param:       x_min: 范围最小值
+ * @param:       x_max: 范围最大值
+ * @param:       bits:  位数
  * @retval:      无符号整数结果
- * @details:     将给定的浮点数 x 在指定范围 [ x_min, x_max ] 内进行线性映射，映射结果为一个无符号整数
  ************************************************************************/
+static inline int float_to_uint_generic(float x_float, float x_min, float x_max, int bits)
+{
+    float span = x_max - x_min;
+    if (x_float < x_min)
+        x_float = x_min;
+    if (x_float > x_max)
+        x_float = x_max;
+    return (int)((x_float - x_min) * ((float)((1 << bits) - 1)) / span);
+}
+
 static int float_to_uint(float x_float, DM_DATA DataMode)
 {
-    /* Converts a float to an unsigned int, given range and number of bits */
-    int16_t Result = 0.0f;
     switch (DataMode)
     {
     case DM_POS:
-        Result = (int32_t)((x_float - g_DM_LOWER_LIMITATION_POS) * ((float)((1 << DM_POS_BIT) - 1)) / g_DM_POS_DIFFERENCE);
-        break;
+        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, DM_POS_BIT);
     case DM_VEL:
-        Result = (int32_t)((x_float - g_DM_LOWER_LIMITATION_VEL) * ((float)((1 << DM_VEL_BIT) - 1)) / g_DM_VEL_DIFFERENCE);
-        break;
+        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, DM_VEL_BIT);
     case DM_KD:
-        Result = (int32_t)((x_float - g_DM_LOWER_LIMITATION_KD) * ((float)((1 << DM_KD_BIT) - 1)) / g_DM_KD_DIFFERENCE);
-        break;
+        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_KD, g_DM_UPPER_LIMITATION_KD, DM_KD_BIT);
     case DM_KP:
-        Result = (int32_t)((x_float - g_DM_LOWER_LIMITATION_KP) * ((float)((1 << DM_KP_BIT) - 1)) / g_DM_KP_DIFFERENCE);
-        break;
+        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_KP, g_DM_UPPER_LIMITATION_KP, DM_KP_BIT);
     case DM_TORQUE:
-        Result = (int32_t)((x_float - g_DM_LOWER_LIMITATION_TORQUE) * ((float)((1 << DM_TORQUE_BIT) - 1)) / g_DM_TORQUE_DIFFERENCE);
-        break;
+        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, DM_TORQUE_BIT);
     default:
-        break;
+        return 0;
     }
-    return Result;
 }
 
 /**********************************************************发送电机数据专用函数**********************************************************************/
@@ -182,7 +183,7 @@ uint8_t DM_MotorSendControl(MotorTypeDef *st)
 /// @brief 设置达妙电机发送的数据
 /// @param motor_id 达妙电机ID
 /// @param data 数据所在数组的指针
-void DM_MotorSetTxData(uint8_t motor_id, int8_t *data)
+void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
 {
 // MIT模式
 #ifdef DM_MIT_MODE
@@ -229,47 +230,48 @@ void DM_MotorSetTxData(uint8_t motor_id, int8_t *data)
  * T_ROTOR表示电机内部线圈的均温，单位℃
  ***********************************************************************/
 
-/// @brief DM电机的解算
-/// @param motor_id_num DM电机的id号（无需管理其他品牌型号的电机）
+/*====================  静态变量（速度滤波）  ====================*/
+#define DM_SPEED_FILTER_COEF 0.8f    // 速度滤波系数（0~1，越大越平滑）
+static float last_velocity[4] = {0}; // 上次速度值（最多4个DM电机）
+
+/// @brief DM电机的解算（优化版）
+/// @param motor_id_num DM电机的id号（0~3）
 /// @param ReceiveData 接收到的数据数组
 /// @param solved_data 解算后的数据数组（至少5个float）
-/// @note solved_data[0]: 位置(°), solved_data[1]: 速度(rad/s), solved_data[2]: 力矩(N*m)
+/// @note solved_data[0]: 位置(rad), solved_data[1]: 速度(rad/s), solved_data[2]: 力矩(N·m)
 ///       solved_data[3]: MOS温度(℃), solved_data[4]: 转子温度(℃)
-void DM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_data)
+void DM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data)
 {
-    // 对得到的数据进行移位
-    int16_t DM_MOTOR_STATE_CODE = ((((uint16_t)ReceiveData[0]) - (motor_id_num + g_DM_MOTOR_BIAS_ADDR_RXID)) >> 4);
+    // =============== 1. 数据解析（位操作压缩） ===============
+    uint16_t pos_raw = ((uint16_t)ReceiveData[1] << 8) | ReceiveData[2];
+    uint16_t vel_raw = ((uint16_t)ReceiveData[3] << 4) | (ReceiveData[4] >> 4);
+    uint16_t tor_raw = ((ReceiveData[4] & 0x0F) << 8) | ReceiveData[5];
 
-    int16_t DM_MOTOR_DATA_ROTARY_POSTION = (((uint16_t)ReceiveData[1]) << 8) | ((uint16_t)ReceiveData[2]);
+    // =============== 2. 数据转换（使用通用函数） ===============
+#ifdef DM_USE_4310 // 4310电机使用MIT协议范围
+    solved_data[0] = uint_to_float_generic(pos_raw, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, 16);
+    float vel_new = uint_to_float_generic(vel_raw, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, 12);
+    solved_data[2] = uint_to_float_generic(tor_raw, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, 12);
+#else // 3519等电机
+    solved_data[0] = pos_raw / 8192.0f * 360.0f; // 位置(°)
+    float vel_new = (float)(int16_t)vel_raw;     // 速度原始值
+    solved_data[2] = tor_raw / 16384.0f * 20.0f; // 力矩(N·m)
+#endif
 
-    int16_t DM_MOTOR_DATA_ROTARY_SPEED = (((uint16_t)ReceiveData[3]) << 4) | ((uint16_t)ReceiveData[4] >> 4);
+    // =============== 3. 速度滤波 ===============
+    if (motor_id_num < 4)
+    {
+        solved_data[1] = DM_SPEED_FILTER_COEF * last_velocity[motor_id_num] + (1.0f - DM_SPEED_FILTER_COEF) * vel_new;
+        last_velocity[motor_id_num] = solved_data[1];
+    }
+    else
+    {
+        solved_data[1] = vel_new;
+    }
 
-    int16_t DM_MOTOR_DATA_ROTARY_TORQUE = (((uint16_t)ReceiveData[4]) & 0x000F) | ((uint16_t)ReceiveData[5]);
-
-    int16_t DM_MOTOR_DATA_TEMPRATURE_MOS = (uint16_t)ReceiveData[6];
-
-    int16_t DM_MOTOR_DATA_TEMPRATURE_ROTOR = (uint16_t)ReceiveData[7];
-
-    // 解算数据
-    // 0：解算后的位置数据（实际上是角度）
-    // 1：解算后的速度
-    // 2：解算后的力矩
-    // 3：解算后的MOS管平均温度数据
-    // 4：解算后的线圈平均温度数据
-
-    // 这个是4310的解算函数，这里飞镖也会用到
-    // solved_data[0] = uint_to_float(DM_MOTOR_DATA_ROTARY_POSTION, DM_POS);
-    // solved_data[1] = uint_to_float(DM_MOTOR_DATA_ROTARY_SPEED, DM_VEL);
-    // solved_data[2] = uint_to_float(DM_MOTOR_DATA_ROTARY_TORQUE, DM_TORQUE);
-    // solved_data[3] = (float)DM_MOTOR_DATA_TEMPRATURE_MOS;
-    // solved_data[4] = (float)DM_MOTOR_DATA_TEMPRATURE_ROTOR;
-
-    // 这个是3519的解算
-    solved_data[0] = DM_MOTOR_DATA_ROTARY_POSTION / 8192.0f * 360.0f;           // 单位为°
-    solved_data[1] = (float)DM_MOTOR_DATA_ROTARY_SPEED;                         // 单位为rad/s
-    solved_data[2] = ((float)DM_MOTOR_DATA_ROTARY_TORQUE) / (16384.0f / 20.0f); // 单位为N*m
-    solved_data[3] = (float)(DM_MOTOR_DATA_TEMPRATURE_MOS);                     // 单位为℃
-    solved_data[4] = (float)(DM_MOTOR_DATA_TEMPRATURE_ROTOR);                   // 单位为℃
+    // =============== 4. 温度 ===============
+    solved_data[3] = (float)ReceiveData[6]; // MOS温度
+    solved_data[4] = (float)ReceiveData[7]; // 转子温度
 }
 
 /**********************************************************暴露接口，下面是外部一般用于调用的函数******************************************************/
@@ -290,9 +292,9 @@ void DmMotorSendCfg(uint8_t motor_id, float TargetPos, float TargetVel)
     int16_t Pos_des = float_to_uint((float)TargetPos, DM_POS);
     int16_t Vel_des = float_to_uint((float)TargetVel, DM_VEL);
 
-    static int8_t data[8] = {0x00};
+    static uint8_t data[8] = {0x00};
     data[0] = Pos_des >> 8;
-    data[1] = (int8_t)Pos_des;
+    data[1] = (uint8_t)Pos_des;
     data[2] = Vel_des >> 4;
     data[3] = ((Vel_des & 0x000F) << 4) | ((KP_RESULT & 0x0F00) >> 8); // 当更改速度限幅的时候可能要更改这里的移位逻辑
     data[4] = KP_RESULT;

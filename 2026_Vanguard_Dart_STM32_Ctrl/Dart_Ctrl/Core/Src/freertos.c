@@ -50,9 +50,9 @@
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name = "defaultTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t)osPriorityNormal,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -65,11 +65,12 @@ void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
-void MX_FREERTOS_Init(void) {
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
+void MX_FREERTOS_Init(void)
+{
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
@@ -101,7 +102,6 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
-
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -126,14 +126,15 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   // int16_t LimitCurrent = 300;
   // vTaskDelay(1);
-  float TargetSpeed = 15.0f;
+  // float TargetSpeed = 15.0f;
+
   for (;;)
   {
     // 默认任务用来调电机
 #if DM_TestUse
     DmMotorSendCfg(1, 1.5, 1.5);
 #elif RM_TestUse
-    RmMotorPID_Calc(TargetSpeed);
+    // RmMotorPID_Calc(TargetSpeed);
     // if (TargetSpeed < 30)
     // {
     //   TargetSpeed += 5.0f;
@@ -142,8 +143,9 @@ void StartDefaultTask(void *argument)
     // {
     //   TargetSpeed = -10.0f;
     // }
-    vTaskDelay(100);
-// RmMotorSendCfg(1, 180);
+    // vTaskDelay(1000);
+    // RmMotorSendCfg(1, 500);
+    vTaskDelay(1);
 #endif
   }
   /* USER CODE END StartDefaultTask */
@@ -153,4 +155,3 @@ void StartDefaultTask(void *argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

@@ -109,13 +109,13 @@ uint8_t DM_MotorSendControl(MotorTypeDef *st);
 /// @brief 设置达妙电机发送的数据
 /// @param motor_id 达妙电机ID
 /// @param data 数据所在数组的指针
-void DM_MotorSetTxData(uint8_t motor_id, int8_t *data);
+void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 
 /// @brief DM电机的解算
 /// @param motor_id_num DM电机的id号（无需管理其他品牌型号的电机）
 /// @param ReceiveData 接收到的数据数组
 /// @param solved_data 解算后的数据数组（至少5个float）
-void DM_MOTOR_CALCU(uint8_t motor_id_num, int8_t *ReceiveData, float *solved_data);
+void DM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
 
 /// @brief 用于设置发送DM电机数据
 /// @param motor_id DM电机的电机号

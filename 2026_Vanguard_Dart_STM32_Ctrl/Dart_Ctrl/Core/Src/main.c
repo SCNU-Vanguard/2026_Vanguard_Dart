@@ -106,6 +106,8 @@ int main(void)
   MotorInit();
   CanFliterCfg();
   BSP_UART_Init();
+  // 初始化总线舵机测试
+  ServoInit();
   // 注意，有些初始化只可以在这里完成
   /* USER CODE END 2 */
 

@@ -4,6 +4,8 @@
 #include "HX06L.h"
 #include "bsp_dwt.h"
 #include <string.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 /// @brief CRC校验生成（调用bsp_uart中的统一CRC函数）
 /// @param prtSendData 发送数据的指针（包含包头0x55 0x55）
@@ -84,178 +86,171 @@ static inline uint8_t SingleSerovoInit(uint8_t ServoID, uint8_t Bias, uint32_t v
     UART_SetProtocol(BSP_UART6, SERVO_COM); // true为舵机, false为DART上位机通信协议
 
     uint8_t InitDataArr[16] = {0}; // 发送数据的暂存数组
-    uint8_t DataLength = 0;
-    uint16_t send_result = 0; // UART发送结果
+    uint16_t send_result = 0;      // UART发送结果
 
     memset(InitDataArr, 0x55, 16);
     // 初始化舵机ID(读写)
-    InitDataArr[2] = 0x01;
-    InitDataArr[3] = get_servo_command_value(SERVO_ID_READ);
-    DataLength = get_servo_data_length(SERVO_ID_READ);
-    InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, DataLength + 3);
+    // 数据帧格式: 帧头(0x55 0x55) | ID | 数据长度 | 指令 | 参数 | 校验
+    InitDataArr[2] = 0x01;                                                            // ID
+    InitDataArr[3] = get_servo_data_length(SERVO_ID_READ);                            // 数据长度
+    InitDataArr[4] = get_servo_command_value(SERVO_ID_READ);                          // 指令
+    InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ID_READ)); // 校验
+    send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ID_READ) + 3);
     if (send_result == 0)
         return 0; // UART发送失败
-    HAL_Delay(1);
+    HAL_Delay(2);
     UART_GetServoPacket(BSP_UART6, &HxFb);
 
-    InitDataArr[3] = get_servo_command_value(SERVO_ID_WRITE);
-    DataLength = get_servo_data_length(SERVO_ID_WRITE);
-    InitDataArr[4] = 0x0D;
-    InitDataArr[5] = ServoID; // 设置ID
-    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
+    InitDataArr[3] = get_servo_data_length(SERVO_ID_WRITE);                            // 数据长度
+    InitDataArr[4] = get_servo_command_value(SERVO_ID_WRITE);                          // 指令
+    InitDataArr[5] = ServoID;                                                          // 参数: 设置ID
+    InitDataArr[6] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ID_WRITE)); // 校验
+    send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ID_WRITE) + 3);
     if (send_result == 0)
         return 0; // UART发送失败
-    UART_GetServoPacket(BSP_UART6, &HxFb);
-    HAL_Delay(1);
+    HAL_Delay(2);
 
     // 初始化舵机的工作模式(读写) ？？？？似乎不用
     // InitDataArr[2] = ServoID;
-    // InitDataArr[3] = get_servo_command_value(SERVO_OR_MOTOR_MODE_READ);
-    // DataLength = get_servo_data_length(SERVO_OR_MOTOR_MODE_READ);
-    // InitDataArr[4] = ;
+    // InitDataArr[3] = get_servo_data_length(SERVO_OR_MOTOR_MODE_READ);                                   // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_OR_MOTOR_MODE_READ);                                 // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_OR_MOTOR_MODE_READ));        // 校验
 
     // HAL_Delay(1);
 
     // 初始化舵机的bias(读写)，偏差是 +-30°，这里的写范围是 -125~125 线性映射到 =+-30°
-    InitDataArr[2] = ServoID;
-    InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_READ);
-    DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_READ);
-    InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_ADJUST);
-    DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST);
-    InitDataArr[4] = 0x11;
-    InitDataArr[5] = Bias;
-    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    InitDataArr[2] = ServoID;
-    InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_WRITE);
-    DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);
-    InitDataArr[4] = 0x12;
-    InitDataArr[5] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    // 初始话舵机的温度阈值 电压阈值 角度阈值 上电状态(读写)
-    // 温度阈值
-    InitDataArr[2] = ServoID;
-    InitDataArr[3] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_READ);
-    DataLength = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ);
-    InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    InitDataArr[3] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_WRITE);
-    DataLength = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE);
-    InitDataArr[4] = 0x18;
-    InitDataArr[5] = Temp;
-    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    // 输入电压4500-14000mV
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    // 电压阈值
-    InitDataArr[2] = ServoID;
-    InitDataArr[3] = get_servo_command_value(SERVO_VIN_LIMIT_READ);
-    DataLength = get_servo_data_length(SERVO_VIN_LIMIT_READ);
-    InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    InitDataArr[3] = get_servo_command_value(SERVO_VIN_LIMIT_WRITE);
-    DataLength = get_servo_data_length(SERVO_VIN_LIMIT_WRITE);
-    InitDataArr[4] = 0x16;
-    vlimit_l = vlimit_l < 4500 ? 4500 : vlimit_l;
-    vlimit_h = vlimit_h > 14000 ? 14000 : vlimit_h;
-    uint32_t real_limit_l = vlimit_l > vlimit_h ? vlimit_h : vlimit_l;
-    uint32_t real_limit_h = vlimit_l > vlimit_h ? vlimit_l : vlimit_h;
-    InitDataArr[5] = (uint8_t)real_limit_l;        // 最小输入电压低8位
-    InitDataArr[6] = (uint8_t)(real_limit_l >> 8); // 最小输入电压高8位
-    InitDataArr[7] = (uint8_t)real_limit_h;        // 最大输入电压低8位
-    InitDataArr[8] = (uint8_t)(real_limit_l << 8); // 最大输入电压高8位
-    InitDataArr[9] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
-
-    // // 回读确认数据之后再次保存防止掉电丢失
-    // InitDataArr[3] = get_servo_command_value(SERVO_VIN_LIMIT_READ);
-    // DataLength = get_servo_data_length(SERVO_VIN_LIMIT_READ);
-    // InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    // UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
+    // InitDataArr[2] = ServoID;
+    // InitDataArr[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_READ);                                    // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_READ);                                  // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_READ));         // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_READ) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
     // HAL_Delay(1);
 
-    // InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_OFFSET_WRITE);
-    // DataLength = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);
-    // InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    // UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
+    // InitDataArr[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST);                                  // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_ADJUST);                                // 指令
+    // InitDataArr[5] = Bias;                                                                              // 参数
+    // InitDataArr[6] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST));       // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
+
+    // InitDataArr[2] = ServoID;
+    // InitDataArr[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);                                   // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_WRITE);                                 // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE));        // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
+
+    // // 初始话舵机的温度阈值 电压阈值 角度阈值 上电状态(读写)
+    // // 温度阈值
+    // InitDataArr[2] = ServoID;
+    // InitDataArr[3] = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ);                                  // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_READ);                                // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ));       // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
+
+    // InitDataArr[3] = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE);                                 // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_WRITE);                               // 指令
+    // InitDataArr[5] = Temp;                                                                              // 参数: 温度阈值范围为50到85
+    // InitDataArr[6] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE));      // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
+
+    // // 电压阈值
+    // // 最小初始化电压范围:4500 - 14000 mv, 最大输入电压范围:4500 - 14000 mv
+    // InitDataArr[2] = ServoID;
+    // InitDataArr[3] = get_servo_data_length(SERVO_VIN_LIMIT_READ);                                       // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_VIN_LIMIT_READ);                                     // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_VIN_LIMIT_READ));            // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_VIN_LIMIT_READ) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
+
+    // InitDataArr[3] = get_servo_data_length(SERVO_VIN_LIMIT_WRITE);                                      // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_VIN_LIMIT_WRITE);                                    // 指令
+    // vlimit_l = vlimit_l < 4500 ? 4500 : vlimit_l;
+    // vlimit_h = vlimit_h > 14000 ? 14000 : vlimit_h;
+    // uint32_t real_limit_l = vlimit_l > vlimit_h ? vlimit_h : vlimit_l;
+    // uint32_t real_limit_h = vlimit_l > vlimit_h ? vlimit_l : vlimit_h;
+    // InitDataArr[5] = (uint8_t)real_limit_l;                                                             // 参数: 最小输入电压低8位
+    // InitDataArr[6] = (uint8_t)(real_limit_l >> 8);                                                      // 参数: 最小输入电压高8位
+    // InitDataArr[7] = (uint8_t)real_limit_h;                                                             // 参数: 最大输入电压低8位
+    // InitDataArr[8] = (uint8_t)(real_limit_h >> 8);                                                      // 参数: 最大输入电压高8位
+    // InitDataArr[9] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_VIN_LIMIT_WRITE));           // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_VIN_LIMIT_WRITE) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
+
+    // // 回读确认数据之后再次保存防止掉电丢失
+    // InitDataArr[3] = get_servo_data_length(SERVO_VIN_LIMIT_READ);                                       // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_VIN_LIMIT_READ);                                     // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_VIN_LIMIT_READ));            // 校验
+    // UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_VIN_LIMIT_READ) + 3);
+    // HAL_Delay(1);
+
+    // InitDataArr[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);                                   // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_WRITE);                                 // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE));        // 校验
+    // UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE) + 3);
     // HAL_Delay(1);
 
     // 角度阈值
-    InitDataArr[2] = ServoID;
-    InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_LIMIT_READ);
-    DataLength = get_servo_data_length(SERVO_ANGLE_LIMIT_READ);
-    InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
+    // 数据0 - 1000, 最小角度低八位 | 最小角度高八位 | 最大角度低八位 | 最大角度高8位
+    // InitDataArr[2] = ServoID;
+    // InitDataArr[3] = get_servo_data_length(SERVO_ANGLE_LIMIT_READ);                                     // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_ANGLE_LIMIT_READ);                                   // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ANGLE_LIMIT_READ));          // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ANGLE_LIMIT_READ) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
 
-    InitDataArr[3] = get_servo_command_value(SERVO_ANGLE_LIMIT_WRITE);
-    DataLength = get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE);
-    InitDataArr[4] = 0x14;
-    alimit_l = alimit_l > 1000 ? 1000 : alimit_l;
-    alimit_h = alimit_h > 1000 ? 1000 : alimit_h;
-    real_limit_l = alimit_l > alimit_h ? alimit_h : alimit_l;
-    real_limit_h = alimit_l > alimit_h ? alimit_l : alimit_h;
-    InitDataArr[5] = (uint8_t)real_limit_l;        // 最低角度低位
-    InitDataArr[6] = (uint8_t)(real_limit_l >> 8); // 最低角度高位
-    InitDataArr[7] = (uint8_t)real_limit_h;        // 最高角度低位
-    InitDataArr[8] = (uint8_t)(real_limit_h >> 8); // 最高角度高位
-    InitDataArr[9] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
+    // InitDataArr[3] = get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE);                                    // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_ANGLE_LIMIT_WRITE);                                  // 指令
+    // alimit_l = alimit_l > 1000 ? 1000 : alimit_l;
+    // alimit_h = alimit_h > 1000 ? 1000 : alimit_h;
+    // real_limit_l = alimit_l > alimit_h ? alimit_h : alimit_l;
+    // real_limit_h = alimit_l > alimit_h ? alimit_l : alimit_h;
+    // InitDataArr[5] = (uint8_t)real_limit_l;                                                             // 参数: 最低角度低位
+    // InitDataArr[6] = (uint8_t)(real_limit_l >> 8);                                                      // 参数: 最低角度高位
+    // InitDataArr[7] = (uint8_t)real_limit_h;                                                             // 参数: 最高角度低位
+    // InitDataArr[8] = (uint8_t)(real_limit_h >> 8);                                                      // 参数: 最高角度高位
+    // InitDataArr[9] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE));         // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
 
-    // 上电状态
-    InitDataArr[2] = ServoID;
-    InitDataArr[3] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_READ);
-    DataLength = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ);
-    InitDataArr[4] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
+    // // 上电状态
+    // InitDataArr[2] = ServoID;
+    // InitDataArr[3] = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ);                                  // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_READ);                                // 指令
+    // InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ));       // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
 
-    InitDataArr[3] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_WRITE);
-    DataLength = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE);
-    InitDataArr[4] = 0x1F;
-    InitDataArr[5] = on; // todo
-    InitDataArr[6] = CRC_GNERATOR(InitDataArr, DataLength);
-    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, DataLength + 3);
-    if (send_result == 0)
-        return 0; // UART发送失败
-    HAL_Delay(1);
+    // InitDataArr[3] = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE);                                 // 数据长度
+    // InitDataArr[4] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_WRITE);                               // 指令
+    // InitDataArr[5] = on;                                                                                // 参数
+    // InitDataArr[6] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE));      // 校验
+    // send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE) + 3);
+    // if (send_result == 0)
+    //     return 0; // UART发送失败
+    // HAL_Delay(1);
 
     return 1; // 初始化成功
 }
@@ -267,9 +262,9 @@ void ServoInit(void)
 {
     // 初始化3个总线舵机
     // 到时候一个一个来初始化
-    SingleSerovoInit(1, 0, 0, 0, 0, 0, 0, 0);
-    SingleSerovoInit(2, 0, 0, 0, 0, 0, 0, 0);
-    SingleSerovoInit(3, 0, 0, 0, 0, 0, 0, 0);
+    SingleSerovoInit(1, 0, 4500, 14000, 90, 0, 90, 0);
+    // SingleSerovoInit(2, 0, 0, 0, 0, 0, 0, 0);
+    // SingleSerovoInit(3, 0, 0, 0, 0, 0, 0, 0);
 }
 
 /// @brief 总线舵机控制函数
@@ -281,17 +276,15 @@ void ServoInit(void)
 void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
 {
     uint8_t data[16] = {0x00};
-    uint8_t DataLength = 0;
-    data[0] = 0x55;
-    data[1] = 0x55;
-    data[2] = ID;
-    data[3] = get_servo_command_value(SERVO_MOVE_TIME_WRITE);
-    DataLength = get_servo_data_length(SERVO_MOVE_TIME_WRITE);
-    data[4] = 0x01;
-    data[5] = (uint8_t)Angle;                 // 角度低八位
-    data[6] = (uint8_t)(Angle >> 8);          // 角度高八位
-    data[7] = (uint8_t)Time;                  // 时间低八位
-    data[8] = (uint8_t)(Time >> 8);           // 时间高8位
-    data[9] = CRC_GNERATOR(data, DataLength); // CRC校验
-    UART_Send(BSP_UART3, (const uint8_t *)data, DataLength + 3);
+    data[0] = 0x55;                                                             // 帧头
+    data[1] = 0x55;                                                             // 帧头
+    data[2] = ID;                                                               // ID号
+    data[3] = get_servo_data_length(SERVO_MOVE_TIME_WRITE);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_MOVE_TIME_WRITE);                   // 指令
+    data[5] = (uint8_t)Angle;                                                   // 参数: 角度低八位
+    data[6] = (uint8_t)(Angle >> 8);                                            // 参数: 角度高八位
+    data[7] = (uint8_t)Time;                                                    // 参数: 时间低八位
+    data[8] = (uint8_t)(Time >> 8);                                             // 参数: 时间高8位
+    data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_WRITE)); // CRC校验
+    UART_Send(BSP_UART6, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_WRITE) + 3);
 }
