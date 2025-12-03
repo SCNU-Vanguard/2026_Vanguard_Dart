@@ -63,7 +63,8 @@ int main(void) {
 **主要功能**:
 - 支持MIT模式控制
 - 位置、速度、力矩控制
-- 浮点数与整数转换
+- **通用浮点数转换函数**（参数化设计）
+- **速度滤波**（一阶低通滤波）
 
 **关键API**:
 ```c
@@ -71,11 +72,14 @@ int main(void) {
 void DmMotorSendCfg(uint8_t motor_id, float TargetPos, float TargetVel);
 
 // 使能/失能电机
-uint8_t DM_MotorEnable(uint8_t DM_MOTOR_ID);
-uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID);
+uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID);  // 公开接口
 
-// 数据解算 (注意: 参数已改为 uint8_t*)
+// 数据解算（带速度滤波）
 void DM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
+
+// 通用转换函数（内部使用）
+// float_to_uint_generic(x, x_min, x_max, bits) - 带限幅
+// uint_to_float_generic(x_int, x_min, x_max, bits)
 ```
 
 **使用示例**:
@@ -84,12 +88,24 @@ void DM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_da
 DmMotorSendCfg(1, 90.0f, 10.0f);  // 角度90°, 速度10rad/s
 ```
 
-**数据解算输出**:
-- `solved_data[0]`: 位置(角度°)
-- `solved_data[1]`: 速度(rad/s)
+**数据解算输出** (5个float):
+- `solved_data[0]`: 位置(°) - 4310用rad，3519用°
+- `solved_data[1]`: 速度(rad/s) - **带一阶滤波**
 - `solved_data[2]`: 力矩(N·m)
 - `solved_data[3]`: MOS温度(℃)
 - `solved_data[4]`: 转子温度(℃)
+
+**电机类型切换**:
+```c
+// 在DM_Motor.h中定义宏切换
+#define DM_USE_4310  // 使用4310电机（MIT协议范围）
+// 不定义则使用3519等电机
+```
+
+**速度滤波参数**:
+```c
+#define DM_SPEED_FILTER_COEF 0.8f  // 滤波系数（0~1，越大越平滑）
+```
 
 ---
 
@@ -152,23 +168,33 @@ RM_Motor_Reset_Zero(0);  // 重置电机0
 - 增量式PID
 - 串级PID(位置-速度双环)
 - 前馈控制
+- **微分先行**（可选）
 
 **关键API**:
 ```c
-// 初始化PID
-void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, 
-              float kf, float max_out, float max_iout);
+// 初始化PID（已移除min_output参数）
+void PID_Init(PID_t *pid, PID_MODE_e mode, 
+              float kp, float ki, float kd, float kf, 
+              float max_out, float max_iout);
 
 // 串级PID初始化
-void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid, ...);
+void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
+                      float outer_kp, float outer_ki, float outer_kd, float outer_kf,
+                      float inner_kp, float inner_ki, float inner_kd, float inner_kf,
+                      float outer_max_out, float outer_max_iout,
+                      float inner_max_out, float inner_max_iout);
 
-// PID计算
+// PID计算（统一接口）
 float PID_Calculate(PID_t *pid, float target, float measure);
 
 // 串级PID计算
 float CASCADE_PID_Calculate(CASCADE_PID_t *cascade_pid, 
                             float outer_target, float outer_measure, 
                             float inner_measure);
+
+// 清零函数
+void PID_Clear(PID_t *pid);           // 清除所有状态
+void PID_Clear_Integral(PID_t *pid);  // 仅清积分
 ```
 
 **使用示例**:
@@ -178,6 +204,10 @@ PID_t speed_pid;
 PID_Init(&speed_pid, PID_POSITION, 5.0f, 0.1f, 0.0f, 0.0f, 16384.0f, 5000.0f);
 float output = PID_Calculate(&speed_pid, 1000.0f, current_speed);
 
+// 增量式PID
+PID_t delta_pid;
+PID_Init(&delta_pid, PID_DELTA, 5.0f, 0.2f, 0.0f, 0.0f, 600.0f, 200.0f);
+
 // 串级PID
 CASCADE_PID_t pos_speed_pid;
 CASCADE_PID_Init(&pos_speed_pid, 
@@ -185,7 +215,12 @@ CASCADE_PID_Init(&pos_speed_pid,
                  5.0f, 0.2f, 0.0f, 0.0f,   // 内环参数
                  100.0f, 50.0f,             // 外环限幅
                  16384.0f, 10000.0f);       // 内环限幅
-float output = CASCADE_PID_Calculate(&pos_speed_pid, target_pos, current_pos, current_speed);
+```
+
+**配置宏**:
+```c
+// 在PID.h中配置
+#define PID_DERIVATIVE_ON_MEASUREMENT 0U  // 1=微分先行, 0=普通微分
 ```
 
 ---
@@ -221,6 +256,7 @@ float output = CASCADE_PID_Calculate(&pos_speed_pid, target_pos, current_pos, cu
 - 使用UART6进行通信
 - 需配合BSP_UART模块使用
 - CRC校验算法: `~(累加和) & 0xFF`
+- 数据帧格式: `帧头(0x55 0x55) | ID | 数据长度 | 指令 | 参数 | 校验`
 
 ---
 
