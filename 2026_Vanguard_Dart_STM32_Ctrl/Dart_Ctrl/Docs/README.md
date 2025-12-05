@@ -118,6 +118,7 @@ DmMotorSendCfg(1, 90.0f, 10.0f);  // 角度90°, 速度10rad/s
 - 支持M3508、M2006等系列
 - 统一发送机制
 - **多圈累计与过零检测**
+- **串级PID支持**（位置环+速度环）
 
 **关键API**:
 ```c
@@ -133,6 +134,9 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_da
 // 辅助函数 (新增)
 void RM_Motor_Reset_Zero(uint8_t motor_id_num);  // 重置单个电机零点
 void RM_Motor_Reset_All(void);                    // 重置所有电机状态
+
+// PID控制计算（示例函数）
+void RmMotorPID_Calc(float target);               // 单环或串级PID计算
 ```
 
 **使用示例**:
@@ -142,20 +146,46 @@ RmMotorSendCfg(RM_3508_GRIPPER, 5000);  // 电流值 ±16384
 
 // 重置电机零点(当前位置设为0)
 RM_Motor_Reset_Zero(0);  // 重置电机0
+
+// 串级PID初始化示例（位置环+速度环）
+CASCADE_PID_Init(&MotorManager.MotorList[0].cascade_pid, 
+                 10.0f, 0.1f, 0.5f, 0.0f,      // 外环（位置）参数
+                 175.91f, 0.40f, 0.0f, 7.91f,  // 内环（速度）参数
+                 100.0f, 50.0f,                 // 外环限幅
+                 16384.0f, 10000.0f);           // 内环限幅
 ```
 
 **数据解算输出** (5个float):
 - `solved_data[0]`: 单圈角度(°) 0~360
-- `solved_data[1]`: 速度(rpm)
+- `solved_data[1]`: 速度(rpm) - **带一阶滤波**
 - `solved_data[2]`: 电流(A)
 - `solved_data[3]`: **累计角度(°)** - 可超过360°，用于位置闭环
 - `solved_data[4]`: **速度(rad/s)** - 弧度制速度
+
+**串级PID参数说明**（已调试的速度环参数）:
+```c
+// 速度环（内环）参数 - 已更新
+float inner_kp = 175.91f;  // 速度环比例系数
+float inner_ki = 0.40f;    // 速度环积分系数
+float inner_kd = 0.0f;     // 速度环微分系数
+float inner_kf = 7.91f;    // 速度环前馈系数
+
+// 速度环限幅参数
+float inner_max_out = 16384.0f;  // 最大输出（电流）
+float inner_max_iout = 10000.0f; // 最大积分输出
+```
+
+**速度滤波**:
+- RM电机速度数据采用一阶低通滤波
+- 滤波公式: `speed_filtered = speed_new * 0.9 + speed_old * 0.1`
+- 可有效减少速度跳变
 
 **注意事项**:
 - RM电机采用统一发送(4个电机一帧)
 - 发送ID固定为0x200
 - 接收ID为0x200 + MotorID
 - 累计角度会自动处理编码器过零问题
+- 速度反馈使用 `solved_data[4]` (rad/s) 更适合PID控制
 
 ---
 
@@ -233,30 +263,140 @@ CASCADE_PID_Init(&pos_speed_pid,
 - 串口总线舵机控制
 - 支持位置、速度、力矩控制
 - 多种工作模式
+- **支持两种通信协议**（可配置切换）
 
-**协议格式**:
+**⚠️ 重要更新：通信协议变化**
+
+代码支持两种通信协议，通过宏 `other_mcu_forcing` 切换：
+
+#### 协议1：有MCU控制板协议 (`other_mcu_forcing = 1`)
+
+**帧格式**:
 ```
-帧头(0x55 0x55) | ID | Length | Cmd | Params | CRC
+帧头(0x55 0x55) | Length | Cmd | Param1 | Param2 | ...
 ```
 
-**工作模式**:
-- 位置控制模式(Servo_PosCtrl)
-- 电机控制模式(Servo_MotorCtrl)
-- 固定占空比模式(Rotate_Duty)
-- 固定速度模式(Rotate_Speed)
+**特点**:
+- 波特率: **9600**
+- **无CRC校验**
+- Length = 参数个数 + 2（指令 + 数据长度本身）
+- 简化的指令格式，适用于有控制板的场景
+
+**示例**:
+```c
+// 控制单个舵机转动
+// 0x55 0x55 | 0x08 | CMD_SERVO_MOVE | 0x01 | TimeL | TimeH | ID | AngleL | AngleH
+uint8_t data[10];
+data[0] = 0x55; data[1] = 0x55;           // 帧头
+data[2] = 0x08;                           // 数据长度 = 1*3 + 5 = 8
+data[3] = CMD_SERVO_MOVE;                 // 指令
+data[4] = 0x01;                           // 舵机个数
+data[5] = (uint8_t)(Time & 0xFF);         // 时间低字节
+data[6] = (uint8_t)(Time >> 8);           // 时间高字节
+data[7] = ID;                             // 舵机ID
+data[8] = (uint8_t)(Angle & 0xFF);        // 角度低字节
+data[9] = (uint8_t)(Angle >> 8);          // 角度高字节
+```
+
+**支持的指令**:
+- `CMD_SERVO_MOVE` - 控制舵机转动
+- `CMD_ACTION_GROUP_RUN` - 运行动作组
+- `CMD_ACTION_GROUP_STOP` - 停止动作组
+- `CMD_ACTION_GROUP_SPEED` - 设置动作组速度
+- `CMD_MULT_SERVO_UNLOAD` - 多个舵机卸力
+- `CMD_GET_BATTERY_VOLTAGE` - 获取电池电压
+
+---
+
+#### 协议2：无MCU驱动板协议 (`other_mcu_forcing = 0`)（**默认**）
+
+**帧格式**:
+```
+帧头(0x55 0x55) | ID | Length | Cmd | Param1 | Param2 | ... | CRC
+```
+
+**特点**:
+- 波特率: **115200**
+- **有CRC校验**
+- Length = 参数个数 + 3（ID + 指令 + 数据长度本身）
+- 标准HX06L总线舵机协议
+
+**CRC校验算法**:
+```c
+uint8_t CRC_GNERATOR(uint8_t *prtSendData, uint8_t DataLength) {
+    // 调用 UART_Calculate_CRC(&prtSendData[2], DataLength)
+    // 校验范围：从ID到参数结束
+    return ~(累加和) & 0xFF;
+}
+```
+
+**示例**:
+```c
+// 控制舵机到指定角度
+// 0x55 0x55 | ID | Length | CMD | AngleL | AngleH | TimeL | TimeH | CRC
+uint8_t data[16] = {0x00};
+data[0] = 0x55;                                    // 帧头
+data[1] = 0x55;                                    // 帧头
+data[2] = ID;                                      // 舵机ID
+data[3] = get_servo_data_length(SERVO_MOVE_TIME_WRITE);  // 数据长度
+data[4] = get_servo_command_value(SERVO_MOVE_TIME_WRITE); // 指令
+data[5] = (uint8_t)Angle;                          // 角度低字节
+data[6] = (uint8_t)(Angle >> 8);                   // 角度高字节
+data[7] = (uint8_t)Time;                           // 时间低字节
+data[8] = (uint8_t)(Time >> 8);                    // 时间高字节
+data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_WRITE)); // CRC校验
+```
+
+---
+
+**API接口**（两种协议共用）:
+```c
+// 初始化舵机
+void ServoInit(void);
+
+// 位置控制（单个舵机）
+void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time);
+
+// 多舵机同时控制（仅协议1支持）
+void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, 
+                       uint16_t *angles, uint16_t time);
+
+// 运行动作组（仅协议1支持）
+void ServoRunActionGroup(uint8_t group_num, uint16_t run_times);
+
+// 停止动作组（仅协议1支持）
+void ServoStopActionGroup(void);
+
+// 设置动作组速度（仅协议1支持）
+void ServoSetActionGroupSpeed(uint8_t group_num, uint16_t speed_percent);
+
+// 多舵机卸力（仅协议1支持）
+void ServoUnloadMulti(uint8_t servo_num, uint8_t *servo_ids);
+
+// 获取电池电压（仅协议1支持）
+void ServoGetBatteryVoltage(void);
+```
 
 **使用说明**:
-- 波特率: 115200
-- ID范围: 0-253
-- 角度范围: 0-1000 (映射到0°-240°)
+- ID范围: 0-253（协议2），广播ID: 0xFE
+- 角度范围: 0-1000 (线性映射到 0°-240°)
 - 电压范围: 4500-14000 mV
 - 温度阈值: 默认85℃
+
+**配置方法**:
+```c
+// 在 HX06L.h 中切换协议
+#define other_mcu_forcing 0  // 0=无MCU协议(115200,有CRC)
+                              // 1=有MCU协议(9600,无CRC)
+```
 
 **注意事项**:
 - 使用UART6进行通信
 - 需配合BSP_UART模块使用
-- CRC校验算法: `~(累加和) & 0xFF`
-- 数据帧格式: `帧头(0x55 0x55) | ID | 数据长度 | 指令 | 参数 | 校验`
+- 两种协议**不兼容**，必须与舵机/控制板协议匹配
+- 协议1适用于有专用控制板的场景（更多高级功能）
+- 协议2适用于直接控制舵机的场景（标准协议）
+- 发送指令后建议延时2-5ms，等待舵机处理
 
 ---
 
