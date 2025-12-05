@@ -21,7 +21,6 @@ This repository contains the comprehensive codebase for SCNU Vanguard's 2026 sea
 |   ├── SourceCode/                    # 源代码
 |   ├── docs/                          # 文档
 |   ├── tests/                         # 测试代码
-|   └── Weekly/                        # 周报记录
 └── 2026_Vangaurd_Dart_Structure
     └──飞镖(V2improved)                #飞镖系统机械机构
 ```
