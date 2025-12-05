@@ -30,6 +30,8 @@ static int32_t total_round[RM_MOTOR_MAX_NUM] = {0}; // 累计圈数
 static int32_t total_ecd[RM_MOTOR_MAX_NUM] = {0};   // 累计编码器值
 static uint8_t init_flag[RM_MOTOR_MAX_NUM] = {0};   // 初始化标志
 static int16_t offset_ecd[RM_MOTOR_MAX_NUM] = {0};  // 零点偏移
+static float lastspeed = 0.0f;
+static uint8_t count = 0;
 
 /**********************************************************发送电机数据专用函数**********************************************************************/
 
@@ -133,7 +135,15 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_da
     solved_data[0] = ecd / 8192.0f * 360.0f;
 
     // 速度 (rpm)
-    solved_data[1] = (float)speed_rpm;
+    if (!count)
+    {
+        solved_data[1] = (float)speed_rpm;
+        count = 1;
+    }
+    else
+    {
+        solved_data[1] = (float)speed_rpm * 0.9f + 0.1f * lastspeed;
+    }
 
     // 电流 (A) - M3508标准：16384对应20A
     solved_data[2] = current_raw / 16384.0f * 20.0f;
@@ -143,6 +153,8 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_da
 
     // 速度 (rad/s) - rpm转弧度/秒
     solved_data[4] = speed_rpm * 0.10472f; // 2*PI/60 ≈ 0.10472
+
+    lastspeed = solved_data[1];
 }
 
 /*====================  辅助函数  ====================*/
@@ -210,21 +222,15 @@ void RmTestMotorSingleRegister(void)
     MotorManager.MotorList[SingleMotorTest - 1].SendMotorControl = RM_MotorSendControl;
     MotorManager.registered_count = 1;
 
-    // MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 1;
-    // PID_Set_Coefficient(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
-    // PID_Set_Coefficient(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
-    // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner);                               // 初始化
-    // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.outer);                               // 初始化
-    // PID_Set_MaxOutput(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner, 0.0f, 0.0f);
-    // PID_Set_MaxOutput(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.outer, 0.0f, 0.0f);
+    MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 1;
+    float p = 175.91f;                                                                                               // 内环p (p)
+    float i = 0.40f;                                                                                                 // 内环i (i)
+    float d = 0.0f;                                                                                                  // 内环d (d)
+    float f = 7.91f;                                                                                                 // 内环f (f)
+    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 1691.0f, 100.0f, 60.0f); // 暂定最大1691
+    PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
     // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-
-    MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 0;
-    float p = 0.0f;
-    float i = 0.0f;
-    float d = 0.0f;
-    float f = 0.0f;
-    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 600.0f, 0.0f); // 暂定最大600
+    // CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
 }
@@ -233,20 +239,16 @@ void RmTestMotorSingleRegister(void)
 /// @param target 目标值，单环时候为速度，串级为位置(暂定)，放弃串级
 void RmMotorPID_Calc(float target)
 {
-    char FeedString[33] = "\0";
+    // char FeedString[33] = "\0";
     // PID数据输出
 
     // CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]); // 目标角度，反馈角度，反馈速度
     // sprintf((char *)FeedString, "targetAngle:.1%f, feedbackAngle:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
     // printf(FeedString);
 
-    output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[1]);
-    RmMotorSendCfg(1, (int16_t)output);
-    sprintf(FeedString, "Speed=%.1f,Target=%.1f,Output=%.1f,", rm_motor_solved_data[1], target, output);
-    // sprintf(FeedString, "%.1f,%.1f,%.1f\r\n", rm_motor_solved_data[1], target, output);
+    output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[4]);
+    RmMotorSendCfg(1, output);
     // printf("%.1f,%.1f,%.1f\r\n", rm_motor_solved_data[1], target, output);
-    printf(FeedString);
-    // HAL_UART_Transmit(&huart6, (uint8_t *)FeedString, 30, 1);
 
     // HAL_UART_Transmit_IT(&huart3, );
 }

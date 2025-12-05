@@ -32,38 +32,38 @@ static int16_t KD_RESULT = 0;
 static int16_t Torque_ff = 0;
 static bool DM_ENABLE_ARR[2] = {false};
 
-/************************************************************************
- * @brief:       uint_to_float: 无符号整数转换为浮点数函数（通用版）
- * @param:       x_int: 待转换的无符号整数
- * @param:       x_min: 范围最小值
- * @param:       x_max: 范围最大值
- * @param:       bits:  位数
- * @retval:      浮点数结果
- ************************************************************************/
-static inline float uint_to_float_generic(int x_int, float x_min, float x_max, int bits)
-{
-    float span = x_max - x_min;
-    return ((float)x_int) * span / ((float)((1 << bits) - 1)) + x_min;
-}
+// /************************************************************************
+//  * @brief:       uint_to_float: 无符号整数转换为浮点数函数（通用版）
+//  * @param:       x_int: 待转换的无符号整数
+//  * @param:       x_min: 范围最小值
+//  * @param:       x_max: 范围最大值
+//  * @param:       bits:  位数
+//  * @retval:      浮点数结果
+//  ************************************************************************/
+// static inline float uint_to_float_generic(int x_int, float x_min, float x_max, int bits)
+// {
+//     float span = x_max - x_min;
+//     return ((float)x_int) * span / ((float)((1 << bits) - 1)) + x_min;
+// }
 
-static float uint_to_float(float x_int, DM_DATA DataMode)
-{
-    switch (DataMode)
-    {
-    case DM_POS:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, DM_POS_BIT);
-    case DM_VEL:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, DM_VEL_BIT);
-    case DM_KD:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KD, g_DM_UPPER_LIMITATION_KD, DM_KD_BIT);
-    case DM_KP:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KP, g_DM_UPPER_LIMITATION_KP, DM_KP_BIT);
-    case DM_TORQUE:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, DM_TORQUE_BIT);
-    default:
-        return 0.0f;
-    }
-}
+// static float uint_to_float(float x_int, DM_DATA DataMode)
+// {
+//     switch (DataMode)
+//     {
+//     case DM_POS:
+//         return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, DM_POS_BIT);
+//     case DM_VEL:
+//         return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, DM_VEL_BIT);
+//     case DM_KD:
+//         return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KD, g_DM_UPPER_LIMITATION_KD, DM_KD_BIT);
+//     case DM_KP:
+//         return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KP, g_DM_UPPER_LIMITATION_KP, DM_KP_BIT);
+//     case DM_TORQUE:
+//         return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, DM_TORQUE_BIT);
+//     default:
+//         return 0.0f;
+//     }
+// }
 
 /************************************************************************
  * @brief:       float_to_uint: 浮点数转换为无符号整数函数（通用版）

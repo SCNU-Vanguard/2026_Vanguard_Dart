@@ -27,9 +27,8 @@ typedef enum
 typedef struct
 {
     // 初始化标志位
-    uint8_t initialized;       // 是否已初始化
-    uint8_t calc_count;        // 计算次数计数器（用于首次计算判断）
-    uint8_t direction_changed; // 换向标志位（用于换向补偿）
+    uint8_t initialized; // 是否已初始化
+    uint8_t calc_count;  // 计算次数计数器（用于首次计算判断）
 
     // PID工作模式
     PID_MODE_e mode; // 位置式或增量式
@@ -42,6 +41,7 @@ typedef struct
 
     // 限幅参数
     float max_output; // 输出上限（实际输出范围为 [-max_output, +max_output]）
+    float min_output; // 输出下限（防止输出与目标方向相反：target>0时output>=min_output）
     float max_iout;   // 积分限幅
 
     // 反馈值
@@ -56,7 +56,6 @@ typedef struct
 
     // 前馈值
     float feedforward; // 前馈输入值
-    float last_target; // 上一次目标值（用于换向检测）
 
     // 输出值储存
     float output;      // 当前输出值
@@ -76,7 +75,7 @@ typedef struct
 /*********************************************************函数声明***************************************************************/
 
 // PID初始化函数
-void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float max_iout);
+void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout);
 
 // 串级PID初始化
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
@@ -114,7 +113,7 @@ void CASCADE_PID_Clear_Integral(CASCADE_PID_t *cascade_pid);
 
 // PID参数设置函数
 void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf);
-void PID_Set_OutputLimit(PID_t *pid, float max_output, float max_iout);
+void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout);
 
 // 检查PID是否已初始化
 uint8_t PID_Is_Initialized(PID_t *pid);

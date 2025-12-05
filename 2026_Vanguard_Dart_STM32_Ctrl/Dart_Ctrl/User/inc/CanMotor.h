@@ -13,6 +13,12 @@
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
 #define TestUse 1U
 
+// 角度转弧度宏：degree * π/180 ≈ degree * 0.01745329f
+#define DegreeToRad(degree) ((degree) * 0.01745329f)
+
+// 弧度转角度宏：radian * 180/π ≈ radian * 57.29578f
+#define RadToDegree(radian) ((radian) * 57.29578f)
+
 // 电机品牌类型
 typedef enum
 {

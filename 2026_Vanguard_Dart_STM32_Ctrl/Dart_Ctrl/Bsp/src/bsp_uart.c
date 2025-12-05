@@ -46,7 +46,7 @@ uint8_t UART_Calculate_CRC(uint8_t *data, uint8_t length)
     {
         sum += data[i];
     }
-    return (uint8_t)((~sum) & 0xFF);
+    return (uint8_t)(~sum);
 }
 
 /**

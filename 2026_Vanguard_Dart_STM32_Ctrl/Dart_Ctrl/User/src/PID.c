@@ -2,6 +2,8 @@
 #include "CanMotor.h"
 #include <string.h>
 
+// 速度环：期望为正(负)数,不允许输出负(正)数
+
 /**
  * @brief PID初始化函数
  * @param pid PID结构体指针
@@ -11,9 +13,10 @@
  * @param kd 微分系数
  * @param kf 前馈系数
  * @param max_out 输出上限（实际输出范围为 [-max_out, +max_out]）
+ * @param min_out 输出下限（防止输出与目标方向相反：target>0时output>=min_out）
  * @param max_iout 积分限幅
  */
-void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float max_iout)
+void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout)
 {
     if (pid == NULL)
         return;
@@ -28,6 +31,7 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
     pid->KD = kd;
     pid->KF = kf;
     pid->max_output = max_out;
+    pid->min_output = min_out;
     pid->max_iout = max_iout;
 
     // 设置初始化标志位
@@ -61,11 +65,11 @@ void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
 
     // 初始化外环（位置环，通常使用增量式）
     PID_Init(&cascade_pid->outer, PID_DELTA, outer_kp, outer_ki, outer_kd, outer_kf,
-             outer_max_out, outer_max_iout);
+             outer_max_out, 0.0f, outer_max_iout);
 
     // 初始化内环（速度环，通常使用增量式）
     PID_Init(&cascade_pid->inner, PID_DELTA, inner_kp, inner_ki, inner_kd, inner_kf,
-             inner_max_out, inner_max_iout);
+             inner_max_out, 0.0f, inner_max_iout);
 }
 
 /**
@@ -98,9 +102,6 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     if (pid == NULL || !pid->initialized)
         return 0.0f;
 
-    // 重置换向标志
-    pid->direction_changed = 0;
-
     // 更新目标值、测量值
     pid->target = target;
     pid->measure = measure;
@@ -112,40 +113,27 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     if (pid->calc_count == 0)
     {
         float p_out = pid->KP * pid->error;
-        
+
         pid->output = p_out;
-        
+
         // 输出限幅（正负对称限幅）
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
-        
-        // 更新上次误差、测量值和目标值
+
+        // 更新上次误差、测量值
         pid->last_error = pid->error;
         pid->last_measure = measure;
-        pid->last_target = target;
-        
+
         // 计算前馈值（目标值变化量）
-        pid->feedforward = 0.0f;  // 第一次无前馈
-        
+        pid->feedforward = 0.0f; // 第一次无前馈
+
         // 增加计算次数
         pid->calc_count = 1;
-        
+
         return pid->output;
     }
 
-    // 换向检测：检测目标值符号变化
-    // 从正到负（正转→反转）
-    if (pid->last_target >= 0 && target < 0)
-    {
-        pid->direction_changed = 1;
-    }
-    // 从负到正（反转→正转）
-    else if (pid->last_target < 0 && target >= 0)
-    {
-        pid->direction_changed = 1;
-    }
-
     // 计算前馈值（目标值变化量）
-    pid->feedforward = target - pid->last_target;
+    pid->feedforward = target - pid->target;
 
     // 第二次及之后：使用完整P、I、D、F
     // 积分项累加（带限幅）
@@ -158,7 +146,7 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // PID计算：P + I + D + F
     float p_out = pid->KP * pid->error;
     float i_out = pid->KI * pid->sum_error;
-    
+
 #if PID_DERIVATIVE_ON_MEASUREMENT
     // 微分先行：对测量值变化进行微分（避免目标突变产生尖峰）
     // D = Kd × (last_measure - measure)，测量值增加时产生负阻尼
@@ -179,10 +167,24 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // 输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 更新上次误差、测量值和目标值
+    // 输出方向保护：防止输出与目标方向相反
+    // target > 0 时，output 不能小于 min_output
+    // target < 0 时，output 不能大于 -min_output
+    if (pid->min_output > 0.0f)
+    {
+        if (target > 0.0f && pid->output < pid->min_output)
+        {
+            pid->output = pid->min_output;
+        }
+        else if (target < 0.0f && pid->output > -pid->min_output)
+        {
+            pid->output = -pid->min_output;
+        }
+    }
+
+    // 更新上次误差、测量值
     pid->last_error = pid->error;
     pid->last_measure = measure;
-    pid->last_target = target;
 
     return pid->output;
 }
@@ -200,9 +202,6 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     if (pid == NULL || !pid->initialized)
         return 0.0f;
 
-    // 重置换向标志
-    pid->direction_changed = 0;
-
     // 更新目标值、测量值
     pid->target = target;
     pid->measure = measure;
@@ -214,48 +213,35 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     if (pid->calc_count == 0)
     {
         float p_out = pid->KP * pid->error;
-        
+
         pid->output = p_out;
-        
+
         // 输出限幅（正负对称限幅）
         pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
-        
-        // 更新历史误差、测量值和目标值
+
+        // 更新历史误差、测量值
         pid->prev_error = pid->last_error;
         pid->last_error = pid->error;
         pid->prev_measure = pid->last_measure;
         pid->last_measure = measure;
-        pid->last_target = target;
-        
+
         // 计算前馈值（目标值变化量）
-        pid->feedforward = 0.0f;  // 第一次无前馈
-        
+        pid->feedforward = 0.0f; // 第一次无前馈
+
         // 增加计算次数
         pid->calc_count = 1;
-        
+
         return pid->output;
     }
 
-    // 换向检测：检测目标值符号变化
-    // 从正到负（正转→反转）
-    if (pid->last_target >= 0 && target < 0)
-    {
-        pid->direction_changed = 1;
-    }
-    // 从负到正（反转→正转）
-    else if (pid->last_target < 0 && target >= 0)
-    {
-        pid->direction_changed = 1;
-    }
-
     // 计算前馈值（目标值变化量）
-    pid->feedforward = target - pid->last_target;
+    pid->feedforward = target - pid->target;
 
     // 第二次及之后：使用完整增量式P、I、D、F
     // Δu(k) = Kp[e(k) - e(k-1)] + Ki*e(k) + Kd[e(k) - 2e(k-1) + e(k-2)]
     float p_out = pid->KP * (pid->error - pid->last_error);
     float i_out = pid->KI * pid->error;
-    
+
 #if PID_DERIVATIVE_ON_MEASUREMENT
     // 微分先行：对测量值变化进行微分（避免目标突变产生尖峰）
     // 增量式微分先行：Δd = Kd × (prev_measure - 2×last_measure + measure)
@@ -279,12 +265,26 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // 总输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 更新历史误差、测量值和目标值
+    // 输出方向保护：防止输出与目标方向相反
+    // target > 0 时，output 不能小于 min_output
+    // target < 0 时，output 不能大于 -min_output
+    if (pid->min_output > 0.0f)
+    {
+        if (target > 0.0f && pid->output < pid->min_output)
+        {
+            pid->output = pid->min_output;
+        }
+        else if (target < 0.0f && pid->output > -pid->min_output)
+        {
+            pid->output = -pid->min_output;
+        }
+    }
+
+    // 更新历史误差、测量值
     pid->prev_error = pid->last_error;
     pid->last_error = pid->error;
     pid->prev_measure = pid->last_measure;
     pid->last_measure = measure;
-    pid->last_target = target;
 
     return pid->output;
 }
@@ -350,18 +350,16 @@ void PID_Clear(PID_t *pid)
     if (pid == NULL)
         return;
 
-    pid->calc_count = 0;           // 重置计算次数，下次计算将重新从首次开始
-    pid->direction_changed = 0;    // 重置换向标志
+    pid->calc_count = 0; // 重置计算次数，下次计算将重新从首次开始
     pid->target = 0.0f;
     pid->measure = 0.0f;
-    pid->last_measure = 0.0f;      // 重置上次测量值
-    pid->prev_measure = 0.0f;      // 重置上上次测量值
+    pid->last_measure = 0.0f; // 重置上次测量值
+    pid->prev_measure = 0.0f; // 重置上上次测量值
     pid->error = 0.0f;
     pid->last_error = 0.0f;
     pid->prev_error = 0.0f;
     pid->sum_error = 0.0f;
     pid->feedforward = 0.0f;
-    pid->last_target = 0.0f;       // 重置上一次目标值
     pid->output = 0.0f;
     pid->last_output = 0.0f;
     pid->delta_out = 0.0f;
@@ -428,14 +426,16 @@ void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf)
  * @brief PID输出限幅设置函数
  * @param pid PID结构体指针
  * @param max_output 输出上限（实际输出范围为 [-max_output, +max_output]）
+ * @param min_output 输出下限（防止输出与目标方向相反：target>0时output>=min_output）
  * @param max_iout 积分限幅
  */
-void PID_Set_OutputLimit(PID_t *pid, float max_output, float max_iout)
+void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout)
 {
     if (pid == NULL)
         return;
 
     pid->max_output = max_output;
+    pid->min_output = min_output;
     pid->max_iout = max_iout;
 }
 
