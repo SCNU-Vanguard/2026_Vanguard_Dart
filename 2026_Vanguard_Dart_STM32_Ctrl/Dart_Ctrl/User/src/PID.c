@@ -50,26 +50,28 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
  * @param inner_kd 内环微分系数
  * @param inner_kf 内环前馈系数
  * @param outer_max_out 外环输出上限
+ * @param outer_min_out 外环输出下限（防止输出与目标方向相反）
  * @param outer_max_iout 外环积分限幅
  * @param inner_max_out 内环输出上限
+ * @param inner_min_out 内环输出下限（防止输出与目标方向相反）
  * @param inner_max_iout 内环积分限幅
  */
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
                       float outer_kp, float outer_ki, float outer_kd, float outer_kf,
                       float inner_kp, float inner_ki, float inner_kd, float inner_kf,
-                      float outer_max_out, float outer_max_iout,
-                      float inner_max_out, float inner_max_iout)
+                      float outer_max_out, float outer_min_out, float outer_max_iout,
+                      float inner_max_out, float inner_min_out, float inner_max_iout)
 {
     if (cascade_pid == NULL)
         return;
 
     // 初始化外环（位置环，通常使用增量式）
     PID_Init(&cascade_pid->outer, PID_DELTA, outer_kp, outer_ki, outer_kd, outer_kf,
-             outer_max_out, 0.0f, outer_max_iout);
+             outer_max_out, outer_min_out, outer_max_iout);
 
     // 初始化内环（速度环，通常使用增量式）
     PID_Init(&cascade_pid->inner, PID_DELTA, inner_kp, inner_ki, inner_kd, inner_kf,
-             inner_max_out, 0.0f, inner_max_iout);
+             inner_max_out, inner_min_out, inner_max_iout);
 }
 
 /**

@@ -81,8 +81,8 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
                       float outer_kp, float outer_ki, float outer_kd, float outer_kf,
                       float inner_kp, float inner_ki, float inner_kd, float inner_kf,
-                      float outer_max_out, float outer_max_iout,
-                      float inner_max_out, float inner_max_iout);
+                      float outer_max_out, float outer_min_out, float outer_max_iout,
+                      float inner_max_out, float inner_min_out, float inner_max_iout);
 
 // PID计算函数（统一接口，根据mode自动选择位置式或增量式）
 float PID_Calculate(PID_t *pid, float target, float measure);

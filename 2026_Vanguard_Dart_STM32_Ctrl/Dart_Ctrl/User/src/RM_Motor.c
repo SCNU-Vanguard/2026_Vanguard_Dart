@@ -223,14 +223,21 @@ void RmTestMotorSingleRegister(void)
     MotorManager.registered_count = 1;
 
     MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 1;
-    float p = 175.91f;                                                                                               // 内环p (p)
-    float i = 0.40f;                                                                                                 // 内环i (i)
-    float d = 0.0f;                                                                                                  // 内环d (d)
-    float f = 7.91f;                                                                                                 // 内环f (f)
-    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 1691.0f, 100.0f, 60.0f); // 暂定最大1691
-    PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
-    // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-    // CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
+    float inner_p = 175.91f; // 内环p
+    float inner_i = 0.40f;   // 内环i
+    float inner_d = 0.0f;    // 内环d
+    float inner_f = 7.91f;   // 内环f
+    float outer_p = 0.0f;    // 外环p
+    float outer_i = 0.0f;    // 外环i
+    float outer_d = 0.0f;    // 外环d
+    float outer_f = 0.0f;    // 外环k
+	
+	// 外环最大限幅19000（全路程对应角度20673左右）
+	
+    // PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 1691.0f, 100.0f, 60.0f); // 暂定最大1691
+    // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
+    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 0.0f, 0.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待测试角度闭环
+    CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
 }

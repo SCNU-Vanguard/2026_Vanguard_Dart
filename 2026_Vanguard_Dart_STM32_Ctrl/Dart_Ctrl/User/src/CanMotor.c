@@ -63,7 +63,7 @@ void MotorRegister(void)
     // PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer);                               // 初始化
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner, 0.0f, 0.0f);
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer, 0.0f, 0.0f);
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 扳机
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
@@ -75,7 +75,7 @@ void MotorRegister(void)
     // PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer);                               // 初始化
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0f, 0.0f);
     // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0f, 0.0f);
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 注册DM电机
     // 注意注册的DM电机发送和接收其实数据帧都不与RM电机冲突（在MIT模式、位置速度模式和PVT模式下，就完整通信帧而言）

@@ -54,7 +54,7 @@ static TaskHandle_t g_HandleChangeTarget;
 /// @brief 改变电机目标数值
 /// @param 空
 /// @return 无
-TaskFunction_t pxChangeTarget(void* arg)
+TaskFunction_t pxChangeTarget(void *arg)
 {
   while (1)
   {
@@ -152,6 +152,7 @@ void StartDefaultTask(void *argument)
   // ServoPacket_t HxFb;
   // DartPacket_t UpcFb;
   // UART_SetProtocol(BSP_UART3, SERVO_COM); // true为舵机, false为DART上位机通信协议
+
   /* Infinite loop */
 
   for (;;)
@@ -160,7 +161,8 @@ void StartDefaultTask(void *argument)
 #if DM_TestUse
     DmMotorSendCfg(1, 1.5, 1.5);
 #elif RM_TestUse
-    RmMotorPID_Calc(TargetSpeed);
+    // RmMotorPID_Calc(TargetSpeed);
+    // RmMotorSendCfg(1, 550);
 
 #endif
   }
