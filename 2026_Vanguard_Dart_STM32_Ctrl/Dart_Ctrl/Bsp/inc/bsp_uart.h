@@ -83,9 +83,14 @@ typedef struct
 /* 协议类型枚举 */
 typedef enum
 {
-    PROTOCOL_SERVO = 0, // 舵机协议 (0x55 0x55)
-    PROTOCOL_DART = 1   // DART协议 (DART)
+    PROTOCOL_SERVO_MCU = 0,    // 有MCU控制板协议 (0x55 0x55 | Length | Cmd | Params) - 无CRC
+    PROTOCOL_SERVO_NO_MCU = 1, // 无MCU驱动板协议 (0x55 0x55 | ID | Length | Cmd | Params | CRC) - 有CRC
+    PROTOCOL_DART = 2,         // DART协议 (DART)
+    PROTOCOL_OTHER = -1        // 其他协议
 } PROTOCOL_TYPE_e;
+
+// 为了兼容性，保留PROTOCOL_SERVO别名
+#define PROTOCOL_SERVO PROTOCOL_SERVO_MCU
 
 /* 协议数据包结构体 - 舵机协议 */
 typedef struct
@@ -149,7 +154,7 @@ typedef struct
 
 /* ========== 用户API接口 ========== */
 
-// 初始化BSP UART模块（初始化所有UART的缓冲区）
+// 初始化BSP UART模块（初始化所有UART的缓冲区，自动启动中断接收）
 void BSP_UART_Init(void);
 
 // 设置协议类型（根据SERVO_COM标志）
@@ -161,8 +166,8 @@ uint16_t UART_Send(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len);
 // 发送字符串
 uint16_t UART_SendString(BSP_UART_NUM_e uart_num, const char *str);
 
-// 启动接收（开启中断接收）
-void UART_StartRx(BSP_UART_NUM_e uart_num);
+// 重启接收（在接收中断被意外关闭时使用）
+void UART_RestartRx(BSP_UART_NUM_e uart_num);
 
 // 读取接收数据
 uint16_t UART_Read(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t len);

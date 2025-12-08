@@ -6,6 +6,7 @@
  * other_mcu_forcing = 1: 有MCU控制板协议（9600波特率，无CRC校验）
  *
  * todo 待测试
+ * note 现在的舵机暂时无需手动初始化，当前已经通过上位机初始化了参数
  ****************************************************************/
 
 #include "HX06L.h"
@@ -45,8 +46,8 @@ void ServoInit(void)
     data[1] = 0x55;                    // 帧头
     data[2] = 0x02;                    // 数据长度 = 0 + 2
     data[3] = CMD_GET_BATTERY_VOLTAGE; // 指令：获取电池电压
-    UART_Send(BSP_UART6, (const uint8_t *)data, 4);
-    HAL_Delay(5);
+    UART_Send(BSP_UART3, (const uint8_t *)data, 4);
+    vTaskDelay(1);
 }
 
 /// @brief 总线舵机控制函数（控制板协议）
@@ -57,10 +58,6 @@ void ServoInit(void)
 /// @note 控制单个舵机在指定时间内转到指定角度
 void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
 {
-    // 设置舵机协议
-    bool SERVO_COM = true;
-    UART_SetProtocol(BSP_UART6, SERVO_COM);
-
     // 帧格式：0x55 0x55 | Length | Cmd | 舵机个数 | 时间L | 时间H | ID | 角度L | 角度H
     // 数据长度 = 舵机个数*3 + 5 = 1*3 + 5 = 8（参数个数6 + 2）
     uint8_t data[10];
@@ -75,8 +72,8 @@ void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
     data[8] = (uint8_t)(Angle & 0xFF); // 参数5：角度位置低八位
     data[9] = (uint8_t)(Angle >> 8);   // 参数6：角度位置高八位
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, 10);
-    HAL_Delay(2); // 等待控制板处理命令
+    UART_Send(BSP_UART3, (const uint8_t *)data, 10);
+    vTaskDelay(1); // 等待控制板处理命令
 }
 
 /// @brief 控制多个舵机同时转动（控制板协议）
@@ -90,12 +87,8 @@ void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, uint16_t *angles, 
     if (servo_num == 0 || servo_ids == NULL || angles == NULL)
         return;
 
-    // 设置舵机协议
-    bool SERVO_COM = true;
-    UART_SetProtocol(BSP_UART6, SERVO_COM);
-
     // 帧格式：0x55 0x55 | Length | Cmd | 舵机个数 | 时间L | 时间H | [ID | 角度L | 角度H] * N
-    // 数据长度 = 舵机个数*3 + 5
+    // 数据长度 = 舵机个数 * 3 + 5
     uint8_t data_len = servo_num * 3 + 5;
     uint8_t data[64]; // 最大支持约20个舵机
 
@@ -118,8 +111,8 @@ void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, uint16_t *angles, 
         data[9 + i * 3] = (uint8_t)(angles[i] >> 8);   // 角度高八位
     }
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, data_len + 2);
-    HAL_Delay(2);
+    UART_Send(BSP_UART3, (const uint8_t *)data, data_len + 2);
+    vTaskDelay(1);
 }
 
 /// @brief 运行动作组（控制板协议）
@@ -136,8 +129,8 @@ void ServoRunActionGroup(uint8_t group_num, uint16_t run_times)
     data[5] = (uint8_t)(run_times & 0xFF); // 参数2：次数低八位
     data[6] = (uint8_t)(run_times >> 8);   // 参数3：次数高八位
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, 7);
-    HAL_Delay(2);
+    UART_Send(BSP_UART3, (const uint8_t *)data, 7);
+    vTaskDelay(1);
 }
 
 /// @brief 停止动作组（控制板协议）
@@ -149,8 +142,8 @@ void ServoStopActionGroup(void)
     data[2] = 0x02;                  // 数据长度 = 0 + 2
     data[3] = CMD_ACTION_GROUP_STOP; // 指令
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, 4);
-    HAL_Delay(2);
+    UART_Send(BSP_UART3, (const uint8_t *)data, 4);
+    vTaskDelay(1);
 }
 
 /// @brief 设置动作组速度（控制板协议）
@@ -167,8 +160,8 @@ void ServoSetActionGroupSpeed(uint8_t group_num, uint16_t speed_percent)
     data[5] = (uint8_t)(speed_percent & 0xFF); // 参数2：速度百分比低八位
     data[6] = (uint8_t)(speed_percent >> 8);   // 参数3：速度百分比高八位
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, 7);
-    HAL_Delay(2);
+    UART_Send(BSP_UART3, (const uint8_t *)data, 7);
+    vTaskDelay(1);
 }
 
 /// @brief 控制多个舵机卸力（控制板协议）
@@ -198,8 +191,8 @@ void ServoUnloadMulti(uint8_t servo_num, uint8_t *servo_ids)
         data[5 + i] = servo_ids[i];
     }
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, data_len + 2);
-    HAL_Delay(2);
+    UART_Send(BSP_UART3, (const uint8_t *)data, data_len + 2);
+    vTaskDelay(1);
 }
 
 /// @brief 获取电池电压（控制板协议）
@@ -212,7 +205,7 @@ void ServoGetBatteryVoltage(void)
     data[2] = 0x02;                    // 数据长度 = 0 + 2
     data[3] = CMD_GET_BATTERY_VOLTAGE; // 指令
 
-    UART_Send(BSP_UART6, (const uint8_t *)data, 4);
+    UART_Send(BSP_UART3, (const uint8_t *)data, 4);
 }
 
 #else
@@ -291,7 +284,7 @@ static inline uint8_t SingleSerovoInit(uint8_t ServoID, uint8_t on)
     InitDataArr[3] = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ);                            // 数据长度
     InitDataArr[4] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_READ);                          // 指令
     InitDataArr[5] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ)); // 校验
-    uint8_t send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ) + 3);
+    uint8_t send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ) + 3);
     if (send_result == 0)
         return 0; // UART发送失败
     HAL_Delay(2);
@@ -300,7 +293,7 @@ static inline uint8_t SingleSerovoInit(uint8_t ServoID, uint8_t on)
     InitDataArr[4] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_WRITE);                          // 指令
     InitDataArr[5] = 1;                                                                            // 参数: 1为上电(启用)
     InitDataArr[6] = CRC_GNERATOR(InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE)); // 校验
-    send_result = UART_Send(BSP_UART6, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE) + 3);
+    send_result = UART_Send(BSP_UART3, (const uint8_t *)InitDataArr, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE) + 3);
     if (send_result == 0)
         return 0; // UART发送失败
     HAL_Delay(2);
@@ -326,10 +319,6 @@ void ServoInit(void)
 /// @note 根据时间匀速转动到对应设置的角度
 void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
 {
-    // 设置舵机协议
-    bool SERVO_COM = true;
-    UART_SetProtocol(BSP_UART6, SERVO_COM);
-
     uint8_t data[16] = {0x00};
     data[0] = 0x55;                                                             // 帧头
     data[1] = 0x55;                                                             // 帧头
@@ -341,7 +330,7 @@ void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
     data[7] = (uint8_t)Time;                                                    // 参数: 时间低八位
     data[8] = (uint8_t)(Time >> 8);                                             // 参数: 时间高8位
     data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_WRITE)); // CRC校验
-    UART_Send(BSP_UART6, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_WRITE) + 3);
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_WRITE) + 3);
     HAL_Delay(2); // 等待舵机处理命令
 }
 

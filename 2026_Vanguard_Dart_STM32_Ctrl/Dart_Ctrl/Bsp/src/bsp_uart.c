@@ -4,7 +4,6 @@
 
 // todo：解算舵机格式需要加上一个长度传输函数，这样才可以保证这个长度是正确的，方便解算
 // todo: 后续应该使用其他手段比如上电或者信号量进行初始化与上位机的通信，从而保证稳定
-// todo：要读取一下帧内固定的数据长度位
 
 /* 内部缓冲区定义（用户无需关心） */
 static UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
@@ -50,12 +49,23 @@ uint8_t UART_Calculate_CRC(uint8_t *data, uint8_t length)
 }
 
 /**
- * @brief 重置协议解析器
+ * @brief 重置协议解析器状态（不清除数据包内容）
+ */
+static void ResetParserState(UartRxRingBuffer *rb)
+{
+    rb->parse_state = PARSE_HEADER;
+    rb->parse_index = 0;
+}
+
+/**
+ * @brief 完全重置协议解析器（清除数据包内容和状态）
+ * @note 仅在初始化和协议切换时使用
  */
 static void ResetParser(UartRxRingBuffer *rb)
 {
     rb->parse_state = PARSE_HEADER;
     rb->parse_index = 0;
+    rb->packet_ready = false;
     memset(&rb->servo_packet, 0, sizeof(ServoPacket_t));
     memset(&rb->dart_packet, 0, sizeof(DartPacket_t));
 }
@@ -64,13 +74,16 @@ static void ResetParser(UartRxRingBuffer *rb)
  * @brief 协议解析状态机
  * @param rb 接收缓冲区指针
  * @param byte 接收到的字节
- * @todo 协议解析状态机解析舵机的时候要加上这个长度识别,注意这个数据接收逻辑似乎有问题
+ * @note 支持三种协议：
+ *       - PROTOCOL_SERVO_MCU: 有MCU控制板协议（无CRC）
+ *       - PROTOCOL_SERVO_NO_MCU: 无MCU驱动板协议（有CRC）
+ *       - PROTOCOL_DART: DART协议
  */
 static void ParseProtocol(UartRxRingBuffer *rb, uint8_t byte)
 {
-    if (rb->protocol_type == PROTOCOL_SERVO)
+    if (rb->protocol_type == PROTOCOL_SERVO_MCU)
     {
-        // 舵机协议解析：0x55 0x55 | ID | Length | Cmd | Params | CRC
+        // 有MCU控制板协议解析：0x55 0x55 | Length | Cmd | Params（无CRC）
         switch (rb->parse_state)
         {
         case PARSE_HEADER:
@@ -87,7 +100,88 @@ static void ParseProtocol(UartRxRingBuffer *rb, uint8_t byte)
                 if (byte == 0x55)
                 {
                     rb->servo_packet.header[1] = byte;
-                    rb->parse_state = PARSE_SERVO_ID;
+                    rb->parse_state = PARSE_SERVO_LENGTH; // 有MCU协议：帧头后直接是Length
+                    rb->parse_index = 0;
+                }
+                else
+                {
+                    ResetParser(rb);
+                }
+            }
+            break;
+
+        case PARSE_SERVO_LENGTH:
+            rb->servo_packet.length = byte;
+            if (byte >= 2 && byte <= 64) // 合法长度范围
+            {
+                rb->parse_state = PARSE_SERVO_CMD;
+            }
+            else
+            {
+                ResetParser(rb);
+            }
+            break;
+
+        case PARSE_SERVO_CMD:
+            rb->servo_packet.cmd = byte;
+            rb->servo_packet.param_len = rb->servo_packet.length - 2; // Length = Cmd + 参数长度 + Length本身
+            if (rb->servo_packet.param_len > 0)
+            {
+                rb->parse_state = PARSE_SERVO_PARAMS;
+                rb->parse_index = 0;
+            }
+            else
+            {
+                // 无参数，直接完成（无CRC）
+                rb->servo_packet.is_valid = true;
+                rb->packet_ready = true;
+                ResetParserState(rb); // 只重置状态，保留数据包内容
+            }
+            break;
+
+        case PARSE_SERVO_PARAMS:
+            if (rb->parse_index < rb->servo_packet.param_len && rb->parse_index < 8)
+            {
+                rb->servo_packet.params[rb->parse_index++] = byte;
+                if (rb->parse_index >= rb->servo_packet.param_len)
+                {
+                    // 参数接收完成，无CRC，直接标记有效
+                    rb->servo_packet.is_valid = true;
+                    rb->packet_ready = true;
+                    ResetParserState(rb); // 只重置状态，保留数据包内容
+                }
+            }
+            else
+            {
+                ResetParser(rb);
+            }
+            break;
+
+        default:
+            ResetParser(rb);
+            break;
+        }
+    }
+    else if (rb->protocol_type == PROTOCOL_SERVO_NO_MCU)
+    {
+        // 无MCU驱动板协议解析：0x55 0x55 | ID | Length | Cmd | Params | CRC（有CRC）
+        switch (rb->parse_state)
+        {
+        case PARSE_HEADER:
+            if (rb->parse_index == 0)
+            {
+                if (byte == 0x55)
+                {
+                    rb->servo_packet.header[0] = byte;
+                    rb->parse_index = 1;
+                }
+            }
+            else if (rb->parse_index == 1)
+            {
+                if (byte == 0x55)
+                {
+                    rb->servo_packet.header[1] = byte;
+                    rb->parse_state = PARSE_SERVO_ID; // 无MCU协议：帧头后是ID
                     rb->parse_index = 0;
                 }
                 else
@@ -128,7 +222,6 @@ static void ParseProtocol(UartRxRingBuffer *rb, uint8_t byte)
             }
             break;
 
-        // 这里似乎逻辑并不正确
         case PARSE_SERVO_PARAMS:
             if (rb->parse_index < rb->servo_packet.param_len && rb->parse_index < 8)
             {
@@ -162,8 +255,12 @@ static void ParseProtocol(UartRxRingBuffer *rb, uint8_t byte)
             {
                 rb->servo_packet.is_valid = true;
                 rb->packet_ready = true;
+                ResetParserState(rb); // CRC通过，只重置状态，保留数据包内容
             }
-            ResetParser(rb);
+            else
+            {
+                ResetParser(rb); // CRC失败，完全重置
+            }
             break;
         }
 
@@ -239,8 +336,12 @@ static void ParseProtocol(UartRxRingBuffer *rb, uint8_t byte)
             {
                 rb->dart_packet.is_valid = true;
                 rb->packet_ready = true;
+                ResetParserState(rb); // CRC通过，只重置状态，保留数据包内容
             }
-            ResetParser(rb);
+            else
+            {
+                ResetParser(rb); // CRC失败，完全重置
+            }
             break;
         }
 
@@ -669,7 +770,8 @@ static void StartTransmit(UartTxRingBuffer *rb)
     if (sendLen > 0)
     {
         rb->isSending = true;
-        HAL_UART_Transmit_IT(rb->huart, g_temp_tx_buffer, sendLen);
+        HAL_UART_Transmit(rb->huart, g_temp_tx_buffer, sendLen, HAL_MAX_DELAY);
+        rb->isSending = false;
     }
 }
 
@@ -769,6 +871,10 @@ static uint16_t RxRingBuffer_Read(UartRxRingBuffer *rb, uint8_t *data, uint16_t 
 
 /**
  * @brief 初始化BSP UART模块
+ * @note 自动开启所有UART的中断接收，并为每个串口设置默认协议
+ *       - UART3: SERVO_MCU协议（舵机通信，有MCU控制板，无CRC）
+ *       - UART6: DART协议（上位机通信）
+ *       - 其他: OTHER（暂未定义）
  */
 void BSP_UART_Init(void)
 {
@@ -782,6 +888,25 @@ void BSP_UART_Init(void)
 
             // 初始化DataBuffer（包含帧索引缓冲区）
             DataBuffer_Init(&g_data_buffers[i]);
+
+            // 为每个串口设置默认协议
+            UartRxRingBuffer *rb = &g_uart_rx_buffers[i];
+            switch ((BSP_UART_NUM_e)i)
+            {
+            case BSP_UART3:
+                rb->protocol_type = PROTOCOL_SERVO_MCU; // UART3: 舵机通信（有MCU控制板，无CRC）
+                break;
+            case BSP_UART6:
+                rb->protocol_type = PROTOCOL_DART; // UART6: 上位机通信，使用DART协议
+                break;
+            default:
+                rb->protocol_type = PROTOCOL_OTHER; // 其他串口暂未定义
+                break;
+            }
+
+            // 自动开启中断接收
+            rb->isReceiving = true;
+            HAL_UART_Receive_IT(huart, &rb->rxByte, 1);
         }
     }
 }
@@ -832,9 +957,10 @@ uint16_t UART_SendString(BSP_UART_NUM_e uart_num, const char *str)
 }
 
 /**
- * @brief 启动接收
+ * @brief 重启接收（在接收中断被意外关闭时使用）
+ * @note 正常情况下无需调用，BSP_UART_Init()已自动启动接收
  */
-void UART_StartRx(BSP_UART_NUM_e uart_num)
+void UART_RestartRx(BSP_UART_NUM_e uart_num)
 {
     if (uart_num >= BSP_UART_MAX)
         return;
@@ -924,6 +1050,9 @@ bool UART_HasPacket(BSP_UART_NUM_e uart_num)
 
 /**
  * @brief 获取舵机协议数据包（读取数据包时移动ReadIndex）
+ * @note 根据协议类型计算不同的帧长度：
+ *       - SERVO_MCU（有MCU，无CRC）: 2字节帧头 + 1字节Length + Length内容 = 3 + Length
+ *       - SERVO_NO_MCU（无MCU，有CRC）: 2字节帧头 + 1字节ID + 1字节Length + Length内容 = 4 + Length
  */
 bool UART_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet)
 {
@@ -933,12 +1062,29 @@ bool UART_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet)
     UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
     DataBuffer *db = &g_data_buffers[uart_num];
 
-    if (rb->packet_ready && rb->protocol_type == PROTOCOL_SERVO && rb->servo_packet.is_valid)
+    // 检查是否为舵机协议（MCU或NO_MCU）
+    bool is_servo_protocol = (rb->protocol_type == PROTOCOL_SERVO_MCU ||
+                              rb->protocol_type == PROTOCOL_SERVO_NO_MCU);
+
+    if (rb->packet_ready && is_servo_protocol && rb->servo_packet.is_valid)
     {
         memcpy(packet, &rb->servo_packet, sizeof(ServoPacket_t));
 
-        // 读取数据包后，移动ReadIndex（数据包总长度 = 2字节包头 + 1字节ID + 1字节长度 + 长度字节内容）
-        uint16_t packet_total_len = 2 + 1 + 1 + rb->servo_packet.length;
+        // 根据协议类型计算帧总长度
+        uint16_t packet_total_len;
+        if (rb->protocol_type == PROTOCOL_SERVO_MCU)
+        {
+            // 有MCU控制板协议（无CRC）: 0x55 0x55 | Length | Cmd | Params
+            // 帧总长度 = 2字节帧头 + 1字节Length + Length字节内容
+            packet_total_len = 2 + 1 + rb->servo_packet.length;
+        }
+        else // PROTOCOL_SERVO_NO_MCU
+        {
+            // 无MCU驱动板协议（有CRC）: 0x55 0x55 | ID | Length | Cmd | Params | CRC
+            // 帧总长度 = 2字节帧头 + 1字节ID + 1字节Length + Length字节内容
+            packet_total_len = 2 + 1 + 1 + rb->servo_packet.length;
+        }
+
         // 环形移动ReadIndex
         db->ReadIndex = (db->ReadIndex + packet_total_len) % UART_RX_BUFFER_SIZE;
 

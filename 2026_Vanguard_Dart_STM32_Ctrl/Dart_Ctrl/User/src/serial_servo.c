@@ -459,7 +459,7 @@ void serial_servo_init(void)
     UART_SetProtocol(SERVO_UART_PORT, true);
 
     // 启动接收
-    UART_StartRx(SERVO_UART_PORT);
+    UART_RestartRx(SERVO_UART_PORT);
 }
 
 /*====================  便捷接口函数  ====================*/

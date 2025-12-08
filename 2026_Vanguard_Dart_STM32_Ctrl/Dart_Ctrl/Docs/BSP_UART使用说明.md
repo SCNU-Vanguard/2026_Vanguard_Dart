@@ -80,19 +80,31 @@ typedef struct {
 ## 核心API函数
 
 ### 1. BSP_UART_Init()
-**功能**: 初始化BSP UART模块
+**功能**: 初始化BSP UART模块（自动启动接收和设置默认协议）
 ```c
 void BSP_UART_Init(void);
 ```
 
 **使用示例**:
 ```c
-BSP_UART_Init();  // 初始化所有UART的缓冲区
+BSP_UART_Init();  // 初始化所有UART的缓冲区，自动启动接收
 ```
+
+**自动完成的工作**:
+- 初始化所有配置的UART端口的发送/接收缓冲区
+- 为每个串口设置默认协议（见下表）
+- 自动启动所有UART的中断接收
+
+**默认协议配置**:
+| 串口 | 默认协议 | 用途 |
+|-----|---------|------|
+| BSP_UART3 | PROTOCOL_DART | 上位机通信 |
+| BSP_UART6 | PROTOCOL_SERVO | 舵机通信 |
+| 其他 | PROTOCOL_SERVO | 默认 |
 
 **注意事项**:
 - 必须在使用其他UART功能前调用
-- 自动初始化所有配置的UART端口
+- 无需再单独调用启动接收函数
 
 ---
 
@@ -114,16 +126,20 @@ UART_SetProtocol(BSP_UART3, false);  // UART3使用DART协议
 
 ---
 
-### 3. UART_StartRx()
-**功能**: 启动接收(开启中断接收)
+### 3. UART_RestartRx()
+**功能**: 重启接收（在接收中断被意外关闭时使用）
 ```c
-void UART_StartRx(BSP_UART_NUM_e uart_num);
+void UART_RestartRx(BSP_UART_NUM_e uart_num);
 ```
 
 **使用示例**:
 ```c
-UART_StartRx(BSP_UART6);  // 启动UART6接收
+UART_RestartRx(BSP_UART6);  // 重启UART6接收
 ```
+
+**注意事项**:
+- 正常情况下无需调用，`BSP_UART_Init()` 已自动启动接收
+- 仅在接收中断被意外关闭时使用
 
 ---
 
@@ -376,12 +392,10 @@ WriteIndex == ReadIndex
 
 ## 典型应用场景
 
-### 场景1: 舵机通信
+### 场景1: 舵机通信（使用默认配置）
 ```c
-// 1. 初始化
+// 1. 初始化（UART6默认使用SERVO协议，自动启动接收）
 BSP_UART_Init();
-UART_SetProtocol(BSP_UART6, true);  // 舵机协议
-UART_StartRx(BSP_UART6);
 
 // 2. 发送舵机指令
 uint8_t cmd[] = {0x55, 0x55, 0x01, 0x07, 0x01, 0x00, 0x00, 0x03, 0xE8, 0xFA};
@@ -397,12 +411,10 @@ if(UART_HasPacket(BSP_UART6)) {
 }
 ```
 
-### 场景2: DART上位机通信
+### 场景2: DART上位机通信（使用默认配置）
 ```c
-// 1. 初始化
+// 1. 初始化（UART3默认使用DART协议，自动启动接收）
 BSP_UART_Init();
-UART_SetProtocol(BSP_UART3, false);  // DART协议
-UART_StartRx(BSP_UART3);
 
 // 2. 发送DART数据
 uint8_t data[] = {'D', 'A', 'R', 'T', 0x05, 'H', 'e', 'l', 'l', 'o', 0xCRC};
@@ -416,6 +428,14 @@ if(UART_HasPacket(BSP_UART3)) {
         // 处理数据
     }
 }
+```
+
+### 场景3: 切换协议
+```c
+// 初始化后如需更改协议
+BSP_UART_Init();
+UART_SetProtocol(BSP_UART3, true);   // 将UART3改为SERVO协议
+UART_SetProtocol(BSP_UART6, false);  // 将UART6改为DART协议
 ```
 
 ### 场景3: 原始数据收发
@@ -436,16 +456,21 @@ if(UART_HasData(BSP_UART3)) {
 
 ## 使用注意事项
 
-1. **初始化顺序**
+1. **初始化**
    ```c
-   BSP_UART_Init();              // 必须先初始化
-   UART_SetProtocol(uart, mode); // 设置协议类型
-   UART_StartRx(uart);           // 启动接收
+   BSP_UART_Init();  // 一行代码完成所有初始化
+   // 自动：初始化缓冲区 + 设置默认协议 + 启动接收
    ```
 
-2. **协议设置**
+2. **每个串口独立缓冲区**
+   - 每个UART拥有独立的发送/接收缓冲区
+   - 每个UART拥有独立的协议解析器
+   - 各串口互不干扰，可同时收发
+
+3. **协议设置**
    - 每个UART只能同时使用一种协议
-   - 切换协议前建议清空缓冲区
+   - 默认协议在初始化时自动设置
+   - 如需更改，调用 `UART_SetProtocol()`
 
 3. **CRC校验**
    - 舵机协议: CRC从ID开始到参数结束
@@ -517,7 +542,9 @@ if(UART_HasData(BSP_UART3)) {
 ## 常见问题
 
 **Q: 为什么收不到数据？**
-A: 检查是否调用了`UART_StartRx()`启动接收
+A: 
+1. 检查是否调用了 `BSP_UART_Init()` 初始化
+2. 如接收中断被意外关闭，调用 `UART_RestartRx()` 重启
 
 **Q: CRC校验总是失败？**
 A: 检查CRC计算范围，舵机协议从ID开始，不包括帧头
@@ -526,13 +553,18 @@ A: 检查CRC计算范围，舵机协议从ID开始，不包括帧头
 A: 增大缓冲区大小或更频繁地读取数据
 
 **Q: 如何切换协议？**
-A: 先清空缓冲区，再调用`UART_SetProtocol()`
+A: 直接调用 `UART_SetProtocol()`，会自动重置解析器
 
 ---
 
 ## 更新日志
 
-- 支持环形缓冲区自动管理
-- 实现舵机和DART双协议解析
-- 自动帧头识别和CRC校验
-- 溢出保护和帧完整性验证
+| 日期 | 更新内容 |
+|-----|---------|
+| 2025/12/08 | `BSP_UART_Init()` 自动启动接收和设置默认协议 |
+| 2025/12/08 | `UART_StartRx()` 改名为 `UART_RestartRx()` |
+| 2025/12/08 | 每个串口配置独立的默认协议 |
+| - | 支持环形缓冲区自动管理 |
+| - | 实现舵机和DART双协议解析 |
+| - | 自动帧头识别和CRC校验 |
+| - | 溢出保护和帧完整性验证 |
