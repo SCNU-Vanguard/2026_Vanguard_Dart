@@ -117,14 +117,6 @@ uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID)
         vTaskDelay(1);
         return 1;
     }
-#else
-    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID + g_RM_MOTOR_NUM - 1].g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
-    {
-        DM_ENABLE_ARR[DM_MOTOR_ID - 1] = false;
-        // DWT_Delay_us(200);
-        vTaskDelay(1);
-        return 1;
-    }
 #endif
     return 0;
 }
@@ -132,18 +124,11 @@ uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID)
 /// @brief 用于使能达妙电机
 /// @param DM_MOTOR_ID 达妙电机的电机号（无需管是否有大疆电机，只需要知道这是第几个达妙电机即可）
 /// @return 1：发送成功，0：发送失败
+/// @todo 这里逻辑混乱
 static uint8_t DM_MotorEnable(uint8_t DM_MOTOR_ID)
 {
 #if DM_TestUse
     if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
-    {
-        DM_ENABLE_ARR[DM_MOTOR_ID - 1] = true;
-        // DWT_Delay_us(200);
-        vTaskDelay(1);
-        return 1;
-    }
-#else
-    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID + g_RM_MOTOR_NUM - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
     {
         DM_ENABLE_ARR[DM_MOTOR_ID - 1] = true;
         // DWT_Delay_us(200);
@@ -186,7 +171,7 @@ uint8_t DM_MotorSendControl(MotorTypeDef *st)
 void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
 {
 // MIT模式
-#ifdef DM_MIT_MODE
+#if DM_MIT_MODE
     // 7F FF 7F F0 00 00 08 28 -> 位置0 速度0.0 KP为0, KD为0, 转矩0.20
     // 按道理来说这个KP和KD都是固定的，这个转矩是前馈的量，可能固定也可能PID？是固定的前馈
     assert_param(data != NULL);
@@ -202,17 +187,17 @@ void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
 #endif
 
 // 位置速度模式
-#ifdef DM_LOCATION_SPEED_MODE
+#if DM_LOCATION_SPEED_MODE
 // 有心者自己补充
 #endif
 
 // 速度模式
-#ifdef DM_SPEED_MODE
+#if DM_SPEED_MODE
 // 有心者自己补充
 #endif
 
 // PVT模式
-#ifdef DM_PVT_MODE
+#if DM_PVT_MODE
 // 有心者自己补充
 #endif
 }
@@ -231,7 +216,7 @@ void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
  ***********************************************************************/
 
 /*====================  静态变量（速度滤波）  ====================*/
-#define DM_SPEED_FILTER_COEF 0.8f    // 速度滤波系数（0~1，越大越平滑）
+#define DM_SPEED_FILTER_COEF 0.10f   // 速度滤波系数（0~1，越大越平滑）
 static float last_velocity[4] = {0}; // 上次速度值（最多4个DM电机）
 
 /// @brief DM电机的解算（优化版）

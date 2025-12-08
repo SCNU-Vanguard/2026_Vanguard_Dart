@@ -48,7 +48,7 @@ void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 /// @param ReceiveData 接收到的数据数组 (8字节CAN数据)
 /// @param solved_data 解算后的数据数组（至少5个float）
 /// @note solved_data[0]: 单圈角度(°)
-/// @note solved_data[1]: 速度(rpm)  
+/// @note solved_data[1]: 速度(rpm)
 /// @note solved_data[2]: 电流(A)
 /// @note solved_data[3]: 累计角度(°) - 用于位置闭环
 /// @note solved_data[4]: 速度(rad/s) - 弧度制速度
@@ -65,6 +65,11 @@ void RM_Motor_Reset_All(void);
 /// @param motor_id RM电机ID
 /// @param TargetCurrent 电流大小
 void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent);
+
+/// @brief 去除电机偏移对电机目标数值影响
+/// @param Target 电机目标数值
+/// @return 修正后的电机目标数值
+float RmMotorRemoveBias(float Target);
 
 /// @brief 测试单个RM电机注册函数
 /// @param 无

@@ -1,6 +1,8 @@
 /*****************************************************
  * RM电机（大疆电机）控制模块
  * 适配M3508、M2006、M6020等系列电机
+ *
+ * note:M3508 -> 19.2减速比
  * --------------------------------------------------
  * RM电机说明：
  * 大疆电机的注册同一系列电调最多是4个
@@ -32,7 +34,9 @@ static uint8_t init_flag[RM_MOTOR_MAX_NUM] = {0};   // 初始化标志
 static int16_t offset_ecd[RM_MOTOR_MAX_NUM] = {0};  // 零点偏移
 static float lastspeed = 0.0f;
 static uint8_t count = 0;
-
+static float TargetAngle = 0.0f;
+static float LastTarget = 0.0f;
+static float preLastTarget = 0.0f;
 /**********************************************************发送电机数据专用函数**********************************************************************/
 
 /// @brief 大疆电机用这个(RM电机使用电流控制)
@@ -227,19 +231,53 @@ void RmTestMotorSingleRegister(void)
     float inner_i = 0.40f;   // 内环i
     float inner_d = 0.0f;    // 内环d
     float inner_f = 7.91f;   // 内环f
-    float outer_p = 0.0f;    // 外环p
-    float outer_i = 0.0f;    // 外环i
-    float outer_d = 0.0f;    // 外环d
-    float outer_f = 0.0f;    // 外环k
-	
-	// 外环最大限幅19000（全路程对应角度20673左右）
-	
+
+    float outer_p = 1.05f; // 外环p
+    float outer_i = 0.0f;  // 外环i
+    float outer_d = 0.0f;  // 外环d
+    float outer_f = 0.1f;  // 外环f
+
+    // 外环最大限幅19000（全路程对应角度20673左右）
+
     // PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 1691.0f, 100.0f, 60.0f); // 暂定最大1691
     // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
-    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 0.0f, 0.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待测试角度闭环
+    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待测试角度闭环
     CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
+}
+
+/// @brief 去除电机偏移对电机目标数值影响
+/// @param Target 电机目标数值
+/// @return 修正后的电机目标数值
+float RmMotorRemoveBias(float Target)
+{
+    // 一般来说调用该函数时已经更新了初始角度
+    while (!count)
+        ;
+    if (rm_motor_solved_data[3] == TargetAngle)
+    {
+        Target += rm_motor_solved_data[3]; // 将结果基于当前累加，确定目标数值
+
+        // 空程误差换向补偿
+        if (&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner.calc_count)
+        {
+            if ((LastTarget > Target) && (preLastTarget < LastTarget))
+            {
+                // 上次正传，这次反转
+                Target -= 15.0f;
+            }
+            else if ((LastTarget < Target) && (preLastTarget > LastTarget))
+            {
+                // 上次反转，这次正转
+                Target += 15.0f;
+            }
+            LastTarget = Target;
+            preLastTarget = LastTarget;
+        }
+    }
+
+    return Target;
 }
 
 /// @brief RM电机输出
@@ -249,11 +287,8 @@ void RmMotorPID_Calc(float target)
     // char FeedString[33] = "\0";
     // PID数据输出
 
-    // CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]); // 目标角度，反馈角度，反馈速度
-    // sprintf((char *)FeedString, "targetAngle:.1%f, feedbackAngle:%.1f, feedbackSpeed:%.1f\r\n", 360.0f, rm_motor_solved_data[0], rm_motor_solved_data[1]);
-    // printf(FeedString);
-
-    output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[4]);
+    output = CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, target, rm_motor_solved_data[3], rm_motor_solved_data[4]); // 目标角度，反馈角度，反馈速度
+    // output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[4]);
     RmMotorSendCfg(1, output);
     // printf("%.1f,%.1f,%.1f\r\n", rm_motor_solved_data[1], target, output);
 
