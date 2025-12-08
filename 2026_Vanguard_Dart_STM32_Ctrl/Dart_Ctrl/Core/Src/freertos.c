@@ -26,6 +26,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "UserTask.h"
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,32 +48,38 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-float TargetSpeed = 360;
+static float Target = 360.0f; // 360° * 19.2 ( 度数 * 减速比 )
+static uint32_t lastServoTime = 0;
+static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
+
 static StackType_t g_pxChangeTarget[32];
 static StaticTask_t g_TCBChangeTarget;
 static TaskHandle_t g_HandleChangeTarget;
 
 /// @brief 改变电机目标数值
-/// @param 空
+/// @param arg 任务参数（未使用）
 /// @return 无
-TaskFunction_t pxChangeTarget(void *arg)
+void pxChangeTarget(void *arg)
 {
+  (void)arg; // 消除未使用参数警告
+
   while (1)
   {
-    if (TargetSpeed < 420)
-    {
-      TargetSpeed += 20.0f;
-    }
-    else
-    {
-      TargetSpeed = -20.0f;
-    }
-    vTaskDelay(1000);
+    //    if (Target < 70000.0f)
+    //    {
+    //      Target += 6912.0f;
+    //    }
+    //    else
+    //    {
+    //      Target = -6912.0f;
+    //    }
+
+    RmMotorRemoveBias(Target);
+    vTaskDelay(4000);
   }
 }
 
 /* USER CODE END Variables */
-
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
@@ -118,14 +126,14 @@ void MX_FREERTOS_Init(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-  // 改变电机目标数值的一个乐色任务
-  g_HandleChangeTarget = xTaskCreateStatic(pxChangeTarget, "ChangeTarget", 32, NULL, osPriorityNormal, g_pxChangeTarget, &g_TCBChangeTarget);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+
+  // 改变电机目标数值的一个乐色任务
+  // g_HandleChangeTarget = xTaskCreateStatic(pxChangeTarget, "ChangeTarget", 32, NULL, osPriorityNormal, g_pxChangeTarget, &g_TCBChangeTarget);
+
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -144,24 +152,55 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
 
-  // // 启动接收
-  // UART_StartRx(BSP_UART3);
-  // UART_StartRx(BSP_UART6);
-  // // 设置协议类型
-  // bool SERVO_COM = true;
-  // ServoPacket_t HxFb;
-  // DartPacket_t UpcFb;
-  // UART_SetProtocol(BSP_UART3, SERVO_COM); // true为舵机, false为DART上位机通信协议
+  // 定义数据包接收变量（无需手动初始化，UART_GetServoPacket会完全覆盖）
+  ServoPacket_t HxFb;
+  DartPacket_t UpcFb;
+
+  // 舵机初始化（只调用一次，在循环外）
+  ServoInit();
+  vTaskDelay(100); // 等待初始化完成
+  uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
+  uint16_t angles[3] = {0, 0, 0};
 
   /* Infinite loop */
-
   for (;;)
   {
-    // 默认任务用来调电机
+    // ===== 舵机数据读取示例 =====
+    // 检查是否有完整的数据包
+    // 读取数据包
+    if (UART_GetServoPacket(BSP_UART3, &HxFb))
+    {
+      // 数据包有效，处理数据
+      // 例如：打印舵机ID和命令
+      // printf("ID: %d, Cmd: 0x%02X\n", HxFb.id, HxFb.cmd);
+
+      g_rxDataCnt++;
+      ServoControlPos(0x01, 300, 1000);
+      vTaskDelay(1200);
+      ServoControlPos(0x02, 300, 1000);
+      vTaskDelay(1200);
+      ServoControlPos(0x03, 300, 1000);
+      vTaskDelay(1200);
+      ServoControlMulti(3, servo_ids, angles, 1000);
+
+      // 清除数据包标志，准备接收下一个
+      UART_ClearPacket(BSP_UART3);
+    }
+
+    // 舵机控制示例（每1秒执行一次）
+    // if (HAL_GetTick() - lastServoTime >= 1000)
+    // {
+    //   lastServoTime = HAL_GetTick();
+    //   // ServoControlPos(1, 500, 500); // 控制1号舵机
+    // }
+
+// 调试DM电机
 #if DM_TestUse
     DmMotorSendCfg(1, 1.5, 1.5);
+
+// 调节RM电机
 #elif RM_TestUse
-    // RmMotorPID_Calc(TargetSpeed);
+    // RmMotorPID_Calc(Target);
     // RmMotorSendCfg(1, 550);
 
 #endif

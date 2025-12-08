@@ -77,7 +77,24 @@ typedef struct
 // PID初始化函数
 void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout);
 
-// 串级PID初始化
+/**
+ * @brief 串级PID初始化函数
+ * @param cascade_pid 串级PID结构体指针
+ * @param outer_kp 外环比例系数
+ * @param outer_ki 外环积分系数
+ * @param outer_kd 外环微分系数
+ * @param outer_kf 外环前馈系数
+ * @param inner_kp 内环比例系数
+ * @param inner_ki 内环积分系数
+ * @param inner_kd 内环微分系数
+ * @param inner_kf 内环前馈系数
+ * @param outer_max_out 外环输出上限
+ * @param outer_min_out 外环输出下限（防止输出与目标方向相反）
+ * @param outer_max_iout 外环积分限幅
+ * @param inner_max_out 内环输出上限
+ * @param inner_min_out 内环输出下限（防止输出与目标方向相反）
+ * @param inner_max_iout 内环积分限幅
+ */
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
                       float outer_kp, float outer_ki, float outer_kd, float outer_kf,
                       float inner_kp, float inner_ki, float inner_kd, float inner_kf,
@@ -93,7 +110,16 @@ float PID_Position_Calc(PID_t *pid, float target, float measure);
 // 增量式PID计算
 float PID_Incremental_Calc(PID_t *pid, float target, float measure);
 
-// 串级PID计算
+/**
+ * @brief 串级PID计算
+ * @param cascade_pid 串级PID结构体指针
+ * @param outer_target 外环目标值（位置）
+ * @param outer_measure 外环测量值（位置）
+ * @param inner_measure 内环测量值（速度）
+ * @param outer_feedforward 外环前馈值
+ * @param inner_feedforward 内环前馈值
+ * @return 内环PID输出值
+ */
 float CASCADE_PID_Calculate(CASCADE_PID_t *cascade_pid,
                             float outer_target,
                             float outer_measure,
