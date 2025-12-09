@@ -48,7 +48,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-static float Target = 360.0f; // 360° * 19.2 ( 度数 * 减速比 )
+static float Target = 420.0f; // 360° * 19.2 ( 度数 * 减速比 ) // 420.00
 static uint32_t lastServoTime = 0;
 static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
 
@@ -65,16 +65,16 @@ void pxChangeTarget(void *arg)
 
   while (1)
   {
-    //    if (Target < 70000.0f)
-    //    {
-    //      Target += 6912.0f;
-    //    }
-    //    else
-    //    {
-    //      Target = -6912.0f;
-    //    }
+    if (Target < 70000.0f)
+    {
+      Target += 6912.0f;
+    }
+    else
+    {
+      Target = -6912.0f;
+    }
 
-    RmMotorRemoveBias(Target);
+    RmMotorRemoveBias(RM_3508_GRIPPER, Target);
     vTaskDelay(4000);
   }
 }
@@ -200,8 +200,8 @@ void StartDefaultTask(void *argument)
 
 // 调节RM电机
 #elif RM_TestUse
-    // RmMotorPID_Calc(Target);
-    // RmMotorSendCfg(1, 550);
+    RmMotorPID_Calc(SingleMotorTest, Target);
+    // RmMotorSendCfg(1, Target);
 
 #endif
   }

@@ -6,6 +6,7 @@
  * 支持MIT模式、位置速度模式、速度模式、PVT模式
  * 目前主要使用MIT模式进行控制
  * todo:当前文件存在阻塞延时函数，替换成定时器中断解决延时或者vTaskDelay，现在先使用vTaskDelay
+ *      防止达妙电机反馈丢帧或多帧问题：1.HAL_GetTick对速度积分得到位置（出现丢帧直接按照上次数据的Time处理）2.多帧直接根据 *                                   当前速度进行计算（一般都是一收一发），使用HAL_GetTick记录时间进行积分
  ****************************************************/
 
 #include "DM_Motor.h"
@@ -105,14 +106,14 @@ static int float_to_uint(float x_float, DM_DATA DataMode)
 /**********************************************************发送电机数据专用函数**********************************************************************/
 
 /// @brief 用于失能达妙电机
-/// @param DM_MOTOR_ID 达妙电机的电机号（无需管是否有大疆电机，只需要知道这是第几个达妙电机即可）
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID)
+uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
 {
 #if DM_TestUse
-    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID - 1].g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
+    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[motor_cfg - 1].g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
     {
-        DM_ENABLE_ARR[DM_MOTOR_ID - 1] = false;
+        DM_ENABLE_ARR[motor_cfg - 1] = false;
         // DWT_Delay_us(200); // 一个完整的8字节标准数据帧是108位，这里用一个200us的延时足以搞定
         vTaskDelay(1);
         return 1;
@@ -122,15 +123,15 @@ uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID)
 }
 
 /// @brief 用于使能达妙电机
-/// @param DM_MOTOR_ID 达妙电机的电机号（无需管是否有大疆电机，只需要知道这是第几个达妙电机即可）
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
 /// @todo 这里逻辑混乱
-static uint8_t DM_MotorEnable(uint8_t DM_MOTOR_ID)
+static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 {
 #if DM_TestUse
-    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[DM_MOTOR_ID - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
+    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[motor_cfg - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
     {
-        DM_ENABLE_ARR[DM_MOTOR_ID - 1] = true;
+        DM_ENABLE_ARR[motor_cfg - 1] = true;
         // DWT_Delay_us(200);
         vTaskDelay(1);
         return 1;
@@ -166,9 +167,9 @@ uint8_t DM_MotorSendControl(MotorTypeDef *st)
 }
 
 /// @brief 设置达妙电机发送的数据
-/// @param motor_id 达妙电机ID
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 数据所在数组的指针
-void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
+void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 {
 // MIT模式
 #if DM_MIT_MODE
@@ -181,9 +182,9 @@ void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
     }
 
     // 这里是要整个都清理一遍
-    memset(MotorManager.MotorList[motor_id - 1 + g_DM_MOTOR_BIAS_ADDR_TXID].SendMotorData, 0x00, CtrlMotorLen);
-    memcpy(MotorManager.MotorList[motor_id - 1 + g_DM_MOTOR_BIAS_ADDR_TXID].SendMotorData, data, CtrlMotorLen);
-    MotorManager.MotorList[motor_id - 1 + g_DM_MOTOR_BIAS_ADDR_TXID].SendMotorControl(&MotorManager.MotorList[motor_id - 1 + g_DM_MOTOR_BIAS_ADDR_TXID]); // 调用发送函数
+    memset(MotorManager.MotorList[motor_cfg - 1].SendMotorData, 0x00, CtrlMotorLen);
+    memcpy(MotorManager.MotorList[motor_cfg - 1].SendMotorData, data, CtrlMotorLen);
+    MotorManager.MotorList[motor_cfg - 1].SendMotorControl(&MotorManager.MotorList[motor_cfg - 1]); // 调用发送函数
 #endif
 
 // 位置速度模式
@@ -271,12 +272,12 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor)
 /****************************************************
  * 函数名： DmMotorSendCfg
  * 作用：用于设置发送DM电机数据
- * 参数：motor_id ：DM电机的电机号
+ * 参数：motor_cfg ：电机配置枚举值 (can_motor_cfg)
  * 参数：TargetPos：目标位置 angle
  * 参数：TargetVel：目标速度 rad/s
  * 返回值：无
  ****************************************************/
-void DmMotorSendCfg(uint8_t motor_id, float TargetPos, float TargetVel)
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel)
 {
     KP_RESULT = float_to_uint(g_DM_KP, DM_KP);
     KD_RESULT = float_to_uint(g_DM_KD, DM_KD);
@@ -288,12 +289,12 @@ void DmMotorSendCfg(uint8_t motor_id, float TargetPos, float TargetVel)
     data[0] = Pos_des >> 8;
     data[1] = (uint8_t)Pos_des;
     data[2] = Vel_des >> 4;
-    data[3] = ((Vel_des & 0x000F) << 4) | ((KP_RESULT & 0x0F00) >> 8); // 当更改速度限幅的时候可能要更改这里的移位逻辑
+    data[3] = ((Vel_des & 0x000F) << 4) | ((KP_RESULT & 0x0F00) >> 8);
     data[4] = KP_RESULT;
     data[5] = KD_RESULT >> 4;
     data[6] = ((KD_RESULT & 0x000F) << 4) | ((Torque_ff & 0x0F00) >> 8);
     data[7] = Torque_ff;
-    DM_MotorSetTxData(motor_id, data);
+    DM_MotorSetTxData(motor_cfg, data);
 }
 
 /**********************************************************电机初始化专用函数************************************************************************/
@@ -314,10 +315,10 @@ void DmTestMotorSingleRegister(void)
 }
 
 /// @brief DM电机输出
-/// @param motor_id 电机ID
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param target 目标值
 /// @todo 增加PID控制
-void DmMotorPID_Calc(uint8_t motor_id, float target)
+void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
     // PID数据输出
     // 可以在这里添加DM电机的PID控制逻辑

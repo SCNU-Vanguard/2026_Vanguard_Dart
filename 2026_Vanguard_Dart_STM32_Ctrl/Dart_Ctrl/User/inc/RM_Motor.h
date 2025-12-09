@@ -9,7 +9,13 @@
 
 /*-------------------------RM电机的电调的偏移ID----------------------------------------------*/
 #define g_RM_MOTOR_BIAS_ADDR 0x200
+#define g_RM_MOTOR_BIAS_ADDR_3508 0x200
+#define g_RM_MOTOR_BIAS_ADDR_2006 0x1FF
+#define g_RM_MOTOR_BIAS_ADDR_6020 0x2FE
 #define g_RM_MOTOR_NUM 2
+#define g_RM_M3508_NUM 1
+#define g_RM_M2006_NUM 1
+#define g_RM_GM6020_NUM 0
 
 #define RM_TestUse 1U
 
@@ -39,9 +45,9 @@
 uint8_t RM_MotorSendControl(MotorTypeDef *st);
 
 /// @brief 设置对应RM电机的发送数据
-/// @param motor_id 第几个大疆电机
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 发送数据指针（必须8字节）
-void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
+void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data);
 
 /// @brief RM电机接收数据解算
 /// @param motor 电机结构体指针
@@ -60,9 +66,9 @@ void RM_Motor_Reset_Zero(MotorTypeDef *motor);
 void RM_Motor_Reset_All(void);
 
 /// @brief 用于设置发送RM电机数据
-/// @param motor_id RM电机ID
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param TargetCurrent 电流大小
-void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent);
+void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent);
 
 /// @brief 去除电机偏移对电机目标数值影响
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
@@ -77,9 +83,9 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target);
 void RmTestMotorSingleRegister(void);
 
 /// @brief RM电机输出
-/// @param motor_id 电机ID (1~8，对应电调ID)
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param target 目标值，单环时候为速度，串级为位置
 /// @retval 无
-void RmMotorPID_Calc(uint8_t motor_id, float target);
+void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
 #endif

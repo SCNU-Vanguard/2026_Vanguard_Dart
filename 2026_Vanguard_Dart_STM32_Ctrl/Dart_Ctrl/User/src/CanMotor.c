@@ -30,7 +30,29 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
     {
         return; // 或返回错误码
     }
-    ptr->g_TxHeader.StdId = (ptr->MotorInf.band == RM_MOTOR_BAND) ? g_RM_MOTOR_BIAS_ADDR : g_DM_MOTOR_BIAS_ADDR_TXID + ptr->MotorID;
+
+    // 3508默认占用200帧头（反馈为0x201 - 0x204）
+    // 2006默认占用1FF帧头 (反馈为0x205 - 0x208)
+    // 6020默认使用电流环，占用1FE帧头（反馈为0x204 + id）
+    if ((ptr->MotorInf.band == RM_MOTOR_BAND) && (ptr->MotorInf.model == RmM3508))
+    {
+        ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_3508;
+    }
+
+    else if ((ptr->MotorInf.band == RM_MOTOR_BAND) && (ptr->MotorInf.model == RmM2006))
+    {
+        ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_2006;
+    }
+
+    else if ((ptr->MotorInf.band == RM_MOTOR_BAND) && (ptr->MotorInf.model == RmGM6020))
+    {
+        ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_6020;
+    }
+    else
+    {
+        ptr->g_TxHeader.StdId = g_DM_MOTOR_BIAS_ADDR_TXID + ptr->MotorID;
+    }
+
     ptr->g_TxHeader.IDE = CAN_ID_STD;   // 标准帧标识符
     ptr->g_TxHeader.RTR = CAN_RTR_DATA; // 数据帧
     ptr->g_TxHeader.DLC = CtrlMotorLen; // 数据长度
@@ -48,7 +70,7 @@ void MotorRegister(void)
 
     // 注册电机应该包含电机的ID以及电机的发送地址和接收地址、发送数据存储地方
     // 注册RM电机
-    // 发送之后需要memset()
+    // 发送之后自己会memset()
 
     // 夹爪传动带结构
     MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorID = RM_3508_GRIPPER;
@@ -70,6 +92,7 @@ void MotorRegister(void)
     // 扳机
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.band = RM_MOTOR_BAND;
+    MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.model = RmM2006;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].SendMotorControl = RM_MotorSendControl;
     // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
     // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
@@ -205,9 +228,9 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
         // 遍历所有已注册的电机，查找匹配的ID
         for (uint8_t i = 0; i < MotorManager.registered_count; i++)
         {
-            // 检查是否为RM电机的反馈帧
+            // 检查是否为RM3508电机的反馈帧
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
-                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID)))
+                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR_3508 + MotorManager.MotorList[i].MotorID)))
             {
                 // 找到对应的RM电机，存储接收数据
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
@@ -219,8 +242,41 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
                 // ID_MATCHED = true;
                 break; // 找到匹配的电机后跳出内层循环
             }
-            // 检查是否为DM电机的反馈帧
-            else if ((MotorManager.MotorList[i].MotorInf.band == DM_MOTOR_BAND) &&
+
+            // 检查是否为RM2006电机的反馈帧
+            if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
+                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 4)))
+            {
+                // 找到对应的RM电机，存储接收数据
+                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
+
+                // 调用RM电机数据解算函数，传递结构体中的数据指针
+                RM_MOTOR_CALCU(&MotorManager.MotorList[i]);
+
+                CAN_RX_DATA_COUNT++;
+                // ID_MATCHED = true;
+                break; // 找到匹配的电机后跳出内层循环
+            }
+
+            // 检查是否为RM6020电机的反馈帧
+            // 注意，这里不能和2006直接使用，假如6020电机ID为1，同时也有一个2006电机ID也为1就会轧钢
+            // 解决方案：将6020的ID设置到5、6、7, 并同时更改 g_RM_MOTOR_BIAS_ADDR_6020 为 0x2FE，下面的 4 改为 8
+            if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
+                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 8)))
+            {
+                // 找到对应的RM电机，存储接收数据
+                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
+
+                // 调用RM电机数据解算函数，传递结构体中的数据指针
+                RM_MOTOR_CALCU(&MotorManager.MotorList[i]);
+
+                CAN_RX_DATA_COUNT++;
+                // ID_MATCHED = true;
+                break; // 找到匹配的电机后跳出内层循环
+            }
+
+            // 检查是否为DM电机的反馈帧(DM电机的反馈是几乎一样的)
+            else if ((MotorManager.MotorList[i + g_RM_MOTOR_NUM].MotorInf.band == DM_MOTOR_BAND) &&
                      (pRxHeader.StdId == (g_DM_MOTOR_BIAS_ADDR_RXID + MotorManager.MotorList[i].MotorID)))
             {
                 // 找到对应的DM电机，存储接收数据
@@ -241,8 +297,8 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 
     // 如果没有成功处理任何消息，可能需要错误处理
     // 这里注释掉，因为可能会收到未注册的电机的消息
-    if (CAN_RX_DATA_COUNT == 0)
-    {
-        Error_Handler();
-    }
+    // if (CAN_RX_DATA_COUNT == 0)
+    // {
+    //     Error_Handler();
+    // }
 }

@@ -97,9 +97,9 @@ typedef enum
 /*********************************************************函数声明***************************************************************/
 
 /// @brief 用于失能达妙电机
-/// @param DM_MOTOR_ID 达妙电机的电机号（无需管是否有大疆电机，只需要知道这是第几个达妙电机即可）
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID);
+uint8_t DM_MotorDisable(can_motor_cfg motor_cfg);
 
 /// @brief 用于控制达妙电机
 /// @param st 要控制的达妙电机的结构体
@@ -107,9 +107,9 @@ uint8_t DM_MotorDisable(uint8_t DM_MOTOR_ID);
 uint8_t DM_MotorSendControl(MotorTypeDef *st);
 
 /// @brief 设置达妙电机发送的数据
-/// @param motor_id 达妙电机ID
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 数据所在数组的指针
-void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
+void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data);
 
 /// @brief DM电机的解算
 /// @param motor 电机结构体指针
@@ -121,11 +121,17 @@ void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 void DM_MOTOR_CALCU(MotorTypeDef *motor);
 
 /// @brief 用于设置发送DM电机数据
-/// @param motor_id DM电机的电机号
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param TargetPos 目标位置
 /// @param TargetVel 目标速度
 /// @note 不知道是不是默认保留一位小数的，可能是范围导致？
-void DmMotorSendCfg(uint8_t motor_id, float TargetPos, float TargetVel);
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel);
+
+/// @brief DM电机输出
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
+/// @param target 目标值
+/// @todo 增加PID控制
+void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
 /// @brief 测试单个DM电机注册函数
 /// @param 无

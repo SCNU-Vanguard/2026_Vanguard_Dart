@@ -110,6 +110,8 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
  *返回: 0: 发送成功
  *     -1: 发送失败
  *      1: 数据长度错误
+ * 
+ * 注意：当CAN挂载设备多了应考虑是否直接写入缓冲区
  ******************************************/
 uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data)
 {

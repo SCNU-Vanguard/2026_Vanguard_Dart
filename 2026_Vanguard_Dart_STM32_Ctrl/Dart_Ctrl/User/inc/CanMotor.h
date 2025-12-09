@@ -19,7 +19,7 @@
 // 弧度转角度宏：radian * 180/π ≈ radian * 57.29578f
 #define RadToDegree(radian) ((radian) * 57.29578f)
 
-// 电机品牌类型
+// 电机品牌
 typedef enum
 {
     RM_MOTOR_BAND = 0,
