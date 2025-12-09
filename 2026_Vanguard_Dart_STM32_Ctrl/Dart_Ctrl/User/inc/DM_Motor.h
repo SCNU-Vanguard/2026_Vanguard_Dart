@@ -112,10 +112,13 @@ uint8_t DM_MotorSendControl(MotorTypeDef *st);
 void DM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 
 /// @brief DM电机的解算
-/// @param motor_id_num DM电机的id号（无需管理其他品牌型号的电机）
-/// @param ReceiveData 接收到的数据数组
-/// @param solved_data 解算后的数据数组（至少5个float）
-void DM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
+/// @param motor 电机结构体指针
+/// @note motor->motor_data.solved_data[0]: 位置(rad/°)
+/// @note motor->motor_data.solved_data[1]: 速度(rad/s)
+/// @note motor->motor_data.solved_data[2]: 力矩(N·m)
+/// @note motor->motor_data.solved_data[3]: MOS温度(℃)
+/// @note motor->motor_data.solved_data[4]: 转子温度(℃)
+void DM_MOTOR_CALCU(MotorTypeDef *motor);
 
 /// @brief 用于设置发送DM电机数据
 /// @param motor_id DM电机的电机号

@@ -18,25 +18,11 @@
 
 // 外部引用电机管理器
 extern MotorManager_t MotorManager;
-extern float rm_motor_solved_data[]; // 存储RM电机解算后的数据
 float output = 0.0f;
 
-#define CtrlMotorLen 8 // 电机控制报文长度默认给8
-#define SingleMotorTest 1
+#define CtrlMotorLen 8     // 电机控制报文长度默认给8
+#define RM_MOTOR_MAX_NUM 2 // 最大电机数量
 
-/*====================  静态变量定义（用于多圈累计）  ====================*/
-#define RM_MOTOR_MAX_NUM 8 // 最大电机数量
-
-static int16_t last_ecd[RM_MOTOR_MAX_NUM] = {0};    // 上次编码器值
-static int32_t total_round[RM_MOTOR_MAX_NUM] = {0}; // 累计圈数
-static int32_t total_ecd[RM_MOTOR_MAX_NUM] = {0};   // 累计编码器值
-static uint8_t init_flag[RM_MOTOR_MAX_NUM] = {0};   // 初始化标志
-static int16_t offset_ecd[RM_MOTOR_MAX_NUM] = {0};  // 零点偏移
-static float lastspeed = 0.0f;
-static uint8_t count = 0;
-static float TargetAngle = 0.0f;
-static float LastTarget = 0.0f;
-static float preLastTarget = 0.0f;
 /**********************************************************发送电机数据专用函数**********************************************************************/
 
 /// @brief 大疆电机用这个(RM电机使用电流控制)
@@ -102,16 +88,23 @@ void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data)
  *************************************/
 
 /// @brief RM电机接收数据解算
-/// @param motor_id_num 大疆电机的id号 (0~7，对应电调ID 1~8)
-/// @param ReceiveData 接收到的数据数组 (8字节CAN数据)
-/// @param solved_data 解算后的数据数组（至少5个float）
-/// @note solved_data[0]: 单圈角度(°)
-/// @note solved_data[1]: 速度(rpm)
-/// @note solved_data[2]: 电流(A)
-/// @note solved_data[3]: 累计角度(°) - 用于位置闭环
-/// @note solved_data[4]: 速度(rad/s) - 弧度制速度
-void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data)
+/// @param motor 电机结构体指针
+/// @note motor->motor_data.solved_data[0]: 单圈角度(°)
+/// @note motor->motor_data.solved_data[1]: 速度(rpm)
+/// @note motor->motor_data.solved_data[2]: 电流(A)
+/// @note motor->motor_data.solved_data[3]: 累计角度(°) - 用于位置闭环
+/// @note motor->motor_data.solved_data[4]: 速度(rad/s) - 弧度制速度
+void RM_MOTOR_CALCU(MotorTypeDef *motor)
 {
+    assert_param(motor != NULL);
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+    uint8_t *ReceiveData = motor->ReceiveMotorData;
+
     // =============== 1. 数据解析 ===============
     int16_t ecd = (((uint16_t)ReceiveData[0]) << 8) | ReceiveData[1];
     int16_t speed_rpm = (int16_t)((((uint16_t)ReceiveData[2]) << 8) | ReceiveData[3]);
@@ -119,59 +112,59 @@ void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_da
     // int8_t temperature = ReceiveData[6];  // 温度，按需使用
 
     // =============== 2. 首次初始化 ===============
-    if (init_flag[motor_id_num] == 0)
+    if (pData->init_flag == 0)
     {
-        last_ecd[motor_id_num] = ecd;
-        offset_ecd[motor_id_num] = ecd; // 首次位置作为零点
-        init_flag[motor_id_num] = 1;
+        pData->last_ecd = ecd;
+        pData->offset_ecd = ecd; // 首次位置作为零点
+        pData->init_flag = 1;
     }
 
     // =============== 3. 过零检测 & 多圈累计 ===============
-    int16_t err = ecd - last_ecd[motor_id_num];
-    total_round[motor_id_num] += (err > 4096) ? -1 : (err < -4096) ? 1
-                                                                   : 0;
-    total_ecd[motor_id_num] += err + ((err > 4096) ? -8192 : (err < -4096) ? 8192
-                                                                           : 0);
-    last_ecd[motor_id_num] = ecd;
+    int16_t err = ecd - pData->last_ecd;
+    pData->total_round += (err > 4096) ? -1 : (err < -4096) ? 1
+                                                            : 0;
+    pData->total_ecd += err + ((err > 4096) ? -8192 : (err < -4096) ? 8192
+                                                                    : 0);
+    pData->last_ecd = ecd;
 
     // =============== 4. 数据转换输出 ===============
     // 单圈角度 (0~360°)
-    solved_data[0] = ecd / 8192.0f * 360.0f;
+    pData->solved_data[0] = ecd / 8192.0f * 360.0f;
 
-    // 速度 (rpm)
-    if (!count)
+    // 速度 (rpm) - 使用对应电机的滤波变量
+    if (!pData->filter_init)
     {
-        solved_data[1] = (float)speed_rpm;
-        count = 1;
+        pData->solved_data[1] = (float)speed_rpm;
+        pData->filter_init = 1;
     }
     else
     {
-        solved_data[1] = (float)speed_rpm * 0.9f + 0.1f * lastspeed;
+        pData->solved_data[1] = (float)speed_rpm * 0.9f + 0.1f * pData->last_speed;
     }
 
     // 电流 (A) - M3508标准：16384对应20A
-    solved_data[2] = current_raw / 16384.0f * 20.0f;
+    pData->solved_data[2] = current_raw / 16384.0f * 20.0f;
 
     // 累计角度 (°) - 可超过360°，用于位置闭环
-    solved_data[3] = total_round[motor_id_num] * 360.0f + solved_data[0];
+    pData->solved_data[3] = pData->total_round * 360.0f + pData->solved_data[0];
 
     // 速度 (rad/s) - rpm转弧度/秒
-    solved_data[4] = speed_rpm * 0.10472f; // 2*PI/60 ≈ 0.10472
+    pData->solved_data[4] = speed_rpm * 0.10472f; // 2*PI/60 ≈ 0.10472
 
-    lastspeed = solved_data[1];
+    pData->last_speed = pData->solved_data[1];
 }
 
 /*====================  辅助函数  ====================*/
 
 /// @brief 重置电机零点（当前位置设为零点）
-/// @param motor_id_num 电机ID (0~7)
-void RM_Motor_Reset_Zero(uint8_t motor_id_num)
+/// @param motor 电机结构体指针
+void RM_Motor_Reset_Zero(MotorTypeDef *motor)
 {
-    if (motor_id_num < RM_MOTOR_MAX_NUM)
+    if (motor != NULL)
     {
-        total_round[motor_id_num] = 0;
-        total_ecd[motor_id_num] = 0;
-        offset_ecd[motor_id_num] = last_ecd[motor_id_num];
+        motor->motor_data.total_round = 0;
+        motor->motor_data.total_ecd = 0;
+        motor->motor_data.offset_ecd = motor->motor_data.last_ecd;
     }
 }
 
@@ -180,11 +173,7 @@ void RM_Motor_Reset_All(void)
 {
     for (uint8_t i = 0; i < RM_MOTOR_MAX_NUM; i++)
     {
-        last_ecd[i] = 0;
-        total_round[i] = 0;
-        total_ecd[i] = 0;
-        init_flag[i] = 0;
-        offset_ecd[i] = 0;
+        memset(&MotorManager.MotorList[i].motor_data, 0, sizeof(MotorSolvedData_t));
     }
 }
 
@@ -220,60 +209,99 @@ void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent)
 /// @return 无
 void RmTestMotorSingleRegister(void)
 {
+    /* -------------------------------------------------------------------------------------------- */
+    // 3508传动带
+    // 按照需求更改参数
+    // MotorManager.MotorList[SingleMotorTest - 1].MotorID = SingleMotorTest;
+    // MotorManager.MotorList[SingleMotorTest - 1].MotorInf.band = RM_MOTOR_BAND;
+    // MotorManager.MotorList[SingleMotorTest - 1].SendMotorControl = RM_MotorSendControl;
+    // MotorManager.registered_count = 1;
+    // MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 1;
+    // float inner_p = 175.91f; // 内环p
+    // float inner_i = 0.40f;   // 内环i
+    // float inner_d = 0.0f;    // 内环d
+    // float inner_f = 7.91f;   // 内环f
+    // float outer_p = 1.05f;   // 外环p
+    // float outer_i = 0.0f;    // 外环i
+    // float outer_d = 0.0f;    // 外环d
+    // float outer_f = 0.1f;    // 外环f
+    // // 外环最大限幅19000（全路程对应角度20673左右）
+    // // PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 1691.0f, 100.0f, 60.0f); // 暂定最大1691
+    // // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
+    // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
+    // CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
+    /* -------------------------------------------------------------------------------------------- */
+
+    // 2006扳机
     // 按照需求更改参数
     MotorManager.MotorList[SingleMotorTest - 1].MotorID = SingleMotorTest;
-    MotorManager.MotorList[SingleMotorTest - 1].MotorBand = RM_MOTOR_BAND;
+    MotorManager.MotorList[SingleMotorTest - 1].MotorInf.band = RM_MOTOR_BAND;
     MotorManager.MotorList[SingleMotorTest - 1].SendMotorControl = RM_MotorSendControl;
     MotorManager.registered_count = 1;
-
     MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 1;
     float inner_p = 175.91f; // 内环p
     float inner_i = 0.40f;   // 内环i
     float inner_d = 0.0f;    // 内环d
     float inner_f = 7.91f;   // 内环f
-
-    float outer_p = 1.05f; // 外环p
-    float outer_i = 0.0f;  // 外环i
-    float outer_d = 0.0f;  // 外环d
-    float outer_f = 0.1f;  // 外环f
-
+    float outer_p = 1.05f;   // 外环p
+    float outer_i = 0.0f;    // 外环i
+    float outer_d = 0.0f;    // 外环d
+    float outer_f = 0.1f;    // 外环f
     // 外环最大限幅19000（全路程对应角度20673左右）
-
     // PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, p, i, d, f, 1691.0f, 100.0f, 60.0f); // 暂定最大1691
     // PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
-    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待测试角度闭环
+    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
     CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
 
     // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
 }
 
 /// @brief 去除电机偏移对电机目标数值影响
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param Target 电机目标数值
 /// @return 修正后的电机目标数值
-float RmMotorRemoveBias(float Target)
+float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
 {
-    // 一般来说调用该函数时已经更新了初始角度
-    while (!count)
-        ;
-    if (rm_motor_solved_data[3] == TargetAngle)
+    // 根据枚举值获取对应的电机结构体指针
+    // can_motor_cfg 从1开始，数组索引从0开始
+    uint8_t idx = (uint8_t)motor_cfg - 1;
+    if (idx >= g_CanMotorNum)
     {
-        Target += rm_motor_solved_data[3]; // 将结果基于当前累加，确定目标数值
+        return Target;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[idx];
+
+    // 检查是否为RM电机
+    if (motor->MotorInf.band != RM_MOTOR_BAND)
+    {
+        return Target; // 不是RM电机，直接返回原值
+    }
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+
+    // 一般来说调用该函数时已经更新了初始角度
+    while (!pData->filter_init)
+        ;
+    if (pData->solved_data[3] == pData->target_angle)
+    {
+        Target += pData->solved_data[3]; // 将结果基于当前累加，确定目标数值
 
         // 空程误差换向补偿
-        if (&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid.inner.calc_count)
+        if (motor->cascade_pid.inner.calc_count)
         {
-            if ((LastTarget > Target) && (preLastTarget < LastTarget))
+            if ((pData->last_target > Target) && (pData->pre_last_target < pData->last_target))
             {
                 // 上次正传，这次反转
                 Target -= 15.0f;
             }
-            else if ((LastTarget < Target) && (preLastTarget > LastTarget))
+            else if ((pData->last_target < Target) && (pData->pre_last_target > pData->last_target))
             {
                 // 上次反转，这次正转
                 Target += 15.0f;
             }
-            LastTarget = Target;
-            preLastTarget = LastTarget;
+            pData->last_target = Target;
+            pData->pre_last_target = pData->last_target;
         }
     }
 
@@ -281,16 +309,25 @@ float RmMotorRemoveBias(float Target)
 }
 
 /// @brief RM电机输出
-/// @param target 目标值，单环时候为速度，串级为位置(暂定)，放弃串级
-void RmMotorPID_Calc(float target)
+/// @param motor_id 电机ID (1~8，对应电调ID)
+/// @param target 目标值，单环时候为速度，串级为位置
+void RmMotorPID_Calc(uint8_t motor_id, float target)
 {
-    // char FeedString[33] = "\0";
-    // PID数据输出
+    // 边界检查，motor_id从1开始，数组索引从0开始
+    uint8_t idx = motor_id - 1;
+    if (idx >= RM_MOTOR_MAX_NUM)
+    {
+        return;
+    }
 
-    output = CASCADE_PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, target, rm_motor_solved_data[3], rm_motor_solved_data[4]); // 目标角度，反馈角度，反馈速度
-    // output = PID_Calculate(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, target, rm_motor_solved_data[4]);
-    RmMotorSendCfg(1, output);
-    // printf("%.1f,%.1f,%.1f\r\n", rm_motor_solved_data[1], target, output);
+    MotorTypeDef *motor = &MotorManager.MotorList[idx];
+    MotorSolvedData_t *pData = &motor->motor_data;
+
+    // PID数据输出
+    output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]); // 目标角度，反馈角度，反馈速度
+    // output = PID_Calculate(&motor->speed_pid, target, pData->solved_data[4]);
+    RmMotorSendCfg(motor_id, output);
+    // printf("%.1f,%.1f,%.1f\r\n", pData->solved_data[1], target, output);
 
     // HAL_UART_Transmit_IT(&huart3, );
 }

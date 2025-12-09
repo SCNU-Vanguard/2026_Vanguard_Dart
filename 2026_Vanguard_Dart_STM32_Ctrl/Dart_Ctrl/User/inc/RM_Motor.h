@@ -13,23 +13,23 @@
 
 #define RM_TestUse 1U
 
-// 8191为机械角度范围
+// 8192为机械角度范围
 // -16384->0->16384反馈的电流范围
 // 力矩的反馈不知
-typedef struct __attribute__((packed))
-{
-    // 电流和反馈电流
-    volatile uint16_t LastCurrent;
-    volatile uint16_t NowCurrent;
+// typedef struct __attribute__((packed))
+// {
+//     // 电流和反馈电流
+//     volatile uint16_t LastCurrent;
+//     volatile uint16_t NowCurrent;
 
-    // 力矩和反馈力矩
-    volatile uint16_t LastTorque;
-    volatile uint16_t NowTorque;
+//     // 力矩和反馈力矩
+//     volatile uint16_t LastTorque;
+//     volatile uint16_t NowTorque;
 
-    // 角度和上一次的角度
-    volatile float LastAngle;
-    volatile float NowAngle;
-} MotorFbData;
+//     // 角度和上一次的角度
+//     volatile float LastAngle;
+//     volatile float NowAngle;
+// } MotorFbData;
 
 /*********************************************************函数声明***************************************************************/
 
@@ -44,19 +44,17 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st);
 void RM_MotorSetTxData(uint8_t motor_id, uint8_t *data);
 
 /// @brief RM电机接收数据解算
-/// @param motor_id_num 大疆电机的id号 (0~7，对应电调ID 1~8)
-/// @param ReceiveData 接收到的数据数组 (8字节CAN数据)
-/// @param solved_data 解算后的数据数组（至少5个float）
-/// @note solved_data[0]: 单圈角度(°)
-/// @note solved_data[1]: 速度(rpm)
-/// @note solved_data[2]: 电流(A)
-/// @note solved_data[3]: 累计角度(°) - 用于位置闭环
-/// @note solved_data[4]: 速度(rad/s) - 弧度制速度
-void RM_MOTOR_CALCU(uint8_t motor_id_num, uint8_t *ReceiveData, float *solved_data);
+/// @param motor 电机结构体指针
+/// @note motor->motor_data.solved_data[0]: 单圈角度(°)
+/// @note motor->motor_data.solved_data[1]: 速度(rpm)
+/// @note motor->motor_data.solved_data[2]: 电流(A)
+/// @note motor->motor_data.solved_data[3]: 累计角度(°) - 用于位置闭环
+/// @note motor->motor_data.solved_data[4]: 速度(rad/s) - 弧度制速度
+void RM_MOTOR_CALCU(MotorTypeDef *motor);
 
 /// @brief 重置电机零点（当前位置设为零点）
-/// @param motor_id_num 电机ID (0~7)
-void RM_Motor_Reset_Zero(uint8_t motor_id_num);
+/// @param motor 电机结构体指针
+void RM_Motor_Reset_Zero(MotorTypeDef *motor);
 
 /// @brief 重置所有电机状态（用于重新初始化）
 void RM_Motor_Reset_All(void);
@@ -67,9 +65,10 @@ void RM_Motor_Reset_All(void);
 void RmMotorSendCfg(uint8_t motor_id, int16_t TargetCurrent);
 
 /// @brief 去除电机偏移对电机目标数值影响
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param Target 电机目标数值
 /// @return 修正后的电机目标数值
-float RmMotorRemoveBias(float Target);
+float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target);
 
 /// @brief 测试单个RM电机注册函数
 /// @param 无
@@ -78,8 +77,9 @@ float RmMotorRemoveBias(float Target);
 void RmTestMotorSingleRegister(void);
 
 /// @brief RM电机输出
-/// @param target 目标值，单环时候为速度，串级为位置(暂定)
+/// @param motor_id 电机ID (1~8，对应电调ID)
+/// @param target 目标值，单环时候为速度，串级为位置
 /// @retval 无
-void RmMotorPID_Calc(float target);
+void RmMotorPID_Calc(uint8_t motor_id, float target);
 
 #endif

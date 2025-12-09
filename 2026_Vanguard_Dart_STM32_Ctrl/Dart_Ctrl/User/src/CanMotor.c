@@ -16,8 +16,6 @@
 
 // 电机管理表
 MotorManager_t MotorManager = {0};
-float dm_motor_solved_data[5] = {0.0f}; // 存储达妙电机解算后的数据
-float rm_motor_solved_data[5] = {0.0f}; // 存储RM电机解算后的数据
 
 /**********************************************************电机初始化专用函数************************************************************************/
 
@@ -32,7 +30,7 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
     {
         return; // 或返回错误码
     }
-    ptr->g_TxHeader.StdId = (ptr->MotorBand == RM_MOTOR_BAND) ? g_RM_MOTOR_BIAS_ADDR : g_DM_MOTOR_BIAS_ADDR_TXID + ptr->MotorID;
+    ptr->g_TxHeader.StdId = (ptr->MotorInf.band == RM_MOTOR_BAND) ? g_RM_MOTOR_BIAS_ADDR : g_DM_MOTOR_BIAS_ADDR_TXID + ptr->MotorID;
     ptr->g_TxHeader.IDE = CAN_ID_STD;   // 标准帧标识符
     ptr->g_TxHeader.RTR = CAN_RTR_DATA; // 数据帧
     ptr->g_TxHeader.DLC = CtrlMotorLen; // 数据长度
@@ -52,22 +50,26 @@ void MotorRegister(void)
     // 注册RM电机
     // 发送之后需要memset()
 
-    // 夹爪
+    // 夹爪传动带结构
     MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorID = RM_3508_GRIPPER;
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorBand = RM_MOTOR_BAND;
+    MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorInf.band = RM_MOTOR_BAND;
+    MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorInf.model = RmM3508;
     MotorManager.MotorList[RM_3508_GRIPPER - 1].SendMotorControl = RM_MotorSendControl;
     MotorManager.MotorList[RM_3508_GRIPPER - 1].use_cascade = 1;
-    // PID_Set_Coefficient(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
-    // PID_Set_Coefficient(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
-    // PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner);                               // 初始化
-    // PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer);                               // 初始化
-    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.inner, 0.0f, 0.0f);
-    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid.outer, 0.0f, 0.0f);
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    float inner_p = 175.91f;
+    float inner_i = 0.40f;
+    float inner_d = 0.0f;
+    float inner_f = 7.91f;
+    float outer_p = 1.05f;
+    float outer_i = 0.0f;
+    float outer_d = 0.0f;
+    float outer_f = 0.1f;
+    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
+    CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
 
     // 扳机
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
-    MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorBand = RM_MOTOR_BAND;
+    MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.band = RM_MOTOR_BAND;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].SendMotorControl = RM_MotorSendControl;
     // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
     // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
@@ -80,15 +82,15 @@ void MotorRegister(void)
     // 注册DM电机
     // 注意注册的DM电机发送和接收其实数据帧都不与RM电机冲突（在MIT模式、位置速度模式和PVT模式下，就完整通信帧而言）
     MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].MotorID = DM_3510_STRENTH_LEFT - g_RM_MOTOR_NUM;
-    MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].MotorBand = DM_MOTOR_BAND;
+    MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].MotorInf.band = DM_MOTOR_BAND;
     MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].SendMotorControl = DM_MotorSendControl;
 
     MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorID = DM_3510_STRENTH_RIGHT - g_RM_MOTOR_NUM;
-    MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorBand = DM_MOTOR_BAND;
+    MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorInf.band = DM_MOTOR_BAND;
     MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].SendMotorControl = DM_MotorSendControl;
 
     MotorManager.MotorList[DM_4310_YAW - 1].MotorID = DM_4310_YAW;
-    MotorManager.MotorList[DM_4310_YAW - 1].MotorBand = DM_MOTOR_BAND;
+    MotorManager.MotorList[DM_4310_YAW - 1].MotorInf.band = DM_MOTOR_BAND;
     MotorManager.MotorList[DM_4310_YAW - 1].SendMotorControl = DM_MotorSendControl;
 
     MotorManager.registered_count = 5;
@@ -139,7 +141,7 @@ void MotorInit(void)
         CanRegisterMotorCfg(&MotorManager.MotorList[i]);
     }
 #endif
-#else
+#elif !TestUse
     MotorRegister();
 #endif
     CAN_Init(&hcan1, fifo0, 0, 0);
@@ -204,28 +206,28 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
         for (uint8_t i = 0; i < MotorManager.registered_count; i++)
         {
             // 检查是否为RM电机的反馈帧
-            if ((MotorManager.MotorList[i].MotorBand == RM_MOTOR_BAND) &&
+            if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
                 (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID)))
             {
                 // 找到对应的RM电机，存储接收数据
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
 
-                // 调用RM电机数据解算函数
-                RM_MOTOR_CALCU(i, MotorManager.MotorList[i].ReceiveMotorData, rm_motor_solved_data);
+                // 调用RM电机数据解算函数，传递结构体中的数据指针
+                RM_MOTOR_CALCU(&MotorManager.MotorList[i]);
 
                 CAN_RX_DATA_COUNT++;
                 // ID_MATCHED = true;
                 break; // 找到匹配的电机后跳出内层循环
             }
             // 检查是否为DM电机的反馈帧
-            else if ((MotorManager.MotorList[i].MotorBand == DM_MOTOR_BAND) &&
+            else if ((MotorManager.MotorList[i].MotorInf.band == DM_MOTOR_BAND) &&
                      (pRxHeader.StdId == (g_DM_MOTOR_BIAS_ADDR_RXID + MotorManager.MotorList[i].MotorID)))
             {
                 // 找到对应的DM电机，存储接收数据
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
 
-                // 调用DM电机数据解算函数
-                DM_MOTOR_CALCU(i, MotorManager.MotorList[i].ReceiveMotorData, dm_motor_solved_data);
+                // 调用DM电机数据解算函数，传递结构体中的数据指针
+                DM_MOTOR_CALCU(&MotorManager.MotorList[i]);
 
                 CAN_RX_DATA_COUNT++;
                 // ID_MATCHED = true;
