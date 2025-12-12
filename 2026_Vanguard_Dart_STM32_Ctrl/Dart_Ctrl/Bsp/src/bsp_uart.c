@@ -1,4 +1,5 @@
 #include "bsp_uart.h"
+#include "UartProtocol.h"
 #include <string.h>
 #include <stdbool.h>
 
@@ -1244,4 +1245,30 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     BSP_UART_RxCpltCallback(huart);
+}
+
+/* ========== 缓冲区访问函数（供UartProtocol模块使用） ========== */
+
+/**
+ * @brief 获取接收缓冲区指针
+ * @param uart_num UART编号
+ * @return 接收缓冲区指针，失败返回NULL
+ */
+UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num)
+{
+    if (uart_num >= BSP_UART_MAX)
+        return NULL;
+    return &g_uart_rx_buffers[uart_num];
+}
+
+/**
+ * @brief 获取数据缓冲区指针
+ * @param uart_num UART编号
+ * @return 数据缓冲区指针，失败返回NULL
+ */
+DataBuffer *BSP_UART_GetDataBuffer(BSP_UART_NUM_e uart_num)
+{
+    if (uart_num >= BSP_UART_MAX)
+        return NULL;
+    return &g_data_buffers[uart_num];
 }

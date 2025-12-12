@@ -204,4 +204,8 @@ uint8_t UART_Calculate_CRC(uint8_t *data, uint8_t length);
 void BSP_UART_TxCpltCallback(UART_HandleTypeDef *huart);
 void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 
+/* ========== 缓冲区访问函数（供UartProtocol模块使用） ========== */
+UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num);
+DataBuffer *BSP_UART_GetDataBuffer(BSP_UART_NUM_e uart_num);
+
 #endif
