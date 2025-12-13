@@ -94,12 +94,14 @@ void MotorRegister(void)
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.band = RM_MOTOR_BAND;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.model = RmM2006;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].SendMotorControl = RM_MotorSendControl;
-    // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0, 0.0, 0.0, 0.0); // 内环
-    // PID_Set_Coefficient(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0, 0.0, 0.0, 0.0); // 外环
-    // PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner);                               // 初始化
-    // PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer);                               // 初始化
-    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.inner, 0.0f, 0.0f);
-    // PID_Set_MaxOutput(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid.outer, 0.0f, 0.0f);
+    inner_p = 27.91f;
+    inner_i = 0.08f;
+    inner_d = 0.0f;
+    inner_f = 1.0f;
+    outer_p = 0.000091f;
+    outer_i = 0.0f;
+    outer_d = 0.0f;
+    outer_f = 0.002f;
     CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // 注册DM电机

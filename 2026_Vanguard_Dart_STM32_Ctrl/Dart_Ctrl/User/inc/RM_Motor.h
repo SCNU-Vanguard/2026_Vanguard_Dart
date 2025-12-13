@@ -17,7 +17,7 @@
 #define g_RM_M2006_NUM 1
 #define g_RM_GM6020_NUM 0
 
-#define RM_TestUse 1U
+#define RM_TestUse 0U
 
 // 8192为机械角度范围
 // -16384->0->16384反馈的电流范围
