@@ -8,10 +8,18 @@
 #include "UartProtocol.h"
 #include <string.h>
 #include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+#include "cmsis_os.h"
 
 /* 外部变量声明（在bsp_uart.c中定义） */
 extern UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num);
 extern DataBuffer *BSP_UART_GetDataBuffer(BSP_UART_NUM_e uart_num);
+
+// 信号量与互斥量，当接收到数据并解算成功将置互斥量
+extern osThreadId_t UartModuleTaskHandle;
+extern SemaphoreHandle_t g_xGimbalSemaphoreHandle;
 
 /* DART协议帧头 */
 const uint8_t g_dart_header[4] = {'D', 'A', 'R', 'T'};
@@ -65,8 +73,12 @@ void Protocol_ResetParser(UartRxRingBuffer *rb)
  */
 void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
 {
+    // 确保上下文切换
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
     if (rb->protocol_type == PROTOCOL_SERVO_MCU)
     {
+
         // 有MCU控制板协议解析：0x55 0x55 | Length | Cmd | Params（无CRC）
         switch (rb->parse_state)
         {
@@ -131,6 +143,9 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                     rb->servo_packet.is_valid = true;
                     rb->packet_ready = true;
                     Protocol_ResetParserState(rb);
+
+                    // 这里放一个任务通知
+                    xTaskNotifyFromISR(UartModuleTaskHandle, 0x01, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
                 }
             }
             else
@@ -211,6 +226,9 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                 if (rb->parse_index >= rb->servo_packet.param_len)
                 {
                     rb->parse_state = PARSE_SERVO_CRC;
+
+                    // 这里放一个任务通知
+                    xTaskNotifyFromISR(UartModuleTaskHandle, 0x02, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
                 }
             }
             else
@@ -299,6 +317,9 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                 rb->dart_packet.is_valid = true;
                 rb->packet_ready = true;
                 Protocol_ResetParserState(rb);
+
+                // 这里放一个任务通知
+                xTaskNotifyFromISR(UartModuleTaskHandle, 0x03, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
             }
             else
             {
@@ -312,6 +333,9 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
             break;
         }
     }
+
+    // 如果有更高优先级任务被唤醒，请求上下文切换
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 /**
