@@ -1,22 +1,41 @@
-# BSP_UART 使用说明文档
+# UART 模块使用说明文档
 
-## 文件信息
-- **头文件**: `Bsp/inc/bsp_uart.h`
-- **源文件**: `Bsp/src/bsp_uart.c`
-- **作用**: UART串口通信的底层硬件抽象层(BSP)，支持环形缓冲区和协议解析
+## 架构概述
+
+UART通信模块采用三层分离架构，便于维护和扩展：
+
+```
+┌─────────────────────────────────────────────┐
+│            用户应用层 (UserTask.c 等)        │
+└───────────────────────┬─────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────┐
+│     UartModule.c - 用户级数据包收发API       │
+│   (User/src/UartModule.c)                   │
+└───────────────────────┬─────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────┐
+│     UartProtocol.c - 协议解析内部逻辑        │
+│   (Bsp/src/UartProtocol.c)                  │
+└───────────────────────┬─────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────┐
+│     bsp_uart.c - 底层硬件驱动                │
+│   (Bsp/src/bsp_uart.c)                      │
+└─────────────────────────────────────────────┘
+```
 
 ---
 
-## 功能概述
+## 文件信息
 
-本模块封装了STM32的UART串口通信功能，提供了强大的环形缓冲区管理和协议解析能力。
+| 层次 | 头文件 | 源文件 | 职责 |
+|------|--------|--------|------|
+| 用户层 | `User/inc/UartModule.h` | `User/src/UartModule.c` | 数据包获取/发送、协议设置 |
+| 协议层 | `User/inc/UartProtocol.h` | `Bsp/src/UartProtocol.c` | 协议解析状态机、帧头识别、CRC校验 |
+| 驱动层 | `Bsp/inc/bsp_uart.h` | `Bsp/src/bsp_uart.c` | 环形缓冲区、HAL回调、底层收发 |
 
-### 核心功能
-1. **环形缓冲区** - 发送和接收数据的环形缓冲管理
-2. **协议解析** - 支持舵机协议(0x55 0x55)和DART协议
-3. **帧识别** - 自动识别数据帧的帧头和帧尾
-4. **中断收发** - 基于中断的异步收发机制
-5. **溢出保护** - 自动处理缓冲区溢出
+**推荐**: 用户应用层只需包含 `UartModule.h`，无需直接操作底层。
 
 ---
 
@@ -45,9 +64,13 @@ typedef enum {
 ### PROTOCOL_TYPE_e 协议类型枚举
 ```c
 typedef enum {
-    PROTOCOL_SERVO = 0,  // 舵机协议 (0x55 0x55)
-    PROTOCOL_DART = 1    // DART协议 (DART)
+    PROTOCOL_SERVO_MCU = 0,    // 有MCU控制板协议 (无CRC)
+    PROTOCOL_SERVO_NO_MCU = 1, // 无MCU驱动板协议 (有CRC)
+    PROTOCOL_DART = 2,         // DART协议
+    PROTOCOL_OTHER = -1        // 其他协议
 } PROTOCOL_TYPE_e;
+
+#define PROTOCOL_SERVO PROTOCOL_SERVO_MCU  // 兼容性别名
 ```
 
 ### ServoPacket_t 舵机协议数据包
@@ -77,283 +100,222 @@ typedef struct {
 
 ---
 
-## 核心API函数
+## 用户层API (UartModule.h) 【推荐使用】
 
-### 1. BSP_UART_Init()
-**功能**: 初始化BSP UART模块（自动启动接收和设置默认协议）
+### 数据包接收
+
+#### UartModule_HasServoPacket()
+**功能**: 检查是否有完整的舵机数据包
 ```c
-void BSP_UART_Init(void);
+bool UartModule_HasServoPacket(BSP_UART_NUM_e uart_num);
 ```
 
-**使用示例**:
+#### UartModule_HasDartPacket()
+**功能**: 检查是否有完整的DART数据包
 ```c
-BSP_UART_Init();  // 初始化所有UART的缓冲区，自动启动接收
+bool UartModule_HasDartPacket(BSP_UART_NUM_e uart_num);
 ```
 
-**自动完成的工作**:
-- 初始化所有配置的UART端口的发送/接收缓冲区
-- 为每个串口设置默认协议（见下表）
-- 自动启动所有UART的中断接收
-
-**默认协议配置**:
-| 串口 | 默认协议 | 用途 |
-|-----|---------|------|
-| BSP_UART3 | PROTOCOL_DART | 上位机通信 |
-| BSP_UART6 | PROTOCOL_SERVO | 舵机通信 |
-| 其他 | PROTOCOL_SERVO | 默认 |
-
-**注意事项**:
-- 必须在使用其他UART功能前调用
-- 无需再单独调用启动接收函数
-
----
-
-### 2. UART_SetProtocol()
-**功能**: 设置协议类型
-```c
-void UART_SetProtocol(BSP_UART_NUM_e uart_num, bool is_servo_mode);
-```
-
-**参数说明**:
-- `uart_num`: UART编号
-- `is_servo_mode`: true=舵机协议, false=DART协议
-
-**使用示例**:
-```c
-UART_SetProtocol(BSP_UART6, true);   // UART6使用舵机协议
-UART_SetProtocol(BSP_UART3, false);  // UART3使用DART协议
-```
-
----
-
-### 3. UART_RestartRx()
-**功能**: 重启接收（在接收中断被意外关闭时使用）
-```c
-void UART_RestartRx(BSP_UART_NUM_e uart_num);
-```
-
-**使用示例**:
-```c
-UART_RestartRx(BSP_UART6);  // 重启UART6接收
-```
-
-**注意事项**:
-- 正常情况下无需调用，`BSP_UART_Init()` 已自动启动接收
-- 仅在接收中断被意外关闭时使用
-
----
-
-### 4. UART_Send()
-**功能**: 发送数据
-```c
-uint16_t UART_Send(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len);
-```
-
-**参数说明**:
-- `uart_num`: UART编号
-- `data`: 数据指针
-- `len`: 数据长度
-
-**返回值**: 实际写入缓冲区的字节数
-
-**使用示例**:
-```c
-uint8_t data[] = {0x55, 0x55, 0x01, 0x04, 0x01, 0xFA};
-uint16_t sent = UART_Send(BSP_UART6, data, sizeof(data));
-```
-
----
-
-### 5. UART_SendString()
-**功能**: 发送字符串
-```c
-uint16_t UART_SendString(BSP_UART_NUM_e uart_num, const char *str);
-```
-
-**使用示例**:
-```c
-UART_SendString(BSP_UART3, "Hello World!\r\n");
-```
-
----
-
-### 6. UART_Read()
-**功能**: 读取接收数据
-```c
-uint16_t UART_Read(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t len);
-```
-
-**参数说明**:
-- `uart_num`: UART编号
-- `data`: 接收缓冲区指针
-- `len`: 要读取的长度
-
-**返回值**: 实际读取的字节数
-
-**使用示例**:
-```c
-uint8_t buffer[32];
-uint16_t received = UART_Read(BSP_UART6, buffer, sizeof(buffer));
-```
-
----
-
-### 7. UART_HasData()
-**功能**: 检查接收缓冲区是否有数据
-```c
-bool UART_HasData(BSP_UART_NUM_e uart_num);
-```
-
-**返回值**: true=有数据, false=无数据
-
-**使用示例**:
-```c
-if(UART_HasData(BSP_UART6)) {
-    // 读取数据
-    UART_Read(BSP_UART6, buffer, len);
-}
-```
-
----
-
-### 8. UART_GetRxCount()
-**功能**: 获取接收缓冲区数据量
-```c
-uint16_t UART_GetRxCount(BSP_UART_NUM_e uart_num);
-```
-
-**返回值**: 缓冲区中的数据字节数
-
----
-
-### 9. UART_ClearRx()
-**功能**: 清空接收缓冲区
-```c
-void UART_ClearRx(BSP_UART_NUM_e uart_num);
-```
-
-**使用示例**:
-```c
-UART_ClearRx(BSP_UART6);  // 清空UART6接收缓冲区
-```
-
----
-
-## 协议解析API
-
-### 1. UART_HasPacket()
-**功能**: 检查是否有完整的数据包
-```c
-bool UART_HasPacket(BSP_UART_NUM_e uart_num);
-```
-
-**返回值**: true=有完整数据包, false=无
-
-**使用示例**:
-```c
-if(UART_HasPacket(BSP_UART6)) {
-    // 读取数据包
-}
-```
-
----
-
-### 2. UART_GetServoPacket()
+#### UartModule_GetServoPacket()
 **功能**: 获取舵机协议数据包
 ```c
-bool UART_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet);
+bool UartModule_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet);
 ```
-
-**参数说明**:
-- `uart_num`: UART编号
-- `packet`: 数据包结构体指针
-
-**返回值**: true=成功获取, false=失败
 
 **使用示例**:
 ```c
 ServoPacket_t servo_pkt;
-if(UART_GetServoPacket(BSP_UART6, &servo_pkt)) {
-    if(servo_pkt.is_valid) {
-        printf("ID: %d, Cmd: %d\n", servo_pkt.id, servo_pkt.cmd);
+if (UartModule_HasServoPacket(BSP_UART3)) {
+    if (UartModule_GetServoPacket(BSP_UART3, &servo_pkt)) {
+        printf("ID: %d, Cmd: 0x%02X\n", servo_pkt.id, servo_pkt.cmd);
     }
 }
 ```
 
----
-
-### 3. UART_GetDartPacket()
+#### UartModule_GetDartPacket()
 **功能**: 获取DART协议数据包
 ```c
-bool UART_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet);
+bool UartModule_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet);
 ```
 
 **使用示例**:
 ```c
 DartPacket_t dart_pkt;
-if(UART_GetDartPacket(BSP_UART3, &dart_pkt)) {
-    if(dart_pkt.is_valid) {
-        // 处理数据
+if (UartModule_HasDartPacket(BSP_UART6)) {
+    if (UartModule_GetDartPacket(BSP_UART6, &dart_pkt)) {
+        // 处理 dart_pkt.data，长度为 dart_pkt.data_len
     }
 }
 ```
 
----
-
-### 4. UART_ClearPacket()
+#### UartModule_ClearPacket()
 **功能**: 清除数据包标志
 ```c
-void UART_ClearPacket(BSP_UART_NUM_e uart_num);
-```
-
-**使用示例**:
-```c
-UART_ClearPacket(BSP_UART6);
+void UartModule_ClearPacket(BSP_UART_NUM_e uart_num);
 ```
 
 ---
 
-## 工具函数
+### 数据包发送
 
-### UART_Calculate_CRC()
-**功能**: CRC校验生成(公开函数，供其他模块使用)
+#### UartModule_SendServoCmd()
+**功能**: 发送舵机命令数据包（自动构建协议格式）
 ```c
-uint8_t UART_Calculate_CRC(uint8_t *data, uint8_t length);
+bool UartModule_SendServoCmd(BSP_UART_NUM_e uart_num, uint8_t id, uint8_t cmd, 
+                             uint8_t *params, uint8_t param_len);
 ```
 
 **参数说明**:
-- `data`: 数据指针
-- `length`: 数据长度
-
-**返回值**: CRC校验码
-
-**算法**: `CRC = ~(SUM) & 0xFF` (取反后的累加和)
+- `uart_num`: UART编号
+- `id`: 舵机ID
+- `cmd`: 命令码
+- `params`: 参数数组（可为NULL）
+- `param_len`: 参数长度（0-8）
 
 **使用示例**:
 ```c
-uint8_t data[] = {0x01, 0x04, 0x01};
-uint8_t crc = UART_Calculate_CRC(data, 3);
+// 发送读取位置命令
+UartModule_SendServoCmd(BSP_UART3, 0x01, 0x1C, NULL, 0);
+
+// 发送写入位置命令
+uint8_t params[] = {0xE8, 0x03, 0x00, 0x00};  // 位置1000
+UartModule_SendServoCmd(BSP_UART3, 0x01, 0x03, params, 4);
+```
+
+**注意**: 函数会根据当前协议类型（SERVO_MCU/SERVO_NO_MCU）自动处理CRC。
+
+#### UartModule_SendDartPacket()
+**功能**: 发送DART数据包（自动添加帧头和CRC）
+```c
+bool UartModule_SendDartPacket(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t data_len);
+```
+
+**使用示例**:
+```c
+uint8_t data[] = "Hello";
+UartModule_SendDartPacket(BSP_UART6, data, 5);
+// 实际发送: 'D' 'A' 'R' 'T' 0x05 'H' 'e' 'l' 'l' 'o' CRC
+```
+
+#### UartModule_SendRaw()
+**功能**: 发送原始数据（不做协议封装）
+```c
+uint16_t UartModule_SendRaw(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len);
+```
+
+---
+
+### 设置函数
+
+#### UartModule_SetProtocol()
+**功能**: 设置UART协议类型
+```c
+void UartModule_SetProtocol(BSP_UART_NUM_e uart_num, PROTOCOL_TYPE_e protocol_type);
+```
+
+**使用示例**:
+```c
+UartModule_SetProtocol(BSP_UART3, PROTOCOL_SERVO_MCU);    // 有MCU舵机协议
+UartModule_SetProtocol(BSP_UART3, PROTOCOL_SERVO_NO_MCU); // 无MCU舵机协议
+UartModule_SetProtocol(BSP_UART6, PROTOCOL_DART);         // DART协议
+```
+
+#### UartModule_GetFrameCount()
+**功能**: 获取有效帧数量
+```c
+uint8_t UartModule_GetFrameCount(BSP_UART_NUM_e uart_num);
+```
+
+---
+
+## 底层API (bsp_uart.h)
+
+### 初始化
+
+#### BSP_UART_Init()
+**功能**: 初始化BSP UART模块
+```c
+void BSP_UART_Init(void);
+```
+
+**自动完成的工作**:
+- 初始化所有UART的发送/接收缓冲区
+- 设置默认协议（见下表）
+- 自动启动中断接收
+
+**默认协议配置**:
+| 串口 | 默认协议 | 用途 |
+|-----|---------|------|
+| BSP_UART3 | PROTOCOL_SERVO_MCU | 舵机通信 |
+| BSP_UART6 | PROTOCOL_DART | 上位机通信 |
+
+---
+
+### 基础收发
+
+#### UART_Send()
+**功能**: 发送数据
+```c
+uint16_t UART_Send(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len);
+```
+
+#### UART_SendString()
+**功能**: 发送字符串
+```c
+uint16_t UART_SendString(BSP_UART_NUM_e uart_num, const char *str);
+```
+
+#### UART_Read()
+**功能**: 读取原始接收数据
+```c
+uint16_t UART_Read(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t len);
+```
+
+#### UART_HasData()
+**功能**: 检查是否有接收数据
+```c
+bool UART_HasData(BSP_UART_NUM_e uart_num);
+```
+
+#### UART_GetRxCount()
+**功能**: 获取接收缓冲区数据量
+```c
+uint16_t UART_GetRxCount(BSP_UART_NUM_e uart_num);
+```
+
+#### UART_ClearRx()
+**功能**: 清空接收缓冲区
+```c
+void UART_ClearRx(BSP_UART_NUM_e uart_num);
+```
+
+#### UART_RestartRx()
+**功能**: 重启接收（接收中断被意外关闭时使用）
+```c
+void UART_RestartRx(BSP_UART_NUM_e uart_num);
 ```
 
 ---
 
 ## 协议格式说明
 
-### 舵机协议 (0x55 0x55)
+### 舵机协议 (SERVO_MCU - 有MCU控制板，无CRC)
+```
+帧头 | Length | Cmd | Params
+2字节   1字节   1字节  N字节
+0x55 0x55
+```
+
+**Length说明**: `Length = Cmd(1) + Params(N) + Length本身(1) = N + 2`
+
+### 舵机协议 (SERVO_NO_MCU - 无MCU驱动板，有CRC)
 ```
 帧头 | ID | Length | Cmd | Params | CRC
-2字节 1字节  1字节   1字节 N字节    1字节
+2字节 1字节  1字节   1字节 N字节   1字节
+0x55 0x55
 ```
 
-**示例**:
-```
-0x55 0x55 0x01 0x04 0x01 0xFA
-帧头      ID   长度  指令  CRC
-```
-
-**Length说明**: `Length = 参数长度 + 3`
-
----
+**Length说明**: `Length = Cmd(1) + Params(N) + CRC(1) = N + 3`
 
 ### DART协议
 ```
@@ -362,198 +324,145 @@ uint8_t crc = UART_Calculate_CRC(data, 3);
 "DART"
 ```
 
-**示例**:
-```
-'D' 'A' 'R' 'T' 0x05 [5字节数据] CRC
-```
-
 ---
 
-## 环形缓冲区原理
+## 典型应用示例
 
-### 特性
-1. **循环写入**: 写指针到达末尾后自动回到开头
-2. **覆盖保护**: 缓冲区满时自动覆盖旧数据
-3. **帧保护**: 被覆盖的不完整帧会自动标记为无效
-
-### 状态判断
+### 示例1: 舵机通信（推荐方式）
 ```c
-// 空状态
-WriteIndex == ReadIndex
+#include "UartModule.h"
 
-// 满状态  
-(WriteIndex + 1) % SIZE == ReadIndex
-
-// 可用数据长度
-(WriteIndex - ReadIndex + SIZE) % SIZE
-```
-
----
-
-## 典型应用场景
-
-### 场景1: 舵机通信（使用默认配置）
-```c
-// 1. 初始化（UART6默认使用SERVO协议，自动启动接收）
-BSP_UART_Init();
-
-// 2. 发送舵机指令
-uint8_t cmd[] = {0x55, 0x55, 0x01, 0x07, 0x01, 0x00, 0x00, 0x03, 0xE8, 0xFA};
-UART_Send(BSP_UART6, cmd, sizeof(cmd));
-
-// 3. 接收舵机反馈
-ServoPacket_t pkt;
-if(UART_HasPacket(BSP_UART6)) {
-    UART_GetServoPacket(BSP_UART6, &pkt);
-    if(pkt.is_valid) {
-        // 处理反馈数据
+void ServoTask(void)
+{
+    // 初始化（在main中调用一次）
+    BSP_UART_Init();
+    
+    // 发送舵机命令
+    uint8_t pos_params[] = {0xE8, 0x03};  // 位置1000
+    UartModule_SendServoCmd(BSP_UART3, 0x01, 0x03, pos_params, 2);
+    
+    // 接收舵机反馈
+    ServoPacket_t pkt;
+    if (UartModule_HasServoPacket(BSP_UART3)) {
+        if (UartModule_GetServoPacket(BSP_UART3, &pkt)) {
+            printf("收到舵机反馈: ID=%d, Cmd=0x%02X\n", pkt.id, pkt.cmd);
+            for (int i = 0; i < pkt.param_len; i++) {
+                printf("  Param[%d] = 0x%02X\n", i, pkt.params[i]);
+            }
+        }
+        UartModule_ClearPacket(BSP_UART3);
     }
 }
 ```
 
-### 场景2: DART上位机通信（使用默认配置）
+### 示例2: DART上位机通信
 ```c
-// 1. 初始化（UART3默认使用DART协议，自动启动接收）
-BSP_UART_Init();
+#include "UartModule.h"
 
-// 2. 发送DART数据
-uint8_t data[] = {'D', 'A', 'R', 'T', 0x05, 'H', 'e', 'l', 'l', 'o', 0xCRC};
-UART_Send(BSP_UART3, data, sizeof(data));
-
-// 3. 接收DART数据
-DartPacket_t pkt;
-if(UART_HasPacket(BSP_UART3)) {
-    UART_GetDartPacket(BSP_UART3, &pkt);
-    if(pkt.is_valid) {
-        // 处理数据
+void DartCommTask(void)
+{
+    // 发送数据到上位机
+    uint8_t tx_data[] = {0x01, 0x02, 0x03, 0x04};
+    UartModule_SendDartPacket(BSP_UART6, tx_data, sizeof(tx_data));
+    
+    // 接收上位机数据
+    DartPacket_t pkt;
+    if (UartModule_HasDartPacket(BSP_UART6)) {
+        if (UartModule_GetDartPacket(BSP_UART6, &pkt)) {
+            printf("收到DART数据包: 长度=%d\n", pkt.data_len);
+            // 处理 pkt.data
+        }
+        UartModule_ClearPacket(BSP_UART6);
     }
 }
 ```
 
-### 场景3: 切换协议
+### 示例3: 切换协议类型
 ```c
-// 初始化后如需更改协议
-BSP_UART_Init();
-UART_SetProtocol(BSP_UART3, true);   // 将UART3改为SERVO协议
-UART_SetProtocol(BSP_UART6, false);  // 将UART6改为DART协议
+// 切换到无MCU舵机协议（有CRC）
+UartModule_SetProtocol(BSP_UART3, PROTOCOL_SERVO_NO_MCU);
+
+// 切换回有MCU舵机协议（无CRC）
+UartModule_SetProtocol(BSP_UART3, PROTOCOL_SERVO_MCU);
 ```
 
-### 场景3: 原始数据收发
+### 示例4: 原始数据收发
 ```c
-// 发送
-uint8_t tx_data[] = {0x01, 0x02, 0x03};
-UART_Send(BSP_UART3, tx_data, 3);
+// 发送原始数据
+uint8_t raw_data[] = {0x55, 0x55, 0x01, 0x04, 0x01, 0xFA};
+UartModule_SendRaw(BSP_UART3, raw_data, sizeof(raw_data));
 
-// 接收
-uint8_t rx_data[32];
-if(UART_HasData(BSP_UART3)) {
-    uint16_t len = UART_Read(BSP_UART3, rx_data, sizeof(rx_data));
-    // 处理接收到的数据
-}
+// 或使用底层API
+UART_Send(BSP_UART3, raw_data, sizeof(raw_data));
 ```
 
 ---
 
 ## 使用注意事项
 
-1. **初始化**
+1. **初始化顺序**
    ```c
-   BSP_UART_Init();  // 一行代码完成所有初始化
-   // 自动：初始化缓冲区 + 设置默认协议 + 启动接收
+   BSP_UART_Init();  // 必须首先调用
+   // 之后可以使用所有UART功能
    ```
 
-2. **每个串口独立缓冲区**
-   - 每个UART拥有独立的发送/接收缓冲区
-   - 每个UART拥有独立的协议解析器
-   - 各串口互不干扰，可同时收发
+2. **推荐使用UartModule层**
+   - 自动处理协议封装和解析
+   - 简化应用层代码
+   - 隐藏底层细节
 
-3. **协议设置**
-   - 每个UART只能同时使用一种协议
-   - 默认协议在初始化时自动设置
-   - 如需更改，调用 `UART_SetProtocol()`
+3. **协议类型**
+   - SERVO_MCU: 有MCU控制板，无CRC校验
+   - SERVO_NO_MCU: 无MCU驱动板，有CRC校验
+   - 根据实际舵机类型选择
 
-3. **CRC校验**
-   - 舵机协议: CRC从ID开始到参数结束
-   - DART协议: CRC对数据部分计算
-   - 算法: `~(累加和) & 0xFF`
+4. **CRC校验**
+   - 算法: `CRC = ~(累加和) & 0xFF`
+   - UartModule_SendServoCmd 会自动计算CRC
+   - UartModule_SendDartPacket 会自动计算CRC
 
-4. **缓冲区溢出**
+5. **缓冲区溢出**
    - 缓冲区满时会自动覆盖旧数据
-   - 被覆盖的不完整帧会自动失效
    - 建议定期读取数据避免溢出
-
-5. **中断安全**
-   - 发送和接收都使用中断方式
-   - 回调函数在中断中执行，避免耗时操作
-
-6. **帧识别**
-   - 自动识别帧头并记录位置
-   - 支持跨缓冲区边界的帧头识别
-
----
-
-## 性能参数
-
-| 参数 | 值 | 说明 |
-|-----|---|------|
-| 发送缓冲区 | 64字节 | 可调整 |
-| 接收缓冲区 | 64字节 | 可调整 |
-| DART帧索引 | 16帧 | 最多同时缓存16个DART帧 |
-| 舵机帧索引 | 32帧 | 最多同时缓存32个舵机帧 |
-| 波特率 | 115200 | 舵机标准波特率 |
-
----
-
-## 相关模块
-
-- **HX06L**: 使用本模块进行舵机通信
-- **上位机通信**: 使用DART协议与上位机交互
-- 所有需要串口通信的模块
 
 ---
 
 ## 调试建议
 
-1. **检查数据发送**
-   ```c
-   uint16_t sent = UART_Send(uart, data, len);
-   if(sent != len) {
-       // 发送缓冲区满
-   }
-   ```
+```c
+// 检查帧数量
+uint8_t count = UartModule_GetFrameCount(BSP_UART3);
+printf("缓冲区中有 %d 个有效帧\n", count);
 
-2. **检查数据接收**
-   ```c
-   if(UART_HasPacket(uart)) {
-       // 有完整数据包
-   }
-   ```
-
-3. **CRC验证**
-   ```c
-   uint8_t calc_crc = UART_Calculate_CRC(data, len);
-   if(calc_crc != received_crc) {
-       // CRC错误
-   }
-   ```
+// 检查是否有数据包
+if (UartModule_HasServoPacket(BSP_UART3)) {
+    printf("有舵机数据包\n");
+}
+if (UartModule_HasDartPacket(BSP_UART6)) {
+    printf("有DART数据包\n");
+}
+```
 
 ---
 
 ## 常见问题
 
-**Q: 为什么收不到数据？**
+**Q: 收不到数据？**
 A: 
-1. 检查是否调用了 `BSP_UART_Init()` 初始化
-2. 如接收中断被意外关闭，调用 `UART_RestartRx()` 重启
+1. 检查是否调用了 `BSP_UART_Init()`
+2. 检查协议类型是否正确
+3. 如接收中断被关闭，调用 `UART_RestartRx()`
 
-**Q: CRC校验总是失败？**
-A: 检查CRC计算范围，舵机协议从ID开始，不包括帧头
+**Q: CRC校验失败？**
+A: 
+1. 检查协议类型（SERVO_MCU无CRC，SERVO_NO_MCU有CRC）
+2. 检查数据格式是否正确
 
-**Q: 缓冲区满了怎么办？**
-A: 增大缓冲区大小或更频繁地读取数据
-
-**Q: 如何切换协议？**
-A: 直接调用 `UART_SetProtocol()`，会自动重置解析器
+**Q: UartModule 和 bsp_uart 的区别？**
+A: 
+- `UartModule`: 用户层，提供数据包级别的API
+- `bsp_uart`: 底层，提供字节级别的API
+- 推荐使用 `UartModule`
 
 ---
 
@@ -561,10 +470,10 @@ A: 直接调用 `UART_SetProtocol()`，会自动重置解析器
 
 | 日期 | 更新内容 |
 |-----|---------|
+| 2025/12/13 | 重构为三层架构：UartModule → UartProtocol → bsp_uart |
+| 2025/12/13 | 新增 UartModule 用户层API |
+| 2025/12/13 | 支持 SERVO_MCU 和 SERVO_NO_MCU 两种舵机协议 |
 | 2025/12/08 | `BSP_UART_Init()` 自动启动接收和设置默认协议 |
-| 2025/12/08 | `UART_StartRx()` 改名为 `UART_RestartRx()` |
-| 2025/12/08 | 每个串口配置独立的默认协议 |
 | - | 支持环形缓冲区自动管理 |
 | - | 实现舵机和DART双协议解析 |
 | - | 自动帧头识别和CRC校验 |
-| - | 溢出保护和帧完整性验证 |
