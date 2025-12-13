@@ -201,7 +201,7 @@ void StartDefaultTask(void *argument)
 // 调节RM电机
 #elif RM_TestUse
     RmMotorPID_Calc(SingleMotorTest, Target);
-//    RmMotorSendCfg(1, Target);
+    //    RmMotorSendCfg(1, Target);
 
 #endif
   }
