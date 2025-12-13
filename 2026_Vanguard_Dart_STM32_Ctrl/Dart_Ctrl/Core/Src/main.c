@@ -100,13 +100,7 @@ int main(void)
   MX_UART8_Init();
   MX_TIM12_Init();
   /* USER CODE BEGIN 2 */
-  BSP_POWER_DeInit(); // 失能无绿灯，亮红灯
-  DWT_Init(180);
-  MotorInit();
-  CanFliterCfg();
-  BSP_UART_Init();
 
-  // 注意，有些初始化只可以在这里完成
   /* USER CODE END 2 */
 
   /* Init scheduler */

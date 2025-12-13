@@ -275,15 +275,15 @@ void RmTestMotorSingleRegister(void)
     MotorManager.MotorList[SingleMotorTest - 1].SendMotorControl = RM_MotorSendControl;
     MotorManager.registered_count = 1;
     MotorManager.MotorList[SingleMotorTest - 1].use_cascade = 0;
-    float inner_p = 9.191f;
-    float inner_i = 0.0f;
+    float inner_p = 27.91f;
+    float inner_i = 0.08f;
     float inner_d = 0.0f;
     float inner_f = 0.0f;
     float outer_p = 0.0f;
     float outer_i = 0.0f;
     float outer_d = 0.0f;
     float outer_f = 0.0f;
-    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, inner_p, inner_i, inner_d, inner_f, 1000.0f, 100.0f, 60.0f); // 暂定最大1691
+    PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid, PID_DELTA, inner_p, inner_i, inner_d, inner_f, 3000.0f, 0.0f, 100.0f); // 暂定最大1691, 输出异常
     PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].speed_pid);
     // CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
     // CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
@@ -357,7 +357,7 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 
     // PID数据输出
     // output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]); // 目标角度，反馈角度，反馈速度
-    output = PID_Calculate(&motor->speed_pid, target, pData->solved_data[4]);
+    output = PID_Calculate(&motor->speed_pid, target, pData->solved_data[4]); // Rad/S
     RmMotorSendCfg(motor_cfg, output);
     // printf("%.1f,%.1f,%.1f\r\n", pData->solved_data[1], target, output);
 

@@ -48,7 +48,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-static float Target = 420.0f; // 360° * 19.2 ( 度数 * 减速比 ) // 420.00
+static float Target = 394.0f; // 360° * 19.2 ( 度数 * 减速比 ) // 420.00
 static uint32_t lastServoTime = 0;
 static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
 
@@ -201,7 +201,7 @@ void StartDefaultTask(void *argument)
 // 调节RM电机
 #elif RM_TestUse
     RmMotorPID_Calc(SingleMotorTest, Target);
-    // RmMotorSendCfg(1, Target);
+//    RmMotorSendCfg(1, Target);
 
 #endif
   }

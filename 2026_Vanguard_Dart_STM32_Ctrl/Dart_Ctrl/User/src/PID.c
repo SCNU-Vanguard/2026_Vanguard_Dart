@@ -270,7 +270,7 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // 输出方向保护：防止输出与目标方向相反
     // target > 0 时，output 不能小于 min_output
     // target < 0 时，output 不能大于 -min_output
-    if (pid->min_output > 0.0f)
+    if (pid->min_output >= 0.0f)
     {
         if (target > 0.0f && pid->output < pid->min_output)
         {

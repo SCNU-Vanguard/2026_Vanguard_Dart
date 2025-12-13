@@ -4,6 +4,7 @@
 #include "main.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "cmsis_os.h"
 #include "event_groups.h" // ARM.FreeRTOS::RTOS:Event Groups
 #include "semphr.h"       // ARM.FreeRTOS::RTOS:Core
 #include "queue.h"
