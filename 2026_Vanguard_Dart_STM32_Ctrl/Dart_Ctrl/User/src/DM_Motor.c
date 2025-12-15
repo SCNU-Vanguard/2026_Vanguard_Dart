@@ -320,6 +320,5 @@ void DmTestMotorSingleRegister(void)
 /// @todo 增加PID控制
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
-    // PID数据输出
-    // 可以在这里添加DM电机的PID控制逻辑
+    // 达妙电机无需PID（无功率控制情况下）,当需要功率控制时候,达妙自带任何PID一项都不可使用,只可以对前馈力矩进行调参
 }

@@ -9,9 +9,10 @@
 #include "PID.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
-#define TestUse 1U
+#define TestUse 0U
 
 // 角度转弧度宏：degree * π/180 ≈ degree * 0.01745329f
 #define DegreeToRad(degree) ((degree) * 0.01745329f)
@@ -64,9 +65,10 @@ typedef struct
     uint8_t filter_init; // 滤波器初始化标志
 
     // 控制相关变量
-    float target_angle;    // 目标角度
-    float last_target;     // 上次目标值
-    float pre_last_target; // 上上次目标值
+    float target_angle;       // 目标角度
+    float last_target;        // 上次目标值
+    float pre_last_target;    // 上上次目标值
+    uint8_t target_init_flag; // 目标值初始化标志（首次调用RmMotorRemoveBias时置1）
 } MotorSolvedData_t;
 
 // CAN线挂载的电机（包含RM和DM电机）
@@ -143,5 +145,45 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
 /// @brief 获取电机管理器指针
 /// @return 电机管理器结构体
 MotorManager_t GetPtrMotorManager(void);
+
+/*********************************************************电机数据读取接口***************************************************************/
+
+/// @brief 获取电机累计角度（单位：度）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 累计角度（度），失败返回0
+float Motor_GetTotalAngle(can_motor_cfg motor_id);
+
+/// @brief 获取电机累计角度（单位：弧度）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 累计角度（弧度），失败返回0
+float Motor_GetTotalAngleRad(can_motor_cfg motor_id);
+
+/// @brief 获取电机速度（单位：rpm）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 速度（rpm），失败返回0
+float Motor_GetSpeedRPM(can_motor_cfg motor_id);
+
+/// @brief 获取电机速度（单位：rad/s）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 速度（rad/s），失败返回0
+float Motor_GetSpeedRadS(can_motor_cfg motor_id);
+
+/// @brief 获取电机单圈角度（单位：度）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 单圈角度（度），失败返回0
+float Motor_GetSingleAngle(can_motor_cfg motor_id);
+
+/// @brief 获取电机电流（单位：A）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 电流（A），DM电机返回力矩(N·m)，失败返回0
+float Motor_GetCurrent(can_motor_cfg motor_id);
+
+/// @brief 获取电机所有解算数据
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @param data 输出数据指针（需提供5个float空间）
+/// @return true-成功，false-失败
+/// @note RM电机: [0]单圈角度(°), [1]速度(rpm), [2]电流(A), [3]累计角度(°), [4]速度(rad/s)
+///       DM电机: [0]位置(rad), [1]速度(rad/s), [2]力矩(N·m), [3]MOS温度(℃), [4]转子温度(℃)
+bool Motor_GetAllData(can_motor_cfg motor_id, float *data);
 
 #endif

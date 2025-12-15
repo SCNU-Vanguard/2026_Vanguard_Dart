@@ -300,8 +300,10 @@ void RmTestMotorSingleRegister(void)
 
 /// @brief 去除电机偏移对电机目标数值影响
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-/// @param Target 电机目标数值
-/// @return 修正后的电机目标数值
+/// @param Target 电机目标数值（相对增量）
+/// @return 修正后的电机目标数值（绝对位置）
+/// @note target_angle 用于记录上次设置的目标位置，只有电机到达该位置后才允许更新新目标
+///       首次调用时直接计算目标并记录，之后检查是否到达才允许更新
 float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
 {
     // 根据枚举值获取对应的电机结构体指针
@@ -314,7 +316,7 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
 
     MotorTypeDef *motor = &MotorManager.MotorList[idx];
 
-    // 检查是否为电机
+    // 检查是否为RM电机
     if (motor->MotorInf.band != RM_MOTOR_BAND)
     {
         return Target; // 不是RM电机，直接返回原值
@@ -322,36 +324,66 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
 
     MotorSolvedData_t *pData = &motor->motor_data;
 
-    // 一般来说调用该函数时已经更新了初始角度
+    // 等待滤波器初始化完成（确保已接收到电机反馈数据）
     while (!pData->filter_init)
         ;
-    if (pData->solved_data[3] == pData->target_angle)
-    {
-        Target += pData->solved_data[3]; // 将结果基于当前累加，确定目标数值
 
-        // 初步确定是3508换弹结构需要换向补偿
+    // 首次调用：初始化目标值，将当前位置作为基准并累加Target
+    if (pData->target_init_flag == 0)
+    {
+        // 首次：基于当前位置计算目标
+        float new_target = pData->offset_ecd + Target;
+
+        // 记录目标角度
+        pData->target_angle = new_target;
+        pData->last_target = new_target;
+        pData->pre_last_target = new_target;
+        pData->target_init_flag = 1;
+
+        return new_target;
+    }
+
+    // 非首次调用：检查是否到达上次目标位置
+    // 使用 int16_t 比较，允许一定误差（±1度）
+    int16_t current_angle = (int16_t)(pData->solved_data[3] + pData->offset_ecd);
+    int16_t last_target_angle = (int16_t)pData->target_angle;
+
+    // 检查当前位置是否到达上次目标（允许±1度误差）
+    if ((current_angle >= last_target_angle - 1) && (current_angle <= last_target_angle + 1))
+    {
+        // 已到达目标位置，允许更新新目标
+        float new_target = pData->solved_data[3] + Target;
+
+        // 3508换弹结构需要换向补偿
         if (motor->MotorInf.model == RmM3508)
         {
             if (motor->cascade_pid.inner.calc_count)
             {
-                if ((pData->last_target > Target) && (pData->pre_last_target < pData->last_target))
+                if ((pData->last_target > new_target) && (pData->pre_last_target < pData->last_target))
                 {
-                    // 上次正传，这次反转
-                    Target -= 15.0f;
+                    // 上次正转，这次反转
+                    new_target -= 15.0f;
                 }
-                else if ((pData->last_target < Target) && (pData->pre_last_target > pData->last_target))
+                else if ((pData->last_target < new_target) && (pData->pre_last_target > pData->last_target))
                 {
                     // 上次反转，这次正转
-                    Target += 15.0f;
+                    new_target += 15.0f;
                 }
-                pData->last_target = Target;
-                pData->pre_last_target = pData->last_target;
             }
         }
-        // 空程误差换向补偿
-    }
 
-    return Target;
+        // 更新历史记录
+        pData->pre_last_target = pData->last_target;
+        pData->last_target = new_target;
+        pData->target_angle = new_target;
+
+        return new_target;
+    }
+    else
+    {
+        // 未到达目标位置，返回上次的目标值，不允许更新
+        return pData->target_angle;
+    }
 }
 
 /// @brief RM电机输出

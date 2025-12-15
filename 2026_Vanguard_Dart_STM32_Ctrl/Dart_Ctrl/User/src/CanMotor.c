@@ -304,3 +304,211 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
     //     Error_Handler();
     // }
 }
+
+/**********************************************************电机数据读取接口******************************************************/
+
+/****************************************************
+ * 函数名： Motor_GetTotalAngle
+ * 作用：获取电机累计角度（单位：度）
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ * 返回值：累计角度（度），失败返回0
+ ****************************************************/
+float Motor_GetTotalAngle(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count)
+    {
+        return 0.0f;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+
+    if (motor->MotorInf.band == RM_MOTOR_BAND)
+    {
+        // RM电机: solved_data[3] = 累计角度(°)
+        return motor->motor_data.solved_data[3];
+    }
+    else if (motor->MotorInf.band == DM_MOTOR_BAND)
+    {
+        // DM电机: solved_data[0] = 位置(rad)，需要转换为度
+        return RadToDegree(motor->motor_data.solved_data[0]);
+    }
+
+    return 0.0f;
+}
+
+/****************************************************
+ * 函数名： Motor_GetTotalAngleRad
+ * 作用：获取电机累计角度（单位：弧度）
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ * 返回值：累计角度（弧度），失败返回0
+ ****************************************************/
+float Motor_GetTotalAngleRad(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count)
+    {
+        return 0.0f;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+
+    if (motor->MotorInf.band == RM_MOTOR_BAND)
+    {
+        // RM电机: solved_data[3] = 累计角度(°)，需要转换为弧度
+        return DegreeToRad(motor->motor_data.solved_data[3]);
+    }
+    else if (motor->MotorInf.band == DM_MOTOR_BAND)
+    {
+        // DM电机: solved_data[0] = 位置(rad)
+        return motor->motor_data.solved_data[0];
+    }
+
+    return 0.0f;
+}
+
+/****************************************************
+ * 函数名： Motor_GetSpeedRPM
+ * 作用：获取电机速度（单位：rpm）
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ * 返回值：速度（rpm），失败返回0
+ ****************************************************/
+float Motor_GetSpeedRPM(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count)
+    {
+        return 0.0f;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+
+    if (motor->MotorInf.band == RM_MOTOR_BAND)
+    {
+        // RM电机: solved_data[1] = 速度(rpm)
+        return motor->motor_data.solved_data[1];
+    }
+    else if (motor->MotorInf.band == DM_MOTOR_BAND)
+    {
+        // DM电机: solved_data[1] = 速度(rad/s)，需要转换为rpm
+        // rpm = rad/s * 60 / (2*π) ≈ rad/s * 9.5493
+        return motor->motor_data.solved_data[1] * 9.5493f;
+    }
+
+    return 0.0f;
+}
+
+/****************************************************
+ * 函数名： Motor_GetSpeedRadS
+ * 作用：获取电机速度（单位：rad/s）
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ * 返回值：速度（rad/s），失败返回0
+ ****************************************************/
+float Motor_GetSpeedRadS(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count)
+    {
+        return 0.0f;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+
+    if (motor->MotorInf.band == RM_MOTOR_BAND)
+    {
+        // RM电机: solved_data[4] = 速度(rad/s)
+        return motor->motor_data.solved_data[4];
+    }
+    else if (motor->MotorInf.band == DM_MOTOR_BAND)
+    {
+        // DM电机: solved_data[1] = 速度(rad/s)
+        return motor->motor_data.solved_data[1];
+    }
+
+    return 0.0f;
+}
+
+/****************************************************
+ * 函数名： Motor_GetSingleAngle
+ * 作用：获取电机单圈角度（单位：度）
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ * 返回值：单圈角度（度），失败返回0
+ ****************************************************/
+float Motor_GetSingleAngle(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count)
+    {
+        return 0.0f;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+
+    if (motor->MotorInf.band == RM_MOTOR_BAND)
+    {
+        // RM电机: solved_data[0] = 单圈角度(°)
+        return motor->motor_data.solved_data[0];
+    }
+    else if (motor->MotorInf.band == DM_MOTOR_BAND)
+    {
+        // DM电机: 将位置转换为0-360度范围
+        float rad = motor->motor_data.solved_data[0];
+        float deg = RadToDegree(rad);
+        // 归一化到0-360度
+        while (deg < 0)
+            deg += 360.0f;
+        while (deg >= 360.0f)
+            deg -= 360.0f;
+        return deg;
+    }
+
+    return 0.0f;
+}
+
+/****************************************************
+ * 函数名： Motor_GetCurrent
+ * 作用：获取电机电流（单位：A）
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ * 返回值：电流（A），失败返回0
+ * 备注：DM电机返回的是力矩(N·m)
+ ****************************************************/
+float Motor_GetCurrent(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count)
+    {
+        return 0.0f;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+
+    if (motor->MotorInf.band == RM_MOTOR_BAND)
+    {
+        // RM电机: solved_data[2] = 电流(A)
+        return motor->motor_data.solved_data[2];
+    }
+    else if (motor->MotorInf.band == DM_MOTOR_BAND)
+    {
+        // DM电机: solved_data[2] = 力矩(N·m)
+        return motor->motor_data.solved_data[2];
+    }
+
+    return 0.0f;
+}
+
+/****************************************************
+ * 函数名： Motor_GetAllData
+ * 作用：获取电机所有解算数据
+ * 参数：motor_id - 电机ID（can_motor_cfg枚举值）
+ *       data - 输出数据指针（需提供5个float空间）
+ * 返回值：true-成功，false-失败
+ * 备注：
+ *   RM电机: [0]单圈角度(°), [1]速度(rpm), [2]电流(A), [3]累计角度(°), [4]速度(rad/s)
+ *   DM电机: [0]位置(rad), [1]速度(rad/s), [2]力矩(N·m), [3]MOS温度(℃), [4]转子温度(℃)
+ ****************************************************/
+bool Motor_GetAllData(can_motor_cfg motor_id, float *data)
+{
+    if (motor_id < 1 || motor_id > MotorManager.registered_count || data == NULL)
+    {
+        return false;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
+    memcpy(data, motor->motor_data.solved_data, sizeof(float) * MOTOR_SOLVED_DATA_NUM);
+
+    return true;
+}

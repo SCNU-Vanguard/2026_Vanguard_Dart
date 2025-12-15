@@ -9,6 +9,7 @@
 #include "semphr.h"       // ARM.FreeRTOS::RTOS:Core
 #include "queue.h"
 
+#include "config.h"
 #include "bsp_dwt.h"
 #include "bsp_can.h"
 #include "bsp_uart.h"
@@ -22,5 +23,8 @@
 
 // 模块驱动初始化
 void Module_Init(void);
+
+// 任务初始化
+void TaskInitFunc(void);
 
 #endif

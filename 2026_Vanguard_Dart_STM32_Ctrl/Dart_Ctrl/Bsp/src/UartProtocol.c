@@ -145,7 +145,7 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                     Protocol_ResetParserState(rb);
 
                     // 这里放一个任务通知
-                    xTaskNotifyFromISR(UartModuleTaskHandle, 0x01, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
+                    // xTaskNotifyFromISR(UartModuleTaskHandle, 0x01, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
                 }
             }
             else
@@ -228,7 +228,7 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                     rb->parse_state = PARSE_SERVO_CRC;
 
                     // 这里放一个任务通知
-                    xTaskNotifyFromISR(UartModuleTaskHandle, 0x02, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
+                    // xTaskNotifyFromISR(UartModuleTaskHandle, 0x02, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
                 }
             }
             else
@@ -319,7 +319,7 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                 Protocol_ResetParserState(rb);
 
                 // 这里放一个任务通知
-                xTaskNotifyFromISR(UartModuleTaskHandle, 0x03, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
+                // xTaskNotifyFromISR(UartModuleTaskHandle, 0x03, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
             }
             else
             {

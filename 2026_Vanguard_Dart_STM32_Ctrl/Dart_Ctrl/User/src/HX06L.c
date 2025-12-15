@@ -14,6 +14,7 @@
 #include <string.h>
 #include "FreeRTOS.h"
 #include "task.h"
+#include "UartModule.h"
 
 #if (other_mcu_forcing == 1)
 /*******************************************************************************
@@ -36,18 +37,41 @@
 
 /// @brief 换弹舵机初始化（控制板协议）
 /// @param  无
-void ServoInit(void)
+/// @retval true:初始化正常, false:初始化存在电压问题
+bool ServoInit(void)
 {
     // 控制板协议下，舵机初始化由控制板自动完成
     // 只需要确保通信正常即可
     // 可以发送一个读取电压的命令来测试通信
-    uint8_t data[4];
-    data[0] = 0x55;                    // 帧头
-    data[1] = 0x55;                    // 帧头
-    data[2] = 0x02;                    // 数据长度 = 0 + 2
-    data[3] = CMD_GET_BATTERY_VOLTAGE; // 指令：获取电池电压
-    UART_Send(BSP_UART3, (const uint8_t *)data, 4);
-    vTaskDelay(1);
+    static uint8_t ServoInitCount = 0;
+    if (ServoInitCount == 0)
+    {
+        uint8_t data[4];
+        data[0] = 0x55;                    // 帧头
+        data[1] = 0x55;                    // 帧头
+        data[2] = 0x02;                    // 数据长度 = 0 + 2
+        data[3] = CMD_GET_BATTERY_VOLTAGE; // 指令：获取电池电压
+        UART_Send(BSP_UART3, (const uint8_t *)data, 4);
+        HAL_Delay(100); // 这里等待100ms,之后读取回调数据,确认电压是否正常
+        ServoInitCount = 1;
+    }
+    ServoPacket_t InitData; // 这里可以不用进行初始化,函数调用时会直接memcpy数据过来,即使是没接收到数据也有HasServoPacket保障
+    uint16_t servo_voltage = 0;
+    if (UartModule_HasServoPacket(BSP_UART3))
+    {
+        UartModule_GetServoPacket(BSP_UART3, &InitData);
+        // 回读之后解算电压的正常数据,不正常就返回一个false,之后使用一些东西提示总线舵机初始化失败
+        servo_voltage = InitData.params[0] | (((uint16_t)InitData.params[1]) << 8); // 单位mv
+        if ((servo_voltage > 8800) || (servo_voltage < 6000))
+        {
+            return false;
+        }
+        else
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// @brief 总线舵机控制函数（控制板协议）

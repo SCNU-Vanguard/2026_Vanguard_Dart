@@ -17,7 +17,7 @@
 /*****************************协议选择宏***********************************/
 // 0: 无MCU驱动板协议（115200波特率，帧格式：0x55 0x55 | ID | Length | Cmd | Param | CRC）
 // 1: 有MCU控制板协议（9600波特率，帧格式：0x55 0x55 | Length | Cmd | Param）
-#define other_mcu_forcing  1
+#define other_mcu_forcing 1
 
 /*****************************指令定义***********************************/
 
@@ -27,14 +27,14 @@
 // 控制板指令枚举
 typedef enum
 {
-    CMD_SERVO_MOVE = 0x03,           // 控制任意个舵机的转动
-    CMD_ACTION_GROUP_RUN = 0x06,     // 控制动作组运行
-    CMD_ACTION_GROUP_STOP = 0x07,    // 停止正在运行的动作组
-    CMD_ACTION_GROUP_COMPLETE = 0x08,// 动作组自然运行结束返回
-    CMD_ACTION_GROUP_SPEED = 0x0B,   // 控制动作组的速度
-    CMD_GET_BATTERY_VOLTAGE = 0x0F,  // 获取控制板电池电压
-    CMD_MULT_SERVO_UNLOAD = 0x14,    // 控制多个舵机马达掉电卸力
-    CMD_MULT_SERVO_POS_READ = 0x15   // 读取多个舵机的角度位置值
+    CMD_SERVO_MOVE = 0x03,            // 控制任意个舵机的转动
+    CMD_ACTION_GROUP_RUN = 0x06,      // 控制动作组运行
+    CMD_ACTION_GROUP_STOP = 0x07,     // 停止正在运行的动作组
+    CMD_ACTION_GROUP_COMPLETE = 0x08, // 动作组自然运行结束返回
+    CMD_ACTION_GROUP_SPEED = 0x0B,    // 控制动作组的速度
+    CMD_GET_BATTERY_VOLTAGE = 0x0F,   // 获取控制板电池电压
+    CMD_MULT_SERVO_UNLOAD = 0x14,     // 控制多个舵机马达掉电卸力
+    CMD_MULT_SERVO_POS_READ = 0x15    // 读取多个舵机的角度位置值
 } ControlBoardCmd;
 
 #else
@@ -146,9 +146,10 @@ typedef enum
 
 /*****************************函数声明***********************************/
 
-/// @brief 换弹舵机初始化
+/// @brief 换弹舵机初始化（控制板协议）
 /// @param  无
-void ServoInit(void);
+/// @retval true:初始化正常, false:初始化存在电压问题
+bool ServoInit(void);
 
 /// @brief 总线舵机控制函数
 /// @param ID 总线舵机ID

@@ -48,7 +48,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-static float Target = 394.0f; // 360° * 19.2 ( 度数 * 减速比 ) // 420.00
+float Target = 12960.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
 static uint32_t lastServoTime = 0;
 static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
 
@@ -65,16 +65,16 @@ void pxChangeTarget(void *arg)
 
   while (1)
   {
-    if (Target < 70000.0f)
+    if (Target < 60000.0f)
     {
-      Target += 6912.0f;
+      Target += 3240.0f;
     }
     else
     {
-      Target = -6912.0f;
+      Target = -12960.0f;
     }
 
-    RmMotorRemoveBias(RM_3508_GRIPPER, Target);
+    // RmMotorRemoveBias(RM_3508_GRIPPER, Target);
     vTaskDelay(4000);
   }
 }
@@ -126,13 +126,16 @@ void MX_FREERTOS_Init(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  // defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
 
   // 改变电机目标数值的一个乐色任务
   // g_HandleChangeTarget = xTaskCreateStatic(pxChangeTarget, "ChangeTarget", 32, NULL, osPriorityNormal, g_pxChangeTarget, &g_TCBChangeTarget);
+
+  // 飞镖任务初始化
+  TaskInitFunc();
 
   /* USER CODE END RTOS_THREADS */
 
@@ -196,7 +199,7 @@ void StartDefaultTask(void *argument)
 
 // 调试DM电机
 #if DM_TestUse
-    DmMotorSendCfg(1, 1.5, 1.5);
+    DmMotorSendCfg(SingleMotorTest, 1.5, 1.5);
 
 // 调节RM电机
 #elif RM_TestUse

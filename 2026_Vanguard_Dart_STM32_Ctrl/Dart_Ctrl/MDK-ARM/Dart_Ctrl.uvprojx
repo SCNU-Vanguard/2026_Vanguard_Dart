@@ -720,6 +720,11 @@
               <FileType>1</FileType>
               <FilePath>..\User\src\UartModule.c</FilePath>
             </File>
+            <File>
+              <FileName>IA6B.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\IA6B.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
