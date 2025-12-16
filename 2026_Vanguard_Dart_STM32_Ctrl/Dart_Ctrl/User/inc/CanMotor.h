@@ -54,11 +54,12 @@ typedef struct
     float solved_data[MOTOR_SOLVED_DATA_NUM]; // 解算后的数据数组
 
     // 电机使用的多圈累计相关变量
-    int16_t last_ecd;    // 上次编码器值
-    int32_t total_round; // 累计圈数
-    int32_t total_ecd;   // 累计编码器值
-    int16_t offset_ecd;  // 零点偏移
-    uint8_t init_flag;   // 初始化标志
+    int16_t last_ecd;       // 上次编码器值
+    int32_t total_round;    // 累计圈数
+    int32_t total_ecd;      // 累计编码器值
+    int16_t offset_ecd;     // 零点偏移
+    uint8_t init_flag;      // 初始化标志
+    float offset_ecd_angle; // 零点偏移角度
 
     // 速度滤波相关
     float last_speed;    // 上次速度值（用于滤波）

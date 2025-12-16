@@ -138,6 +138,7 @@ void RM_MOTOR_CALCU(MotorTypeDef *motor)
         pData->last_ecd = ecd;
         pData->offset_ecd = ecd; // 首次位置作为零点
         pData->init_flag = 1;
+        pData->offset_ecd_angle = ecd / 8192.0f * 360.0f; // 零点(角度表示)
     }
 
     // =============== 3. 过零检测 & 多圈累计 ===============
@@ -303,7 +304,6 @@ void RmTestMotorSingleRegister(void)
 /// @param Target 电机目标数值（相对增量）
 /// @return 修正后的电机目标数值（绝对位置）
 /// @note target_angle 用于记录上次设置的目标位置，只有电机到达该位置后才允许更新新目标
-///       首次调用时直接计算目标并记录，之后检查是否到达才允许更新
 float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
 {
     // 根据枚举值获取对应的电机结构体指针
@@ -331,8 +331,8 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
     // 首次调用：初始化目标值，将当前位置作为基准并累加Target
     if (pData->target_init_flag == 0)
     {
-        // 首次：基于当前位置计算目标
-        float new_target = pData->offset_ecd + Target;
+        // 首次：基于当前累计角度计算目标（solved_data[3]单位为度）
+        float new_target = pData->solved_data[3] + Target;
 
         // 记录目标角度
         pData->target_angle = new_target;
@@ -344,12 +344,12 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
     }
 
     // 非首次调用：检查是否到达上次目标位置
-    // 使用 int16_t 比较，允许一定误差（±1度）
-    int16_t current_angle = (int16_t)(pData->solved_data[3] + pData->offset_ecd);
+    // 使用 int16_t 比较，允许一定误差
+    int16_t current_angle = (int16_t)pData->solved_data[3]; // 当前累计角度（度）
     int16_t last_target_angle = (int16_t)pData->target_angle;
 
-    // 检查当前位置是否到达上次目标（允许±1度误差）
-    if ((current_angle >= last_target_angle - 1) && (current_angle <= last_target_angle + 1))
+    // 检查当前位置是否到达上次目标（允许±50度误差）,并且目标发生改变
+    if ((current_angle >= last_target_angle - 50) && (current_angle <= last_target_angle + 50) && (last_target_angle != (int16_t)Target))
     {
         // 已到达目标位置，允许更新新目标
         float new_target = pData->solved_data[3] + Target;
@@ -384,6 +384,75 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
         // 未到达目标位置，返回上次的目标值，不允许更新
         return pData->target_angle;
     }
+}
+
+/// @brief 增量式位置偏移计算（相对于当前位置的增量）
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
+/// @param delta 相对于当前位置的增量（度）
+/// @return 计算后的绝对目标位置
+/// @note 与 RmMotorRemoveBias 的区别：
+///       - RmMotorRemoveBias: 绝对式，Target 相对于首次调用时的位置
+///       - RmMotorRemoveBiasIncr: 增量式，delta 相对于上次目标位置
+///       增量式不需要等待到达目标，每次调用都会累加到目标值上
+float RmMotorRemoveBiasIncr(can_motor_cfg motor_cfg, float delta)
+{
+    // 根据枚举值获取对应的电机结构体指针
+    uint8_t idx = (uint8_t)motor_cfg - 1;
+    if (idx >= g_CanMotorNum)
+    {
+        return delta;
+    }
+
+    MotorTypeDef *motor = &MotorManager.MotorList[idx];
+
+    // 检查是否为RM电机
+    if (motor->MotorInf.band != RM_MOTOR_BAND)
+    {
+        return delta;
+    }
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+
+    // 等待滤波器初始化完成（确保已接收到电机反馈数据）
+    while (!pData->filter_init)
+        ;
+
+    // 首次调用：初始化目标值为当前位置
+    if (pData->target_init_flag == 0)
+    {
+        pData->target_angle = pData->solved_data[3]; // 记录当前位置作为初始目标
+        pData->last_target = pData->target_angle;
+        pData->pre_last_target = pData->target_angle;
+        pData->target_init_flag = 1;
+    }
+
+    // 增量式：在上次目标位置基础上累加增量
+    float new_target = pData->target_angle + delta;
+
+    // 3508换弹结构需要换向补偿
+    if (motor->MotorInf.model == RmM3508)
+    {
+        if (motor->cascade_pid.inner.calc_count)
+        {
+            if ((pData->last_target > new_target) && (pData->pre_last_target < pData->last_target))
+            {
+                // 上次正转，这次反转
+                new_target -= 15.0f;
+            }
+            else if ((pData->last_target < new_target) && (pData->pre_last_target > pData->last_target))
+            {
+                // 上次反转，这次正转
+                new_target += 15.0f;
+            }
+        }
+    }
+
+    // 更新历史记录
+    pData->pre_last_target = pData->last_target;
+    pData->last_target = new_target;
+    pData->target_angle = new_target;
+
+    return new_target;
 }
 
 /// @brief RM电机输出

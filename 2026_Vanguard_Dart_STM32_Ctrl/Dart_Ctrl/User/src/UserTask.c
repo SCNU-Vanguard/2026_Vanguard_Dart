@@ -2,7 +2,7 @@
 // 19271（上限）<长度>
 // 第三个（距离7547）
 // 第二个（距离13200）<与第三个相距5653>
-// 第一个（距离18555）<与第二个相距5549>
+// 第一个（距离18749）<与第二个相距5549>
 
 // 任务：
 // 换弹任务
@@ -14,7 +14,7 @@
 /************************全局或静态作用域*********************/
 static DartPacket_t g_xDartData;
 static ServoPacket_t g_xServoData;
-static uint8_t DartNum = 3;
+static uint8_t DartNum = 4;
 extern MotorManager_t MotorManager;
 int16_t MotorData = 0x00;
 
@@ -81,6 +81,13 @@ const osThreadAttr_t StoreEnergyTask_attributes = {
 osThreadId_t LoadTaskHandle;
 const osThreadAttr_t LoadTask_attributes = {
     .name = "LoadTask",
+    .stack_size = 160 * 4,
+    .priority = (osPriority_t)osPriorityNormal1,
+};
+
+osThreadId_t LoadTaskHandle2;
+const osThreadAttr_t LoadTask2_attributes = {
+    .name = "LoadTask2",
     .stack_size = 128 * 4,
     .priority = (osPriority_t)osPriorityNormal1,
 };
@@ -141,58 +148,139 @@ void StoreEnergyTaskFunc(void *argument)
 void LoadTaskFunc(void *argument)
 {
     // 需要等待一个换弹指令,这个全由轮询决定
-    float target = FirstServoLoc;
+    float target = FirstServoLoc; // 初始目标：最远位置（第一个飞镖）
     uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
     uint16_t servo_angles[3] = {0x0000};
     uint16_t servo_work_angle[3] = {SeperationAngle, SeperationAngle, SeperationAngle};
 
     // 回读角度,确认换弹之前状态正常
     // 直接设置成0°,限位确认
-    ServoControlMulti(3, servo_ids, servo_angles, 500);     // 当前角度是0°,在设置后(MCU驱动板上电无法读取)
-    vTaskDelay(2500);                                       // 2.5s之后会进行一次转动,之后复位
-    ServoControlMulti(3, servo_ids, servo_work_angle, 910); // 转75°分离,最大时长910ms
-    vTaskDelay(1000);
-    ServoControlMulti(3, servo_ids, servo_angles, 500);
-    uint8_t MotorDecFlag = 0x00;
+    ServoControlMulti(3, servo_ids, servo_angles, 300); // 当前角度是0°,在设置后(MCU驱动板上电无法读取)
+    float offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
 
-    while (DartNum)
+    while (1)
     {
-        // 3508电机调节
-        // 测试PID是否正常可以使用
-        RmMotorRemoveBias(RM_3508_GRIPPER, target);
-        RmMotorPID_Calc(RM_3508_GRIPPER, target);
-        // 总线舵机运行,进行换弹指令
-
-        // if (Motor_GetTotalAngle(RM_3508_GRIPPER) == FirstServoLoc)
-        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-        if ((MotorData == FirstServoLoc) || (MotorDecFlag == 1)) // 首次上电电机的零点为offest_ecd,负向转动,距离为-7547
+        if (DartNum == 1)
         {
-            ServoControlPos(0x01, SeperationAngle, 910); // 转90°分离,最大时长910ms
-            DartNum--;
-						MotorDecFlag = 1;
-            target = SecondServoLoc;
-            vTaskDelay(200);
-            ServoControlPos(0x01, 0x0000, 910);
+            DartNum = 4;
+        }
+        while (DartNum)
+        {
+            // 3508电机调节
+            target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+            RmMotorPID_Calc(RM_3508_GRIPPER, target);
 
-            // 这个地方很难做到精准，需要加一个模糊
-            if ((MotorData == SecondServoLoc) || (MotorDecFlag == 2)) // 负向转动,距离为-5653
+// 定义死区范围 ±5, todo:是否增大死区
+#define MOTOR_DEAD_ZONE 5
+
+            // 使用死区判断：MotorData 在 [target-5, target+5] 范围内视为到达
+            if ((MotorData >= FirstServoLoc - MOTOR_DEAD_ZONE) &&
+                (MotorData <= FirstServoLoc + MOTOR_DEAD_ZONE) &&
+                (DartNum == 4)) // 首次上电电机的零点为offest_ecd,负向转动,距离为-7547
             {
-                MotorDecFlag = 2;
-                ServoControlPos(0x02, SeperationAngle, 910); // 转90°分离,最大时长910ms
+                // 换前进行一次调控
+                ServoControlPos(0x03, SeperationAngle, 300); // 转90°分离,最大时长300ms
                 DartNum--;
-                target = ThirdServoLoc;
-                vTaskDelay(200);
-                ServoControlPos(0x02, 0x0000, 910);
-                if ((MotorData == ThirdServoLoc) || (MotorDecFlag == 3)) // 负向转动,距离为-5549
+                vTaskDelay(100);
+                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                ServoControlPos(0x03, 0x0000, 300);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+
+                // 等待电机到达过渡位置
+                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+                // 回到上电零点位置：当前累计角度的负值
+                while (!((MotorData >= (0 - MOTOR_DEAD_ZONE)) &&
+                         (MotorData <= (0 + MOTOR_DEAD_ZONE))))
                 {
-                    MotorDecFlag = 3;
-                    ServoControlPos(0x03, SeperationAngle, 910); // 转90°分离,最大时长910ms
-                    DartNum--;
-                    target = -(MotorManager.MotorList->motor_data.solved_data[3] - MotorManager.MotorList->motor_data.offset_ecd);
-                    vTaskDelay(200);
-                    ServoControlPos(0x03, 0x0000, 910);
+                    target = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData);
+                    RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
+                }
+                target = SecondServoLoc;
+            }
+
+            if ((MotorData >= SecondServoLoc - MOTOR_DEAD_ZONE) &&
+                (MotorData <= SecondServoLoc + MOTOR_DEAD_ZONE) &&
+                (DartNum == 3)) // 负向转动,距离为-5653
+            {
+                // 换前进行一次调控
+                ServoControlPos(0x02, SeperationAngle, 300); // 转90°分离,最大时长300ms
+                DartNum--;
+                vTaskDelay(100);
+                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                ServoControlPos(0x03, 0x0000, 300);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+
+                // 等待电机到达过渡位置
+                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+                // 回到上电零点位置：当前累计角度的负值
+                while (!((MotorData >= (0 - MOTOR_DEAD_ZONE)) &&
+                         (MotorData <= (0 + MOTOR_DEAD_ZONE))))
+                {
+                    target = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData);
+                    RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
+                }
+                target = ThirdServoLoc;
+            }
+
+            if ((MotorData >= ThirdServoLoc - MOTOR_DEAD_ZONE) &&
+                (MotorData <= ThirdServoLoc + MOTOR_DEAD_ZONE) &&
+                (DartNum == 2)) // 负向转动,距离为-5549
+            {
+                // 换前进行一次调控
+                ServoControlPos(0x01, SeperationAngle, 300); // 转90°分离,最大时长300ms
+                DartNum--;
+                vTaskDelay(100);
+                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                ServoControlPos(0x03, 0x0000, 300);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(100);
+                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+
+                // 等待电机到达过渡位置
+                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+                // 回到上电零点位置：当前累计角度的负值
+                while (!((MotorData >= (0 - MOTOR_DEAD_ZONE)) &&
+                         (MotorData <= (0 + MOTOR_DEAD_ZONE))))
+                {
+                    target = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData);
+                    RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
                 }
             }
+            MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
         }
     }
 }

@@ -13,8 +13,11 @@
 #define ConveyorBeltLength 20673
 #define SeperationAngle 375
 #define FirstServoLoc -7547
-#define SecondServoLoc -5653
-#define ThirdServoLoc -5549
+#define SecondServoLoc -13200
+#define ThirdServoLoc -18749
+// 第三个舵机（距离7547）
+// 第二个舵机（距离13200）<与第三个相距5653>
+// 第一个舵机（距离18749）<与第二个相距5549>
 
 // 同步带相关
 

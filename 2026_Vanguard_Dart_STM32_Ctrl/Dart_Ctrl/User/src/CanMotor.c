@@ -81,7 +81,7 @@ void MotorRegister(void)
     float inner_p = 175.91f;
     float inner_i = 0.40f;
     float inner_d = 0.0f;
-    float inner_f = 7.91f;
+    float inner_f = 7.95f;
     float outer_p = 1.05f;
     float outer_i = 0.0f;
     float outer_d = 0.0f;
@@ -325,12 +325,13 @@ float Motor_GetTotalAngle(can_motor_cfg motor_id)
     if (motor->MotorInf.band == RM_MOTOR_BAND)
     {
         // RM电机: solved_data[3] = 累计角度(°)
-        return motor->motor_data.solved_data[3];
+        return (motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle);
     }
     else if (motor->MotorInf.band == DM_MOTOR_BAND)
     {
         // DM电机: solved_data[0] = 位置(rad)，需要转换为度
-        return RadToDegree(motor->motor_data.solved_data[0]);
+        // 等待修改
+        return RadToDegree(motor->motor_data.solved_data[0] - motor->motor_data.offset_ecd);
     }
 
     return 0.0f;

@@ -70,11 +70,19 @@ void RM_Motor_Reset_All(void);
 /// @param TargetCurrent 电流大小
 void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent);
 
-/// @brief 去除电机偏移对电机目标数值影响
+/// @brief 去除电机偏移对电机目标数值影响（绝对式）
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-/// @param Target 电机目标数值
-/// @return 修正后的电机目标数值
+/// @param Target 电机目标数值（相对于首次调用时位置的偏移）
+/// @return 修正后的电机目标数值（绝对位置）
+/// @note 只有到达上次目标位置后才允许更新新目标
 float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target);
+
+/// @brief 增量式位置偏移计算（相对于上次目标的增量）
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
+/// @param delta 相对于上次目标位置的增量（度）
+/// @return 计算后的绝对目标位置
+/// @note 与RmMotorRemoveBias的区别：增量式不需要等待到达，每次调用都会累加
+float RmMotorRemoveBiasIncr(can_motor_cfg motor_cfg, float delta);
 
 /// @brief 测试单个RM电机注册函数
 /// @param 无
