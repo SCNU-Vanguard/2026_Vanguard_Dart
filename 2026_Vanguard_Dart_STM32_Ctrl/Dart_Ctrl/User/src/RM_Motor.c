@@ -40,20 +40,20 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st)
     }
 
     // 将RM3508电机的数据进行拼接
-    for (uint8_t a = (st->MotorID - 1); (a < g_RM_M3508_NUM) && (st->MotorInf.model == RmM3508); a++)
+    for (uint8_t a = (st->MotorID - 1); (a <= g_RM_M3508_NUM) && (st->MotorInf.model == RmM3508); a++)
     {
         for (uint8_t b = 0; b < 2; b++)
         {
-            MotorManager.RM_MOTOR_DATA_ARRAY[2 * a + b] = MotorManager.MotorList[a].SendMotorData[b];
+            MotorManager.RM_MOTOR_DATA_ARRAY[2 * a + b - 2 * (st->MotorID - 1)] = MotorManager.MotorList[a].SendMotorData[b];
         }
     }
 
     // 将RM2006电机的数据进行拼接
-    for (uint8_t a = (st->MotorID - 1); (a < g_RM_M2006_NUM) && (st->MotorInf.model == RmM2006); a++)
+    for (uint8_t a = (st->MotorID - 1); (a <= g_RM_M2006_NUM) && (st->MotorInf.model == RmM2006); a++)
     {
         for (uint8_t b = 0; b < 2; b++)
         {
-            MotorManager.RM_MOTOR_DATA_ARRAY[2 * a + b] = MotorManager.MotorList[a].SendMotorData[b];
+            MotorManager.RM_MOTOR_DATA_ARRAY[2 * a + b - 2 * (st->MotorID - 1)] = MotorManager.MotorList[a].SendMotorData[b];
         }
     }
 
@@ -62,7 +62,7 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st)
     {
         for (uint8_t b = 0; b < 2; b++)
         {
-            MotorManager.RM_MOTOR_DATA_ARRAY[2 * a + b] = MotorManager.MotorList[a].SendMotorData[b];
+            MotorManager.RM_MOTOR_DATA_ARRAY[2 * a + b - 2 * (st->MotorID - 1)] = MotorManager.MotorList[a].SendMotorData[b];
         }
     }
 
@@ -349,7 +349,8 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target)
     int16_t last_target_angle = (int16_t)pData->target_angle;
 
     // 检查当前位置是否到达上次目标（允许±50度误差）,并且目标发生改变
-    if ((current_angle >= last_target_angle - 50) && (current_angle <= last_target_angle + 50) && (last_target_angle != (int16_t)Target))
+    // if ((current_angle >= last_target_angle - 50) && (current_angle <= last_target_angle + 50) && (last_target_angle != (int16_t)(pData->solved_data[3] + Target)))
+    if ((current_angle >= last_target_angle - 50) && (current_angle <= last_target_angle + 50) && (last_target_angle >= (pData->solved_data[3] + Target - 50)) && (last_target_angle <= (pData->solved_data[3] + Target + 50)))
     {
         // 已到达目标位置，允许更新新目标
         float new_target = pData->solved_data[3] + Target;

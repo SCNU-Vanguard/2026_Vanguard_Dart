@@ -2,6 +2,7 @@
 #define __USER_TASK_H_
 
 #include "main.h"
+#include "tim.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "cmsis_os.h"

@@ -1,4 +1,12 @@
+/**************************************
+ * 文件：UserTask.c
+ * 用途：用户任务定义，所有的任务都在此
+ * 创建者：邓金水
+ * 创建日期：忘了
+ * 目标：15s内完成4次发射过程
+ *************************************/
 #include "UserTask.h"
+
 // 19271（上限）<长度>
 // 第三个（距离7547）
 // 第二个（距离13200）<与第三个相距5653>
@@ -21,6 +29,11 @@ int16_t MotorData = 0x00;
 // 云台互斥量
 static StaticSemaphore_t g_xGimbalMutexBuffer;
 SemaphoreHandle_t g_xGimbalMutexHandle;
+static uint8_t g_ucReloadQueueStorage[4 * sizeof(float)];
+static StaticQueue_t g_xReloadQueueStruct;
+static QueueHandle_t g_xLoad3508QueueHandler;
+
+// 换弹结构电机队列
 
 // Uart信号量
 static StaticSemaphore_t g_xUartSemaphore;
@@ -48,16 +61,17 @@ void Module_Init(void)
 void RTOS_ModuleInit(void)
 {
     // 任务通知 ：给串口通信确认是操控什么类型的（2006 / 4310 / HX06L）
-    g_xUartSemaphoreHandle = xSemaphoreCreateCountingStatic(3, 0, &g_xUartSemaphore); // 初始值为0，上限为2，接收时候释放
+    // g_xUartSemaphoreHandle = xSemaphoreCreateCountingStatic(3, 0, &g_xUartSemaphore); // 初始值为0，上限为2，接收时候释放
 
     // 软件定时器：定时向上位机回复确认当前状态正常，否则加一些安全措施，Tick大概30s触发一次
 
-    // QUEUE（队列）：融合到云台调节当中，保证云台调节正常<队列集>
+    // QUEUE（队列）：1.融合到云台调节当中，保证云台调节正常<队列集>; 2.融入到换弹结构当中,确保换弹结构正常
+    g_xLoad3508QueueHandler = xQueueCreateStatic(4, sizeof(float), g_ucReloadQueueStorage, &g_xReloadQueueStruct); // 这个队列用于换弹结构当中
 
     // TASK_Notifaation（任务通知）：任务通知确保发射正常（自检位置），也可能是互斥量或者信号量
 
     // MUTEX（互斥量）：调控云台方式只有一种，不允许上位机和遥控器同时调控
-    g_xGimbalMutexHandle = xSemaphoreCreateMutexStatic(&g_xGimbalMutexBuffer);
+    // g_xGimbalMutexHandle = xSemaphoreCreateMutexStatic(&g_xGimbalMutexBuffer);
 }
 
 /***********************************************TASK******************************************************/
@@ -82,13 +96,6 @@ osThreadId_t LoadTaskHandle;
 const osThreadAttr_t LoadTask_attributes = {
     .name = "LoadTask",
     .stack_size = 160 * 4,
-    .priority = (osPriority_t)osPriorityNormal1,
-};
-
-osThreadId_t LoadTaskHandle2;
-const osThreadAttr_t LoadTask2_attributes = {
-    .name = "LoadTask2",
-    .stack_size = 128 * 4,
     .priority = (osPriority_t)osPriorityNormal1,
 };
 
@@ -121,16 +128,23 @@ void StoreEnergyTaskFunc(void *argument);
 void LoadTaskFunc(void *argument);
 void ShootTaskFunc(void *argument);
 void UartModuleTaskFunc(void *argument);
+void LoadMotorTaskFunc(void *argument);
 
-// 任务初始化
+/***********************************
+ * 函数名: TaskInitFunc
+ * 作用:   任务初始化创建
+ * 参数:   无
+ **********************************/
 void TaskInitFunc(void)
 {
     // 任务初始化
     // GimbalTaskHandle = osThreadNew(GimbalTaskFunc, NULL, &GimbalTask_attributes);
     // StoreEnergyTaskHandle = osThreadNew(StoreEnergyTaskFunc, NULL, &StoreEnergyTask_attributes);
-    LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
-    // ShootTaskHandle = osThreadNew(ShootTaskFunc, NULL, &ShootTask_attributes);
+    // LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
+    ShootTaskHandle = osThreadNew(ShootTaskFunc, NULL, &ShootTask_attributes);
     // UartModuleTaskHandle = osThreadNew(UartModuleTaskFunc, NULL, &UartModuleTask_attributes);
+
+    // RTOS_ModuleInit();
 }
 
 void GimbalTaskFunc(void *argument)
@@ -145,15 +159,25 @@ void StoreEnergyTaskFunc(void *argument)
     // 3510电机底部等待换弹
 }
 
+/***********************************
+ * 函数名: LoadTaskFunc
+ * 作用:   换弹任务（舵机释放以及电机目标设定）
+ * 参数:   无
+ * todo:   增加code注释,为之后的更新作准备
+ **********************************/
 void LoadTaskFunc(void *argument)
 {
     // 需要等待一个换弹指令,这个全由轮询决定
-    float target = FirstServoLoc; // 初始目标：最远位置（第一个飞镖）
+    // float target = FirstServoLoc; // 初始目标：最远位置（第一个飞镖）
+    float target = 0.0f; // 位置不动
     uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
     uint16_t servo_angles[3] = {0x0000};
     uint16_t servo_work_angle[3] = {SeperationAngle, SeperationAngle, SeperationAngle};
 
-    // 回读角度,确认换弹之前状态正常
+    // 任务创建
+    TaskHandle_t Load3508TaskHandle = NULL;
+    xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityAboveNormal, &Load3508TaskHandle); // 换弹3508电机任务
+
     // 直接设置成0°,限位确认
     ServoControlMulti(3, servo_ids, servo_angles, 300); // 当前角度是0°,在设置后(MCU驱动板上电无法读取)
     float offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
@@ -166,45 +190,40 @@ void LoadTaskFunc(void *argument)
         }
         while (DartNum)
         {
-            // 3508电机调节
+            // 在当前任务只负责对3508电机目标值进行调节，而不进行调控PID，当信号量发生将直接更改电机Target，当最后到达目标数值时候将直接返回
             target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-            RmMotorPID_Calc(RM_3508_GRIPPER, target);
+            if (xQueueSend(g_xLoad3508QueueHandler, &target, 2) == errQUEUE_FULL) // 写入失败会发生->维持上次一的调用结果,写入失败应当理解自身调用一次,只等待2个tick
+            {
+                // 这里直接调用一次
+                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+            }
 
-// 定义死区范围 ±5, todo:是否增大死区
-#define MOTOR_DEAD_ZONE 5
+// 定义死区范围 ±1, todo:是否增大死区
+#define MOTOR_DEAD_ZONE 1
 
-            // 使用死区判断：MotorData 在 [target-5, target+5] 范围内视为到达
+            // 使用死区判断：MotorData 在 [target-1, target+1] 范围内视为到达
             if ((MotorData >= FirstServoLoc - MOTOR_DEAD_ZONE) &&
                 (MotorData <= FirstServoLoc + MOTOR_DEAD_ZONE) &&
                 (DartNum == 4)) // 首次上电电机的零点为offest_ecd,负向转动,距离为-7547
             {
-                // 换前进行一次调控
-                ServoControlPos(0x03, SeperationAngle, 300); // 转90°分离,最大时长300ms
+                ServoControlPos(0x03, SeperationAngle, 310); // 转90°分离,最大时长300ms
                 DartNum--;
-                vTaskDelay(100);
-                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                ServoControlPos(0x03, 0x0000, 300);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(315);
+                ServoControlPos(0x03, 0x0000, 310);
+                vTaskDelay(315);
+
+                /* code */
+                // 添加任务通知
 
                 // 等待电机到达过渡位置
                 MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+
                 // 回到上电零点位置：当前累计角度的负值
                 while (!((MotorData >= (0 - MOTOR_DEAD_ZONE)) &&
                          (MotorData <= (0 + MOTOR_DEAD_ZONE))))
                 {
                     target = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData);
-                    RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                    xQueueSend(g_xLoad3508QueueHandler, &target, 2);
                     MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
                 }
                 target = SecondServoLoc;
@@ -214,24 +233,11 @@ void LoadTaskFunc(void *argument)
                 (MotorData <= SecondServoLoc + MOTOR_DEAD_ZONE) &&
                 (DartNum == 3)) // 负向转动,距离为-5653
             {
-                // 换前进行一次调控
-                ServoControlPos(0x02, SeperationAngle, 300); // 转90°分离,最大时长300ms
+                ServoControlPos(0x02, SeperationAngle, 310); // 转90°分离,最大时长300ms
                 DartNum--;
-                vTaskDelay(100);
-                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                ServoControlPos(0x03, 0x0000, 300);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(315);
+                ServoControlPos(0x02, 0x0000, 310);
+                vTaskDelay(315);
 
                 // 等待电机到达过渡位置
                 MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
@@ -240,7 +246,7 @@ void LoadTaskFunc(void *argument)
                          (MotorData <= (0 + MOTOR_DEAD_ZONE))))
                 {
                     target = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData);
-                    RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                    xQueueSend(g_xLoad3508QueueHandler, &target, 2);
                     MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
                 }
                 target = ThirdServoLoc;
@@ -250,24 +256,11 @@ void LoadTaskFunc(void *argument)
                 (MotorData <= ThirdServoLoc + MOTOR_DEAD_ZONE) &&
                 (DartNum == 2)) // 负向转动,距离为-5549
             {
-                // 换前进行一次调控
-                ServoControlPos(0x01, SeperationAngle, 300); // 转90°分离,最大时长300ms
+                ServoControlPos(0x01, SeperationAngle, 310); // 转90°分离,最大时长300ms
                 DartNum--;
-                vTaskDelay(100);
-                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                ServoControlPos(0x03, 0x0000, 300);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
-                vTaskDelay(100);
-                target = RmMotorRemoveBias(RM_3508_GRIPPER, target);
-                RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                vTaskDelay(315);
+                ServoControlPos(0x01, 0x0000, 310);
+                vTaskDelay(315);
 
                 // 等待电机到达过渡位置
                 MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
@@ -276,7 +269,7 @@ void LoadTaskFunc(void *argument)
                          (MotorData <= (0 + MOTOR_DEAD_ZONE))))
                 {
                     target = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData);
-                    RmMotorPID_Calc(RM_3508_GRIPPER, target);
+                    xQueueSend(g_xLoad3508QueueHandler, &target, 2);
                     MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
                 }
             }
@@ -285,13 +278,45 @@ void LoadTaskFunc(void *argument)
     }
 }
 
+void LoadMotorTaskFunc(void *argument)
+{
+    float fQueueGripperData = 0.0f; // 目标为0最初
+    vTaskDelay(3);
+    // 在这里驱动换弹的3508电机运动
+    while (1)
+    {
+        xQueueReceive(g_xLoad3508QueueHandler, &fQueueGripperData, 7); // 读取队列得到对应的数据, 等待数据更新(最多7个Tick)
+        RmMotorPID_Calc(RM_3508_GRIPPER, fQueueGripperData);
+        vTaskDelay(3);
+    }
+}
+
+/***********************************
+ * 函数名: ShootTaskFunc
+ * 作用:   发射任务（舵机释放以及电机目标设定）
+ * 参数:   无
+ * todo:   增加code注释,为之后的更新作准备
+ * 备注:   MG996R舵机直接转动的范围是( 500 ~ 2500 )
+ **********************************/
 void ShootTaskFunc(void *argument)
 {
-    // 1.这里放一个队列，等待解析上位机发来的射程调整数据之后直接激活扳机位置调节
+    float trigger_target = 51840.0f;                            // 先转10圈
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
 
-    // 2.这里进行正常的发射函数,TIM2_CH1-PD12->A板H接口
-    // 根据同步带电机反馈数据进行发射
-    // __HAL_TIM_SET_COMPARE();
+    while (1)
+    {
+        // 1.这里放一个队列，等待解析上位机发来的射程调整数据之后直接激活扳机位置调节，随时准备调节射程
+        /* code */
+        // 这放一个意淫数据，接收信号量传输
+        trigger_target = RmMotorRemoveBias(RM_2006_TRIGGER, trigger_target); // 位置环,这里先转10圈看看,主要不知道限幅
+        RmMotorPID_Calc(RM_2006_TRIGGER, trigger_target);
+			  // RmMotorSendCfg(RM_2006_TRIGGER, 5000);
+
+        // 2.这里进行正常的发射函数,TIM2_CH1-PD12->A板H接口
+        // 根据同步带电机反馈数据进行发射
+        // 接收任务通知 / 互斥量
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_shoot); // 这个地方设置为未释放状态
+    }
 }
 
 void UartModuleTaskFunc(void *argument)

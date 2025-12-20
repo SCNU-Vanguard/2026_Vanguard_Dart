@@ -86,23 +86,25 @@ void MotorRegister(void)
     float outer_i = 0.0f;
     float outer_d = 0.0f;
     float outer_f = 0.1f;
-    CASCADE_PID_Init(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
-    CASCADE_PID_Clear(&MotorManager.MotorList[SingleMotorTest - 1].cascade_pid);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
+    CASCADE_PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
 
     // 扳机
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.band = RM_MOTOR_BAND;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.model = RmM2006;
     MotorManager.MotorList[RM_2006_TRIGGER - 1].SendMotorControl = RM_MotorSendControl;
+    MotorManager.MotorList[RM_3508_GRIPPER - 1].use_cascade = 1;
     inner_p = 27.91f;
     inner_i = 0.08f;
     inner_d = 0.0f;
     inner_f = 1.0f;
-    outer_p = 0.000091f;
+    outer_p = 0.0001f;
     outer_i = 0.0f;
     outer_d = 0.0f;
     outer_f = 0.002f;
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 5000.0f, 0.0f, 400.0f); // 等待上扳机2006电机测试
+    CASCADE_PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid);
 
     // 注册DM电机
     // 注意注册的DM电机发送和接收其实数据帧都不与RM电机冲突（在MIT模式、位置速度模式和PVT模式下，就完整通信帧而言）
@@ -247,7 +249,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 
             // 检查是否为RM2006电机的反馈帧
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
-                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 4)))
+                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 3)))
             {
                 // 找到对应的RM电机，存储接收数据
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
