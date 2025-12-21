@@ -48,7 +48,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-float Target = 12960.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
+float Target = 597.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
 static uint32_t lastServoTime = 0;
 static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
 
@@ -65,17 +65,18 @@ void pxChangeTarget(void *arg)
 
   while (1)
   {
-    if (Target < 60000.0f)
+    vTaskDelay(4000);
+    if (Target < 25000.0f)
     {
-      Target += 3240.0f;
+      Target += 5000.0f;
     }
     else
     {
-      Target = -12960.0f;
+      Target = 0.0f;
+      vTaskDelay(8000);
     }
 
     // RmMotorRemoveBias(RM_3508_GRIPPER, Target);
-    vTaskDelay(4000);
   }
 }
 
@@ -156,14 +157,14 @@ void StartDefaultTask(void *argument)
   /* USER CODE BEGIN StartDefaultTask */
 
   // 定义数据包接收变量（无需手动初始化，UART_GetServoPacket会完全覆盖）
-  ServoPacket_t HxFb;
-  DartPacket_t UpcFb;
+  //  ServoPacket_t HxFb;
+  //  DartPacket_t UpcFb;
 
   // 舵机初始化（只调用一次，在循环外）
-  ServoInit();
-  vTaskDelay(100); // 等待初始化完成
-  uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-  uint16_t angles[3] = {0, 0, 0};
+  //  ServoInit();
+  //  vTaskDelay(100); // 等待初始化完成
+  //  uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
+  //  uint16_t angles[3] = {0, 0, 0};
 
   /* Infinite loop */
   for (;;)
@@ -171,24 +172,22 @@ void StartDefaultTask(void *argument)
     // ===== 舵机数据读取示例 =====
     // 检查是否有完整的数据包
     // 读取数据包
-    if (UART_GetServoPacket(BSP_UART3, &HxFb))
-    {
-      // 数据包有效，处理数据
-      // 例如：打印舵机ID和命令
-      // printf("ID: %d, Cmd: 0x%02X\n", HxFb.id, HxFb.cmd);
+    // if (UART_GetServoPacket(BSP_UART3, &HxFb))
+    // {
+    //   // printf("ID: %d, Cmd: 0x%02X\n", HxFb.id, HxFb.cmd);
 
-      g_rxDataCnt++;
-      ServoControlPos(0x01, 300, 1000);
-      vTaskDelay(1200);
-      ServoControlPos(0x02, 300, 1000);
-      vTaskDelay(1200);
-      ServoControlPos(0x03, 300, 1000);
-      vTaskDelay(1200);
-      ServoControlMulti(3, servo_ids, angles, 1000);
+    //   g_rxDataCnt++;
+    //   ServoControlPos(0x01, 300, 1000);
+    //   vTaskDelay(1200);
+    //   ServoControlPos(0x02, 300, 1000);
+    //   vTaskDelay(1200);
+    //   ServoControlPos(0x03, 300, 1000);
+    //   vTaskDelay(1200);
+    //   ServoControlMulti(3, servo_ids, angles, 1000);
 
-      // 清除数据包标志，准备接收下一个
-      UART_ClearPacket(BSP_UART3);
-    }
+    //   // 清除数据包标志，准备接收下一个
+    //   UART_ClearPacket(BSP_UART3);
+    // }
 
     // 舵机控制示例（每1秒执行一次）
     // if (HAL_GetTick() - lastServoTime >= 1000)
@@ -197,16 +196,8 @@ void StartDefaultTask(void *argument)
     //   // ServoControlPos(1, 500, 500); // 控制1号舵机
     // }
 
-// 调试DM电机
-#if DM_TestUse
-    DmMotorSendCfg(SingleMotorTest, 1.5, 1.5);
-
-// 调节RM电机
-#elif RM_TestUse
-    RmMotorPID_Calc(SingleMotorTest, Target);
-    //    RmMotorSendCfg(1, Target);
-
-#endif
+    // RmMotorPID_Calc(RM_3508_GRIPPER, Target);
+    // RmMotorSendCfg(RM_3508_GRIPPER, 550);
   }
   /* USER CODE END StartDefaultTask */
 }
