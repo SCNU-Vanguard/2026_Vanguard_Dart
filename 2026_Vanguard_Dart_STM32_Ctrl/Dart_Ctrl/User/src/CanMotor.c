@@ -13,9 +13,51 @@
 #include "RM_Motor.h"
 #include "DM_Motor.h"
 #include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 // 电机管理表
 MotorManager_t MotorManager = {0};
+
+/*============================== 硬件抽象层实现 ==============================*/
+
+/// @brief 默认CAN发送函数
+static uint8_t Motor_DefaultCanSend(CAN_TxHeaderTypeDef *hdr, uint8_t *data)
+{
+    return CAN_SendData(&hcan1, hdr, data);
+}
+
+/// @brief 默认延时函数（毫秒）
+static void Motor_DefaultDelayMs(uint32_t ms)
+{
+    vTaskDelay(ms);
+}
+
+/// @brief 默认HAL实例
+static const MotorHAL_t g_DefaultMotorHAL = {
+    .can_send = Motor_DefaultCanSend,
+    .delay_ms = Motor_DefaultDelayMs,
+};
+
+/// @brief 当前使用的HAL指针（非static，供头文件内联函数使用）
+const MotorHAL_t *g_pMotorHAL = &g_DefaultMotorHAL;
+
+const MotorHAL_t *Motor_GetHAL(void)
+{
+    return g_pMotorHAL;
+}
+
+void Motor_SetHAL(const MotorHAL_t *hal)
+{
+    if (hal != NULL)
+    {
+        g_pMotorHAL = hal;
+    }
+    else
+    {
+        g_pMotorHAL = &g_DefaultMotorHAL;
+    }
+}
 
 /**********************************************************电机初始化专用函数************************************************************************/
 
@@ -61,74 +103,65 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
 /// @brief  注册电机的信息
 /// @param  无（按照已经配置的电机表注册）
 /// @return 注册是否成功
-/// @note   最后暴露的接口应该是更改电机发送数据和读取电机接收数据的接口，用户无需关心报文头等信息
-/// @todo   达妙电机的PID可以不用调节，因为本身内置PID，但是这次调节的是前馈量，是为了速度响应更快，并且不影响期望位置和速度
+/// @note   使用面向对象初始化方式，每种电机类型有专门的电机类
+/// @note   电机ID、参数、发送函数、解算函数均由电机类自动设置
+/// @example 新接口用法:
+///          RM_Motor_Create(&motor, &RM_M2006_Class, 1);  // 使用类创建电机
+///          RM_Motor_SetCascadePID(&motor, ...);          // 配置PID
 void MotorRegister(void)
 {
-    // 手动申请接受头数组，似乎这里有点多余，也可以直接static一个接收头数组
-    // malloc(sizeof(CAN_RxHeaderTypeDef) * g_CanMotorNum); // 申请g_CanMotorNum个接受头空间 g_CanMotorNum = 5
+    // ==================== RM电机注册 ====================
+    // 新接口用法示例：使用 RM_Motor_Create + 电机类
+    // RM_Motor_Create(&MotorManager.MotorList[RM_3508_GRIPPER - 1], &RM_M3508_Class, RM_3508_GRIPPER);
 
-    // 注册电机应该包含电机的ID以及电机的发送地址和接收地址、发送数据存储地方
-    // 注册RM电机
-    // 发送之后自己会memset()
+    // 夹爪传动带结构 - M3508电机
+    RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
+    RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
+                           0.06591f, 0.1f, 0.0f, 0.0001f, // 外环: P=1.05, I=0, D=0, F=0.1
+                           178.91f, 0.40f, 0.0f, 7.95f,   // 内环: P=175.91, I=0.40, D=0, F=7.95
+                           20673.0f, 0.0f, 2.0f,          // 外环: max_out, min_out, max_iout
+                           1691.0f, 0.0f, 300.0f);        // 内环: max_out, min_out, max_iout
 
-    // 夹爪传动带结构
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorID = RM_3508_GRIPPER;
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorInf.band = RM_MOTOR_BAND;
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].MotorInf.model = RmM3508;
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].SendMotorControl = RM_MotorSendControl;
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].use_cascade = 1;
-    float inner_p = 175.91f;
-    float inner_i = 0.40f;
-    float inner_d = 0.0f;
-    float inner_f = 7.95f;
-    float outer_p = 1.05f;
-    float outer_i = 0.0f;
-    float outer_d = 0.0f;
-    float outer_f = 0.1f;
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 1691.0f, 100.0f, 60.0f); // 等待换弹结构总测试
-    CASCADE_PID_Clear(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
+    // 扳机 - M2006电机
+    RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
+    RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
+                           0.0001f, 0.0f, 0.0f, 0.002f, // 外环: P=0.0001, I=0, D=0, F=0.002
+                           27.91f, 0.08f, 0.0f, 1.0f,   // 内环: P=27.91, I=0.08, D=0, F=1.0
+                           20673.0f, 0.0f, 5000.0f,     // 外环: max_out, min_out, max_iout
+                           5000.0f, 0.0f, 1000.0f);     // 内环: max_out, min_out, max_iout
 
-    // 扳机
-    MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorID = RM_2006_TRIGGER;
-    MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.band = RM_MOTOR_BAND;
-    MotorManager.MotorList[RM_2006_TRIGGER - 1].MotorInf.model = RmM2006;
-    MotorManager.MotorList[RM_2006_TRIGGER - 1].SendMotorControl = RM_MotorSendControl;
-    MotorManager.MotorList[RM_3508_GRIPPER - 1].use_cascade = 1;
-    inner_p = 27.91f;
-    inner_i = 0.08f;
-    inner_d = 0.0f;
-    inner_f = 1.0f;
-    outer_p = 0.0001f;
-    outer_i = 0.0f;
-    outer_d = 0.0f;
-    outer_f = 0.002f;
-    CASCADE_PID_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid, outer_p, outer_i, outer_d, outer_f, inner_p, inner_i, inner_d, inner_f, 20673.0f, -20673.0f, 0.0f, 5000.0f, 0.0f, 400.0f); // 等待上扳机2006电机测试
-    CASCADE_PID_Clear(&MotorManager.MotorList[RM_2006_TRIGGER - 1].cascade_pid);
+    // ==================== DM电机注册 ====================
 
-    // 注册DM电机
-    // 注意注册的DM电机发送和接收其实数据帧都不与RM电机冲突（在MIT模式、位置速度模式和PVT模式下，就完整通信帧而言）
-    MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].MotorID = DM_3510_STRENTH_LEFT - g_RM_MOTOR_NUM;
-    MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].MotorInf.band = DM_MOTOR_BAND;
-    MotorManager.MotorList[DM_3510_STRENTH_LEFT - 1].SendMotorControl = DM_MotorSendControl;
+    // 左侧蓄力电机 - J3519
+    DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1],
+                  DM_3519_STRENTH_LEFT - g_RM_MOTOR_NUM);
+    // DM_Motor_SetVelLimits(); // 速度上下限20
+    // DM_Motor_SetPosLimits(); // 位置上下限200
+    // DM_Motor_SetMITParams(); // MIT参数不知道,3519禁用MIT模式
+    // 位置速度模式（PID已经调好了，速度KP：0.5395794，速度KI：0.002，位置KP：54，位置KI：0）
 
-    MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorID = DM_3510_STRENTH_RIGHT - g_RM_MOTOR_NUM;
-    MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].MotorInf.band = DM_MOTOR_BAND;
-    MotorManager.MotorList[DM_3510_STRENTH_RIGHT - 1].SendMotorControl = DM_MotorSendControl;
+    // 右侧蓄力电机 - J3519
+    DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1],
+                  DM_3519_STRENTH_RIGHT - g_RM_MOTOR_NUM);
+    // DM_Motor_SetVelLimits(); // 速度上下限20
+    // DM_Motor_SetPosLimits(); // 位置上下限200
+    // DM_Motor_SetMITParams(); // MIT参数不知道,3519和3519禁用MIT模式
+    // 位置速度模式（PID已经调好了，速度KP：0.5395794，速度KI：0.002，位置KP：54，位置KI：0）
 
-    MotorManager.MotorList[DM_4310_YAW - 1].MotorID = DM_4310_YAW;
-    MotorManager.MotorList[DM_4310_YAW - 1].MotorInf.band = DM_MOTOR_BAND;
-    MotorManager.MotorList[DM_4310_YAW - 1].SendMotorControl = DM_MotorSendControl;
+    // Yaw轴电机 - J4310
+    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1], DM_4310_YAW);                 // 这个电机解算等待处理
+    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], 30.0f, -30.0f);       // 速度上下限+-30
+    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], 160.0f, -160.0f);     // 位置上下限+-160
+    DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4561f, 1.0f, 0.0f); // Kp->1.4591f, Kd->1.0f,但是位置不给就对了
 
+    // ==================== 完成注册 ====================
     MotorManager.registered_count = 5;
 
+    // 配置CAN报文头（已在Init函数中完成大部分，这里做最终确认）
     for (uint8_t i = 0; i < MotorManager.registered_count; i++)
     {
         CanRegisterMotorCfg(&MotorManager.MotorList[i]);
     }
-
-    // 用户需手动注册电机
-    // 结构体存储发送的报文和接收的数据
 }
 
 /**********************************************************暴露接口,下面是外部一般用于调用的函数******************************************************/
@@ -214,20 +247,18 @@ void CanFliterCfg(void)
  * 参数：hcan：处理时候的can句柄
  * 参数：FIFOmessageNum：要处理的消息数量
  * 返回值：无
+ * 优化：移除无用memset，减少中断处理时间
  ****************************************************/
 void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 {
-    static uint8_t MotorRxDataTempArray[8] = {0}; // 数据暂存
+    static uint8_t MotorRxDataTempArray[8]; // 数据暂存（无需初始化，会被覆盖）
     CAN_RxHeaderTypeDef pRxHeader;
-    uint8_t CAN_RX_DATA_COUNT = 0;
-    // bool ID_MATCHED = false;
 
     // 循环处理FIFO中的所有消息
     for (uint8_t a = 0; a < FIFOmessageNum; a++)
     {
         // 获取消息
         HAL_CAN_GetRxMessage(&hcan1, fifo_num, &pRxHeader, MotorRxDataTempArray);
-        // ID_MATCHED = false;
 
         // 遍历所有已注册的电机，查找匹配的ID
         for (uint8_t i = 0; i < MotorManager.registered_count; i++)
@@ -236,75 +267,58 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
                 (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR_3508 + MotorManager.MotorList[i].MotorID)))
             {
-                // 找到对应的RM电机，存储接收数据
-                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
-
-                // 调用RM电机数据解算函数，传递结构体中的数据指针
-                RM_MOTOR_CALCU(&MotorManager.MotorList[i]);
-
-                CAN_RX_DATA_COUNT++;
-                // ID_MATCHED = true;
-                break; // 找到匹配的电机后跳出内层循环
+                // 找到对应的RM电机，存储接收数据并解算
+                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
+                MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);
+                break;
             }
 
             // 检查是否为RM2006电机的反馈帧
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
                 (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 3)))
             {
-                // 找到对应的RM电机，存储接收数据
-                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
-
-                // 调用RM电机数据解算函数，传递结构体中的数据指针
-                RM_MOTOR_CALCU(&MotorManager.MotorList[i]);
-
-                CAN_RX_DATA_COUNT++;
-                // ID_MATCHED = true;
-                break; // 找到匹配的电机后跳出内层循环
+                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
+                MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);
+                break;
             }
 
             // 检查是否为RM6020电机的反馈帧
-            // 注意，这里不能和2006直接使用，假如6020电机ID为1，同时也有一个2006电机ID也为1就会轧钢
-            // 解决方案：将6020的ID设置到5、6、7, 并同时更改 g_RM_MOTOR_BIAS_ADDR_6020 为 0x2FE，下面的 4 改为 8
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
                 (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 8)))
             {
-                // 找到对应的RM电机，存储接收数据
-                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
-
-                // 调用RM电机数据解算函数，传递结构体中的数据指针
-                RM_MOTOR_CALCU(&MotorManager.MotorList[i]);
-
-                CAN_RX_DATA_COUNT++;
-                // ID_MATCHED = true;
-                break; // 找到匹配的电机后跳出内层循环
+                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
+                MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);
+                break;
             }
 
-            // 检查是否为DM电机的反馈帧(DM电机的反馈是几乎一样的)
+            // 检查是否为DM电机的反馈帧
             else if ((MotorManager.MotorList[i + g_RM_MOTOR_NUM].MotorInf.band == DM_MOTOR_BAND) &&
                      (pRxHeader.StdId == (g_DM_MOTOR_BIAS_ADDR_RXID + MotorManager.MotorList[i].MotorID)))
             {
-                // 找到对应的DM电机，存储接收数据
-                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, CtrlMotorLen);
-
-                // 调用DM电机数据解算函数，传递结构体中的数据指针
-                DM_MOTOR_CALCU(&MotorManager.MotorList[i]);
-
-                CAN_RX_DATA_COUNT++;
-                // ID_MATCHED = true;
-                break; // 找到匹配的电机后跳出内层循环
+                memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
+                MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);
+                break;
             }
         }
-
-        // 清空暂存数据
-        memset(MotorRxDataTempArray, 0x00, CtrlMotorLen);
+        // 删除无用的 memset - 下次循环数据会被新消息覆盖
     }
+}
 
-    // 如果没有成功处理任何消息，可能需要错误处理
-    // 这里注释掉，因为可能会收到未注册的电机的消息
-    // if (CAN_RX_DATA_COUNT == 0)
-    // {
-    //     Error_Handler();
-    // }
+/**********************************************************电机句柄获取接口******************************************************/
+
+// Motor_GetHandle() 和 Motor_GetRmSendBuffer() 已改为 CanMotor.h 中的内联函数
+
+/****************************************************
+ * 函数名： Motor_SetRegisteredCount
+ * 作用：设置已注册电机数量（仅供测试使用）
+ * 参数：count - 电机数量
+ ****************************************************/
+void Motor_SetRegisteredCount(uint8_t count)
+{
+    if (count <= g_CanMotorNum)
+    {
+        MotorManager.registered_count = count;
+    }
 }
 
 /**********************************************************电机数据读取接口******************************************************/

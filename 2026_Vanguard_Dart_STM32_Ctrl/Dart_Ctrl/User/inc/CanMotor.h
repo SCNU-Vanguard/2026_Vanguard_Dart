@@ -20,6 +20,48 @@
 // 弧度转角度宏：radian * 180/π ≈ radian * 57.29578f
 #define RadToDegree(radian) ((radian) * 57.29578f)
 
+/*============================== 前向声明 ==============================*/
+
+struct _RM_MotorClass; // RM电机类前向声明
+struct _DM_MotorClass; // DM电机类前向声明（预留扩展）
+
+/*============================== 硬件抽象层 (HAL) ==============================*/
+
+/// @brief 电机硬件抽象层结构体
+/// @note 用于解耦驱动层与具体硬件实现，便于移植和测试
+typedef struct
+{
+    /// @brief CAN数据发送函数
+    /// @param hdr CAN报文头指针
+    /// @param data 数据指针
+    /// @return 1-成功，0-失败
+    uint8_t (*can_send)(CAN_TxHeaderTypeDef *hdr, uint8_t *data);
+
+    /// @brief 延时函数（毫秒）
+    /// @param ms 延时时间（毫秒）
+    void (*delay_ms)(uint32_t ms);
+} MotorHAL_t;
+
+/// @brief 获取当前电机HAL接口指针
+/// @return HAL接口指针
+const MotorHAL_t *Motor_GetHAL(void);
+
+/// @brief 设置电机HAL接口（可选，用于测试或自定义硬件）
+/// @param hal HAL接口指针，传NULL恢复默认
+void Motor_SetHAL(const MotorHAL_t *hal);
+
+// HAL指针（供内联函数使用）
+extern const MotorHAL_t *g_pMotorHAL;
+
+/// @brief 获取当前电机HAL接口（内联版本，零开销）
+/// @return HAL接口指针
+static inline const MotorHAL_t *Motor_GetHAL_Fast(void)
+{
+    return g_pMotorHAL;
+}
+
+/*============================== 电机类型枚举 ==============================*/
+
 // 电机品牌
 typedef enum
 {
@@ -34,7 +76,7 @@ typedef enum
     RmM2006 = 1,
     RmM3508,
     RmGM6020,
-    DmS3510,
+    DmS3519,
     DmJ4310,
     CmG80
 } can_motor_model;
@@ -78,17 +120,32 @@ typedef enum
     SingleMotorTest = 1,
     RM_3508_GRIPPER = 1,
     RM_2006_TRIGGER,
-    DM_3510_STRENTH_LEFT,
-    DM_3510_STRENTH_RIGHT,
+    DM_3519_STRENTH_LEFT,
+    DM_3519_STRENTH_RIGHT,
     DM_4310_YAW
 } can_motor_cfg;
+
+// 电机配置结构体（用户可调参数）
+typedef struct
+{
+    float direction_bias;     // 换向偏移补偿(°)
+    float position_tolerance; // 位置误差容限(°)
+    uint8_t reverse;          // 是否反向: 0-正向, 1-反向
+} MotorConfig_t;
+
+// 电机参数结构体（只读，由型号决定）
+typedef struct
+{
+    float gear_ratio;    // 减速比
+    int16_t max_current; // 最大电流
+    float current_ratio; // 电流转换系数
+} MotorParams_t;
 
 // 电机结构体定义
 typedef struct _MotorTypeDef
 {
     uint8_t MotorID;
     motor_inf MotorInf;
-    uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);
     uint8_t ReceiveMotorData[8];    // 电机接收数据存储
     uint8_t SendMotorData[8];       // 电机发送数据存储
     CAN_TxHeaderTypeDef g_TxHeader; // 电机发送报文头
@@ -96,9 +153,29 @@ typedef struct _MotorTypeDef
     // 电机反馈数据解算存储（每个电机独立）
     MotorSolvedData_t motor_data; // 电机解算数据
 
+    // 电机配置和参数（面向对象扩展）
+    MotorConfig_t config; // 用户可调配置
+    MotorParams_t params; // 电机参数（只读）
+
+    // ==================== 面向对象扩展 ====================
+    // 电机类指针（指向类型定义，包含虚函数表和默认参数）
+    // 推荐使用：通过 motor_class 访问虚函数，如 motor->motor_class.rm_motor_class->calculate(motor)
+    union
+    {
+        const struct _RM_MotorClass *rm_motor_class; // RM电机类指针
+        const struct _DM_MotorClass *dm_motor_class; // DM电机类指针
+    } motor_class;
+
+    // ==================== 弃用的函数指针 ====================
+    // 以下函数指针保留用于向后兼容，新代码请使用 motor_class 虚函数表
+    // @deprecated 使用 RM_Motor_SendControl() 或 DM_Motor_SendControl() 代替
+    uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);
+    // @deprecated 使用 RM_Motor_Calculate() 或 DM_Motor_Calculate() 代替
+    void (*calculate)(struct _MotorTypeDef *self);
+
     // PID控制器（可选择单环或串级）
-    PID_t speed_pid;           // 速度环PID（单环控制时使用）
-    CASCADE_PID_t cascade_pid; // 串级PID（位置-速度双环控制时使用）
+    PID_t inner_pid;           // 内环PID（单环控制时使用）
+    CASCADE_PID_t cascade_pid; // 串级PID
     uint8_t use_cascade;       // 是否使用串级控制：0-单环，1-串级
 } MotorTypeDef;
 
@@ -146,6 +223,35 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
 /// @brief 获取电机管理器指针
 /// @return 电机管理器结构体
 MotorManager_t GetPtrMotorManager(void);
+
+/// @brief 获取电机句柄（内联版本，零开销）
+/// @param motor_id 电机ID（can_motor_cfg枚举值）
+/// @return 电机结构体指针，ID无效时返回NULL
+static inline MotorTypeDef *Motor_GetHandle(can_motor_cfg motor_id)
+{
+    if (motor_id < 1 || motor_id > g_CanMotorNum)
+        return NULL;
+    return &MotorManager.MotorList[motor_id - 1];
+}
+
+/// @brief 获取电机句柄（无检查版本，最高性能）
+/// @param motor_id 电机ID（调用者需确保有效性）
+/// @return 电机结构体指针
+static inline MotorTypeDef *Motor_GetHandleFast(can_motor_cfg motor_id)
+{
+    return &MotorManager.MotorList[motor_id - 1];
+}
+
+/// @brief 获取RM电机发送缓冲区（内联版本）
+/// @return RM电机发送数据数组指针
+static inline uint8_t *Motor_GetRmSendBuffer(void)
+{
+    return MotorManager.RM_MOTOR_DATA_ARRAY;
+}
+
+/// @brief 设置已注册电机数量（仅供测试使用）
+/// @param count 电机数量
+void Motor_SetRegisteredCount(uint8_t count);
 
 /*********************************************************电机数据读取接口***************************************************************/
 

@@ -65,12 +65,12 @@ void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
     if (cascade_pid == NULL)
         return;
 
-    // 初始化外环（位置环，通常使用增量式）
-    PID_Init(&cascade_pid->outer, PID_DELTA, outer_kp, outer_ki, outer_kd, outer_kf,
+    // 初始化外环（位置环，使用位置式PID，D项更稳定）
+    PID_Init(&cascade_pid->outer, PID_POSITION, outer_kp, outer_ki, outer_kd, outer_kf,
              outer_max_out, outer_min_out, outer_max_iout);
 
-    // 初始化内环（速度环，通常使用增量式）
-    PID_Init(&cascade_pid->inner, PID_DELTA, inner_kp, inner_ki, inner_kd, inner_kf,
+    // 初始化内环（速度环，使用位置式PID，避免增量式P项对误差突变的过激响应）
+    PID_Init(&cascade_pid->inner, PID_POSITION, inner_kp, inner_ki, inner_kd, inner_kf,
              inner_max_out, inner_min_out, inner_max_iout);
 }
 

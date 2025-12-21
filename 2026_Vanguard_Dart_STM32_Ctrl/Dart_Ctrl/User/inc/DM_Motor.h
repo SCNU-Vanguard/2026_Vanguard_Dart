@@ -7,84 +7,68 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*-------------------------DM电机模式以及模式下的偏移-----------------------------------------*/
-#define DM_MIT_MODE 1U
-#define DM_LOCATION_SPEED_MODE 0U
-#define DM_SPEED_MODE 0U
-#define DM_PVT_MODE 0U
+/*============================== DM电机模式定义 ==============================*/
 
 #define DM_TestUse 0U
 
-// 如果你需要使用其他模式只能在这里手动更改数值，现在这个定义是只可以使用MIT模式
-#if DM_MIT_MODE
-#define g_DM_MOTOR_BIAS_ADDR_TXID 0x000 // 达妙电机默认使用MIT模式，具体是MIT模式的哪个细分模式还等待敲定
-#define g_DM_MOTOR_BIAS_ADDR_RXID 0x010
-typedef enum
-{
-    DM_POS_BIT = 16,    // 保留两位小数
-    DM_VEL_BIT = 12,    // 保留两位小数
-    DM_TORQUE_BIT = 12, // 保留两位小数
-    DM_KP_BIT = 12,     // 直接整数就可以了，默认的话
-    DM_KD_BIT = 12,     // 默认下是需要两位小数
-} DM_DATA_BIT;
-#endif
+/*============================== DM电机工作模式枚举 ==============================*/
 
-#if DM_LOCATION_SPEED_MODE
-#define g_DM_MOTOR_BIAS_ADDR_TXID 0x100 // 达妙电机使用位置速度模式 note:This mode is equaling to Cascade PID but don't have current limitation
-#define g_DM_MOTOR_BIAS_ADDR_RXID 0x020
 typedef enum
 {
-    DM_POS_BIT = 32,
-    DM_VEL_BIT = 32,
-} DM_DATA_BIT;
-#endif
+    DM_MIT = 1,        // MIT模式
+    DM_LOCATION_SPEED, // 位置速度模式
+    DM_SPEED,          // 速度模式
+    DM_PVT             // PVT模式
+} DM_WorkMode;
 
-#if DM_SPEED_MODE
-#define g_DM_MOTOR_BIAS_ADDR_TXID 0x200 // 达妙电机使用速度模式 note:This mode is equaling to PID but don't have current limitation
-#define g_DM_MOTOR_BIAS_ADDR_RXID 0x030
-typedef enum
-{
-    DM_VEL_BIT = 32
-} DM_DATA_BIT;
-#endif
+/*============================== DM电机CAN地址定义（按模式） ==============================*/
 
-#if DM_PVT_MODE
-#define g_DM_MOTOR_BIAS_ADDR_TXID 0x300 // 达妙电机使用PVT模式 note:This mode is equaling to Cascade PID but have current limitation
-#define g_DM_MOTOR_BIAS_ADDR_RXID 0x040
-typedef enum
-{
-    DM_POS_BIT = 32,
-    DM_VEL_BIT = 16,
-    DM_CURRENT_BIT = 16,
-} DM_DATA_BIT;
-#endif
+// MIT模式地址
+#define DM_MIT_TX_BIAS 0x000
+#define DM_MIT_RX_BIAS 0x010
+
+// 位置速度模式地址
+#define DM_LS_TX_BIAS 0x100
+#define DM_LS_RX_BIAS 0x020
+
+// 速度模式地址
+#define DM_SPD_TX_BIAS 0x200
+#define DM_SPD_RX_BIAS 0x030
+
+// PVT模式地址
+#define DM_PVT_TX_BIAS 0x300
+#define DM_PVT_RX_BIAS 0x040
+
+// 默认使用MIT模式地址（兼容旧代码）
+#define g_DM_MOTOR_BIAS_ADDR_TXID DM_MIT_TX_BIAS
+#define g_DM_MOTOR_BIAS_ADDR_RXID DM_MIT_RX_BIAS
+
+/*============================== DM电机数据位数定义（所有模式） ==============================*/
+
+// MIT模式数据位数（使用float_to_uint线性映射）
+#define DM_MIT_POS_BIT 16
+#define DM_MIT_VEL_BIT 12
+#define DM_MIT_TORQUE_BIT 12
+#define DM_MIT_KP_BIT 12
+#define DM_MIT_KD_BIT 12
+
+// 位置速度模式：直接发送float原始字节（IEEE 754格式），以下定义仅供参考
+#define DM_LS_POS_BIT 32
+#define DM_LS_VEL_BIT 32
+
+// 速度模式：直接发送float原始字节（IEEE 754格式），以下定义仅供参考
+#define DM_SPD_VEL_BIT 32
+
+// PVT模式数据位数（待确认）
+#define DM_PVT_POS_BIT 32
+#define DM_PVT_VEL_BIT 16
+#define DM_PVT_CURRENT_BIT 16
 
 #define g_DM_MOTOR_NUM 3
 
-// 限幅,这里给的是电机默认的数值
-#define g_DM_UPPER_LIMITATION_KP 500.0 // hex:1F4
-#define g_DM_LOWER_LIMITATION_KP 0.0
-#define g_DM_UPPER_LIMITATION_KD 5.0 // hex:5.00
-#define g_DM_LOWER_LIMITATION_KD 0.0
-#define g_DM_UPPER_LIMITATION_POS 12.5 // hex:C.80
-#define g_DM_LOWER_LIMITATION_POS -12.5
-#define g_DM_UPPER_LIMITATION_TORQUE 10.0 // A.00
-#define g_DM_LOWER_LIMITATION_TORQUE -10.0
-#define g_DM_UPPER_LIMITATION_VEL 200.0 // C8.00
-#define g_DM_LOWER_LIMITATION_VEL -200.0
+/*============================== DM电机参数常量 ==============================*/
 
-// 差值,这里给的是电机默认的数值,这里的DIFFERENCE = UPPER_LIMITAION - LOWERLIMITATION
-#define g_DM_KP_DIFFERENCE 500
-#define g_DM_KD_DIFFERENCE 0.00
-#define g_DM_VEL_DIFFERENCE 400.00
-#define g_DM_POS_DIFFERENCE 25.00
-#define g_DM_TORQUE_DIFFERENCE 20.00
-
-#define g_DM_KP 0.00
-#define g_DM_KD 0.00
-#define g_DM_Compensating_Torque 0.20 // 达妙电机前馈力矩,这里只是一个固定的数,具体数值得上机再测
-
-// 电机的KP、KD和Tff(前馈力矩)应该都是一个固定的量
+// 数据类型枚举
 typedef enum
 {
     DM_POS = 0,
@@ -94,12 +78,241 @@ typedef enum
     DM_TORQUE,
 } DM_DATA;
 
-/*********************************************************函数声明***************************************************************/
+/*============================== 前向声明 ==============================*/
+
+struct _MotorTypeDef; // 前向声明电机结构体
+
+/*============================== DM电机类定义（面向对象） ==============================*/
+
+/// @brief DM电机类结构体 - 类似C++中的类，包含静态参数和虚函数表
+typedef struct _DM_MotorClass
+{
+    // ==================== 电机类型标识 ====================
+    const char *name; // 电机类型名称 (如 "J3519", "J4310")
+    uint8_t model;    // 电机型号枚举值 (can_motor_model)
+
+    // ==================== 限幅参数（只读，由型号决定）====================
+    float kp_max;     // KP上限
+    float kp_min;     // KP下限
+    float kd_max;     // KD上限
+    float kd_min;     // KD下限
+    float pos_max;    // 位置上限(rad)
+    float pos_min;    // 位置下限(rad)
+    float vel_max;    // 速度上限(rad/s)
+    float vel_min;    // 速度下限(rad/s)
+    float torque_max; // 力矩上限(Nm)
+    float torque_min; // 力矩下限(Nm)
+
+    // ==================== 默认控制参数 ====================
+    float default_kp;        // 默认KP
+    float default_kd;        // 默认KD
+    float default_torque_ff; // 默认前馈力矩(Nm)
+
+    // ==================== 虚函数表 ====================
+    /// @brief 初始化电机实例
+    void (*init)(struct _MotorTypeDef *self, uint8_t id);
+
+    /// @brief 解算电机反馈数据
+    void (*calculate)(struct _MotorTypeDef *self);
+
+    /// @brief 发送电机控制数据
+    uint8_t (*send_control)(struct _MotorTypeDef *self);
+
+} DM_MotorClass_t;
+
+/*============================== 预定义的电机类实例（类似C++静态类） ==============================*/
+
+extern const DM_MotorClass_t DM_J3519_Class; // J3519电机类
+extern const DM_MotorClass_t DM_J4310_Class; // J4310电机类
+
+/*============================== DM电机配置结构 ==============================*/
+
+// DM电机配置（用户可调）
+typedef struct
+{
+    float kp;        // KP
+    float kd;        // KD
+    float torque_ff; // 前馈力矩(Nm)
+    uint8_t reverse; // 是否反向: 0-正向, 1-反向
+
+    // 位置和速度限幅参数（可在初始化后修改）
+    float pos_max; // 位置上限(rad)
+    float pos_min; // 位置下限(rad)
+    float vel_max; // 速度上限(rad/s)
+    float vel_min; // 速度下限(rad/s)
+} DM_MotorConfig_t;
+
+// DM电机配置数组（供内联函数使用）
+extern DM_MotorConfig_t g_DM_Configs[4];
+
+/// @brief 获取DM电机配置（内联版本，零开销，无边界检查）
+/// @param id 电机ID (1-4)，调用者需确保有效性
+/// @return 配置指针
+static inline DM_MotorConfig_t *DM_Motor_GetConfigFast(uint8_t id)
+{
+    return &g_DM_Configs[id - 1];
+}
+
+/*============================== 辅助函数 ==============================*/
+
+/// @brief 获取KP差值
+/// @param motor_class 电机类指针
+/// @return KP差值 = kp_max - kp_min
+static inline float DM_GetKpDifference(const DM_MotorClass_t *motor_class)
+{
+    return motor_class->kp_max - motor_class->kp_min;
+}
+
+/// @brief 获取KD差值
+/// @param motor_class 电机类指针
+/// @return KD差值 = kd_max - kd_min
+static inline float DM_GetKdDifference(const DM_MotorClass_t *motor_class)
+{
+    return motor_class->kd_max - motor_class->kd_min;
+}
+
+/// @brief 获取位置差值
+/// @param motor_class 电机类指针
+/// @return 位置差值 = pos_max - pos_min
+static inline float DM_GetPosDifference(const DM_MotorClass_t *motor_class)
+{
+    return motor_class->pos_max - motor_class->pos_min;
+}
+
+/// @brief 获取速度差值
+/// @param motor_class 电机类指针
+/// @return 速度差值 = vel_max - vel_min
+static inline float DM_GetVelDifference(const DM_MotorClass_t *motor_class)
+{
+    return motor_class->vel_max - motor_class->vel_min;
+}
+
+/// @brief 获取力矩差值
+/// @param motor_class 电机类指针
+/// @return 力矩差值 = torque_max - torque_min
+static inline float DM_GetTorqueDifference(const DM_MotorClass_t *motor_class)
+{
+    return motor_class->torque_max - motor_class->torque_min;
+}
+
+/*============================== 面向对象接口 ==============================*/
+
+/// @brief 使用指定的电机类创建电机实例
+/// @param motor 电机结构体指针
+/// @param motor_class 电机类指针 (如 &DM_J3519_Class, &DM_J4310_Class)
+/// @param id 电机ID (1-based)
+/// @example DM_Motor_Create(&motor, &DM_J4310_Class, 1);
+void DM_Motor_Create(MotorTypeDef *motor, const DM_MotorClass_t *motor_class, uint8_t id);
+
+/// @brief 调用电机的解算函数（通过类虚函数表）
+/// @param motor 电机结构体指针
+/// @note 等同于 motor->motor_class->calculate(motor)
+void DM_Motor_Calculate(MotorTypeDef *motor);
+
+/// @brief 调用电机的发送控制函数（通过类虚函数表）
+/// @param motor 电机结构体指针
+/// @return 发送成功返回1，失败返回0
+uint8_t DM_Motor_SendControl(MotorTypeDef *motor);
+
+/// @brief 获取电机所属的类指针
+/// @param motor 电机结构体指针
+/// @return 电机类指针，失败返回NULL
+const DM_MotorClass_t *DM_Motor_GetClass(MotorTypeDef *motor);
+
+/*============================== 电机初始化函数（兼容旧接口） ==============================*/
+
+/// @brief 初始化DM J3519电机实例
+/// @param motor 电机结构体指针
+/// @param id 电机ID (1-based)
+void DM_J3519_Init(MotorTypeDef *motor, uint8_t id);
+
+/// @brief 初始化DM J4310电机实例
+/// @param motor 电机结构体指针
+/// @param id 电机ID (1-based)
+void DM_J4310_Init(MotorTypeDef *motor, uint8_t id);
+
+/*============================== 电机配置函数 ==============================*/
+
+/// @brief 设置DM电机配置
+/// @param motor 电机结构体指针
+/// @param config 配置结构体指针
+void DM_Motor_SetConfig(MotorTypeDef *motor, const DM_MotorConfig_t *config);
+
+/// @brief 获取DM电机配置指针
+/// @param motor 电机结构体指针
+/// @return 配置指针，失败返回NULL
+DM_MotorConfig_t *DM_Motor_GetConfig(MotorTypeDef *motor);
+
+/// @brief 设置DM电机KP参数
+/// @param motor 电机结构体指针
+/// @param kp KP值 (范围由电机类决定，通常0~500)
+void DM_Motor_SetKp(MotorTypeDef *motor, float kp);
+
+/// @brief 设置DM电机KD参数
+/// @param motor 电机结构体指针
+/// @param kd KD值 (范围由电机类决定，通常0~5)
+void DM_Motor_SetKd(MotorTypeDef *motor, float kd);
+
+/// @brief 设置DM电机前馈力矩
+/// @param motor 电机结构体指针
+/// @param torque_ff 前馈力矩值(Nm) (范围由电机类决定)
+void DM_Motor_SetTorqueFF(MotorTypeDef *motor, float torque_ff);
+
+/// @brief 设置DM电机反向标志
+/// @param motor 电机结构体指针
+/// @param reverse 是否反向: 0-正向, 1-反向
+void DM_Motor_SetReverse(MotorTypeDef *motor, uint8_t reverse);
+
+/// @brief 设置DM电机位置限幅参数
+/// @param motor 电机结构体指针
+/// @param pos_min 位置下限(rad)
+/// @param pos_max 位置上限(rad)
+void DM_Motor_SetPosLimits(MotorTypeDef *motor, float pos_min, float pos_max);
+
+/// @brief 设置DM电机速度限幅参数
+/// @param motor 电机结构体指针
+/// @param vel_min 速度下限(rad/s)
+/// @param vel_max 速度上限(rad/s)
+void DM_Motor_SetVelLimits(MotorTypeDef *motor, float vel_min, float vel_max);
+
+/// @brief 一次性设置DM电机MIT控制参数
+/// @param motor 电机结构体指针
+/// @param kp KP值
+/// @param kd KD值
+/// @param torque_ff 前馈力矩(Nm)
+void DM_Motor_SetMITParams(MotorTypeDef *motor, float kp, float kd, float torque_ff);
+
+/// @brief 获取DM电机当前KP值
+/// @param motor 电机结构体指针
+/// @return KP值，失败返回0
+float DM_Motor_GetKp(MotorTypeDef *motor);
+
+/// @brief 获取DM电机当前KD值
+/// @param motor 电机结构体指针
+/// @return KD值，失败返回0
+float DM_Motor_GetKd(MotorTypeDef *motor);
+
+/// @brief 获取DM电机当前前馈力矩值
+/// @param motor 电机结构体指针
+/// @return 前馈力矩值(Nm)，失败返回0
+float DM_Motor_GetTorqueFF(MotorTypeDef *motor);
+
+/*============================== 原有函数声明 ==============================*/
 
 /// @brief 用于失能达妙电机
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
 uint8_t DM_MotorDisable(can_motor_cfg motor_cfg);
+
+/// @brief 用于使能达妙电机
+/// @param motor 电机结构体指针
+/// @return 1：发送成功，0：发送失败
+uint8_t DM_Motor_Enable(MotorTypeDef *motor);
+
+/// @brief 用于失能达妙电机
+/// @param motor 电机结构体指针
+/// @return 1：发送成功，0：发送失败
+uint8_t DM_Motor_Disable(MotorTypeDef *motor);
 
 /// @brief 用于控制达妙电机
 /// @param st 要控制的达妙电机的结构体
@@ -124,13 +337,18 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor);
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param TargetPos 目标位置
 /// @param TargetVel 目标速度
-/// @note 不知道是不是默认保留一位小数的，可能是范围导致？
-void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel);
+/// @param workmode  达妙电机的工作模式
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode);
+
+/// @brief DM电机MIT模式控制
+/// @param motor 电机结构体指针
+/// @param pos 目标位置(rad)
+/// @param vel 目标速度(rad/s)
+void DM_Motor_MIT_Ctrl(MotorTypeDef *motor, float pos, float vel);
 
 /// @brief DM电机输出
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param target 目标值
-/// @todo 增加PID控制
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
 /// @brief 测试单个DM电机注册函数

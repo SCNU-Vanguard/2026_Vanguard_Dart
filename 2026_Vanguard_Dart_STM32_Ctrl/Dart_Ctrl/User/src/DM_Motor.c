@@ -1,79 +1,114 @@
 /*****************************************************
  * DM电机（达妙电机）控制模块
- * 适配H35系列电机（DM3510、DM4310等）
+ * 适配H35系列电机（DM3519、DM4310等）
  * --------------------------------------------------
  * DM电机说明：
  * 支持MIT模式、位置速度模式、速度模式、PVT模式
  * 目前主要使用MIT模式进行控制
- * todo:当前文件存在阻塞延时函数，替换成定时器中断解决延时或者vTaskDelay，现在先使用vTaskDelay
- *      防止达妙电机反馈丢帧或多帧问题：1.HAL_GetTick对速度积分得到位置（出现丢帧直接按照上次数据的Time处理）2.多帧直接根据 *                                   当前速度进行计算（一般都是一收一发），使用HAL_GetTick记录时间进行积分
+ * --------------------------------------------------
+ * 面向对象设计说明：
+ * 使用 DM_MotorClass_t 作为电机"类"，包含：
+ * - 电机默认参数（限幅参数、默认KP/KD/力矩）
+ * - 虚函数表（初始化、解算、发送控制等）
+ * 预定义 DM_J3519_Class、DM_J4310_Class 两个类实例
  ****************************************************/
 
 #include "DM_Motor.h"
-#include "RM_Motor.h"
 #include "CanMotor.h"
 #include "bsp_dwt.h"
 #include <stdbool.h>
-#include "usart.h"
-#include "FreeRTOS.h"
-#include "task.h"
 
-// 外部引用电机管理器
+// 直接访问电机管理器（减少函数调用开销）
 extern MotorManager_t MotorManager;
 
-#define CtrlMotorLen 8 // 电机控制报文长度默认给8
-#define SingleMotorTest 1
-#define DM_SPEED_FILTER_COEF 0.10f // 速度滤波系数（0~1，越大越平滑）
+// 注意：不再直接调用硬件函数，改用 Motor_GetHAL() 接口
 
-// DM电机控制标志和数据
-const uint8_t DM_MOTOR_ENABLE[8] = {0xFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFC};  // DM电机使能控制数据帧
-const uint8_t DM_MOTOR_DISABLE[8] = {0xFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFF, 0XFD}; // DM电机失能控制数据值
-static int16_t KP_RESULT = 0;
-static int16_t KD_RESULT = 0;
-static int16_t Torque_ff = 0;
-static bool DM_ENABLE_ARR[4] = {false}; // 扩展为4个DM电机
+#define CtrlMotorLen 8
+#define DM_SPEED_FILTER_COEF 0.0f // 达妙电机本身很准确
 
-/************************************************************************
- * @brief:       uint_to_float: 无符号整数转换为浮点数函数（通用版）
- * @param:       x_int: 待转换的无符号整数
- * @param:       x_min: 范围最小值
- * @param:       x_max: 范围最大值
- * @param:       bits:  位数
- * @retval:      浮点数结果
- ************************************************************************/
+// DM电机控制帧
+static const uint8_t DM_MOTOR_ENABLE[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
+static const uint8_t DM_MOTOR_DISABLE[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD};
+
+// DM电机使能状态数组
+static bool DM_ENABLE_ARR[g_DM_MOTOR_NUM] = {false};
+
+// DM电机配置存储（非static，供头文件内联函数使用）
+DM_MotorConfig_t g_DM_Configs[4] = {0};
+
+/*============================== 静态函数声明（私有方法） ==============================*/
+
+// J3519专用函数
+static void DM_J3519_InitInternal(MotorTypeDef *motor, uint8_t id);
+static void DM_J3519_CalculateInternal(MotorTypeDef *motor);
+
+// J4310专用函数
+static void DM_J4310_InitInternal(MotorTypeDef *motor, uint8_t id);
+static void DM_J4310_CalculateInternal(MotorTypeDef *motor);
+
+// 通用发送控制
+static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *motor);
+
+/*============================== 电机类静态实例定义 ==============================*/
+
+/// @brief J3519电机类
+const DM_MotorClass_t DM_J3519_Class = {
+    .name = "J3519",
+    .model = DmS3519,
+    // 限幅参数
+    .kp_max = 500.0f,
+    .kp_min = 0.0f,
+    .kd_max = 5.0f,
+    .kd_min = 0.0f,
+    .pos_max = 12.5f,
+    .pos_min = -12.5f,
+    .vel_max = 200.0f,
+    .vel_min = -200.0f,
+    .torque_max = 10.0f,
+    .torque_min = -10.0f,
+    // 默认控制参数
+    .default_kp = 0.0f,
+    .default_kd = 0.0f,
+    .default_torque_ff = 0.2f,
+    // 虚函数表
+    .init = DM_J3519_InitInternal,
+    .calculate = DM_J3519_CalculateInternal,
+    .send_control = DM_Motor_SendControlInternal,
+};
+
+/// @brief J4310电机类
+const DM_MotorClass_t DM_J4310_Class = {
+    .name = "J4310",
+    .model = DmJ4310,
+    // 限幅参数（根据J4310-2EC手册）
+    .kp_max = 500.0f,
+    .kp_min = 0.0f,
+    .kd_max = 5.0f,
+    .kd_min = 0.0f,
+    .pos_max = 12.5f,
+    .pos_min = -12.5f,
+    .vel_max = 200.0f,
+    .vel_min = -200.0f,
+    .torque_max = 10.0f,
+    .torque_min = -10.0f,
+    // 默认控制参数
+    .default_kp = 0.0f,
+    .default_kd = 0.0f,
+    .default_torque_ff = 0.2f,
+    // 虚函数表
+    .init = DM_J4310_InitInternal,
+    .calculate = DM_J4310_CalculateInternal,
+    .send_control = DM_Motor_SendControlInternal,
+};
+
+/*============================== 数据转换函数 ==============================*/
+
 static inline float uint_to_float_generic(int x_int, float x_min, float x_max, int bits)
 {
     float span = x_max - x_min;
     return ((float)x_int) * span / ((float)((1 << bits) - 1)) + x_min;
 }
 
-static float uint_to_float(float x_int, DM_DATA DataMode)
-{
-    switch (DataMode)
-    {
-    case DM_POS:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, DM_POS_BIT);
-    case DM_VEL:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, DM_VEL_BIT);
-    case DM_KD:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KD, g_DM_UPPER_LIMITATION_KD, DM_KD_BIT);
-    case DM_KP:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_KP, g_DM_UPPER_LIMITATION_KP, DM_KP_BIT);
-    case DM_TORQUE:
-        return uint_to_float_generic((int)x_int, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, DM_TORQUE_BIT);
-    default:
-        return 0.0f;
-    }
-}
-
-/************************************************************************
- * @brief:       float_to_uint: 浮点数转换为无符号整数函数（通用版）
- * @param:       x_float: 待转换的浮点数
- * @param:       x_min: 范围最小值
- * @param:       x_max: 范围最大值
- * @param:       bits:  位数
- * @retval:      无符号整数结果
- ************************************************************************/
 static inline int float_to_uint_generic(float x_float, float x_min, float x_max, int bits)
 {
     float span = x_max - x_min;
@@ -84,173 +119,646 @@ static inline int float_to_uint_generic(float x_float, float x_min, float x_max,
     return (int)((x_float - x_min) * ((float)((1 << bits) - 1)) / span);
 }
 
-static int float_to_uint(float x_float, DM_DATA DataMode)
+/*============================== 获取数据位数辅助函数 ==============================*/
+
+/// @brief 根据工作模式和数据类型获取对应的位数
+static inline int DM_GetDataBits(DM_WorkMode mode, DM_DATA data_type)
 {
+    switch (mode)
+    {
+    case DM_MIT:
+        switch (data_type)
+        {
+        case DM_POS:
+            return DM_MIT_POS_BIT;
+        case DM_VEL:
+            return DM_MIT_VEL_BIT;
+        case DM_KP:
+            return DM_MIT_KP_BIT;
+        case DM_KD:
+            return DM_MIT_KD_BIT;
+        case DM_TORQUE:
+            return DM_MIT_TORQUE_BIT;
+        default:
+            return 16;
+        }
+    case DM_LOCATION_SPEED:
+        switch (data_type)
+        {
+        case DM_POS:
+            return DM_LS_POS_BIT;
+        case DM_VEL:
+            return DM_LS_VEL_BIT;
+        default:
+            return 32;
+        }
+    case DM_SPEED:
+        switch (data_type)
+        {
+        case DM_VEL:
+            return DM_SPD_VEL_BIT;
+        default:
+            return 32;
+        }
+    case DM_PVT:
+        switch (data_type)
+        {
+        case DM_POS:
+            return DM_PVT_POS_BIT;
+        case DM_VEL:
+            return DM_PVT_VEL_BIT;
+        case DM_TORQUE:
+            return DM_PVT_CURRENT_BIT; // PVT模式使用电流代替力矩
+        default:
+            return 16;
+        }
+    default:
+        return 16;
+    }
+}
+
+/*============================== 多模式数据转换函数 ==============================*/
+
+/// @brief 使用电机配置参数进行uint到float转换（支持多种工作模式）
+/// @param x_int 输入的整数值
+/// @param DataMode 数据类型（位置/速度/KP/KD/力矩）
+/// @param mode 工作模式（MIT/位置速度/速度/PVT）
+/// @param cfg 电机配置参数（位置和速度限幅）
+/// @param cls 电机类参数（KP/KD/力矩限幅）
+static float uint_to_float_config(float x_int, DM_DATA DataMode, DM_WorkMode mode,
+                                  const DM_MotorConfig_t *cfg, const DM_MotorClass_t *cls)
+{
+    if (cfg == NULL || cls == NULL)
+        return 0.0f;
+
+    int bits = DM_GetDataBits(mode, DataMode);
+
     switch (DataMode)
     {
     case DM_POS:
-        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, DM_POS_BIT);
+        return uint_to_float_generic((int)x_int, cfg->pos_min, cfg->pos_max, bits);
     case DM_VEL:
-        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, DM_VEL_BIT);
+        return uint_to_float_generic((int)x_int, cfg->vel_min, cfg->vel_max, bits);
     case DM_KD:
-        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_KD, g_DM_UPPER_LIMITATION_KD, DM_KD_BIT);
+        return uint_to_float_generic((int)x_int, cls->kd_min, cls->kd_max, bits);
     case DM_KP:
-        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_KP, g_DM_UPPER_LIMITATION_KP, DM_KP_BIT);
+        return uint_to_float_generic((int)x_int, cls->kp_min, cls->kp_max, bits);
     case DM_TORQUE:
-        return float_to_uint_generic(x_float, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, DM_TORQUE_BIT);
+        return uint_to_float_generic((int)x_int, cls->torque_min, cls->torque_max, bits);
+    default:
+        return 0.0f;
+    }
+}
+
+/// @brief 使用电机配置参数进行float到uint转换（支持多种工作模式）
+/// @param x_float 输入的浮点值
+/// @param DataMode 数据类型（位置/速度/KP/KD/力矩）
+/// @param mode 工作模式（MIT/位置速度/速度/PVT）
+/// @param cfg 电机配置参数（位置和速度限幅）
+/// @param cls 电机类参数（KP/KD/力矩限幅）
+static int float_to_uint_config(float x_float, DM_DATA DataMode, DM_WorkMode mode,
+                                const DM_MotorConfig_t *cfg, const DM_MotorClass_t *cls)
+{
+    if (cfg == NULL || cls == NULL)
+        return 0;
+
+    int bits = DM_GetDataBits(mode, DataMode);
+
+    switch (DataMode)
+    {
+    case DM_POS:
+        return float_to_uint_generic(x_float, cfg->pos_min, cfg->pos_max, bits);
+    case DM_VEL:
+        return float_to_uint_generic(x_float, cfg->vel_min, cfg->vel_max, bits);
+    case DM_KD:
+        return float_to_uint_generic(x_float, cls->kd_min, cls->kd_max, bits);
+    case DM_KP:
+        return float_to_uint_generic(x_float, cls->kp_min, cls->kp_max, bits);
+    case DM_TORQUE:
+        return float_to_uint_generic(x_float, cls->torque_min, cls->torque_max, bits);
     default:
         return 0;
     }
 }
 
-/**********************************************************发送电机数据专用函数**********************************************************************/
+/*============================== 面向对象接口实现 ==============================*/
 
-/// @brief 用于失能达妙电机
-/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-/// @return 1：发送成功，0：发送失败
+/// @brief 使用指定的电机类创建电机实例
+void DM_Motor_Create(MotorTypeDef *motor, const DM_MotorClass_t *motor_class, uint8_t id)
+{
+    if (motor == NULL || motor_class == NULL)
+        return;
+    if (id < 1 || id > 4)
+        return;
+
+    // 关联电机类
+    motor->motor_class.dm_motor_class = motor_class;
+
+    // 调用类的初始化函数
+    if (motor_class->init != NULL)
+    {
+        motor_class->init(motor, id);
+    }
+}
+
+/// @brief 调用电机的解算函数
+void DM_Motor_Calculate(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return;
+
+    // 优先使用类的虚函数表
+    if (motor->motor_class.dm_motor_class != NULL && motor->motor_class.dm_motor_class->calculate != NULL)
+    {
+        motor->motor_class.dm_motor_class->calculate(motor);
+        return;
+    }
+
+    // // 兼容旧接口：使用直接绑定的函数指针
+    // if (motor->calculate != NULL)
+    // {
+    //     motor->calculate(motor);
+    // }
+}
+
+/// @brief 调用电机的发送控制函数
+uint8_t DM_Motor_SendControl(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return 0;
+
+    // 优先使用类的虚函数表
+    if (motor->motor_class.dm_motor_class != NULL && motor->motor_class.dm_motor_class->send_control != NULL)
+    {
+        return motor->motor_class.dm_motor_class->send_control(motor);
+    }
+
+    // 兼容旧接口
+    if (motor->SendMotorControl != NULL)
+    {
+        return motor->SendMotorControl(motor);
+    }
+
+    return 0;
+}
+
+/// @brief 获取电机所属的类指针
+const DM_MotorClass_t *DM_Motor_GetClass(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return NULL;
+    if (motor->MotorInf.band != DM_MOTOR_BAND)
+        return NULL;
+    return motor->motor_class.dm_motor_class;
+}
+
+/*============================== 电机初始化函数 ==============================*/
+
+/// @brief 初始化DM电机基础属性（使用电机类）
+static void DM_Motor_InitWithClass(MotorTypeDef *motor, uint8_t id,
+                                   const DM_MotorClass_t *motor_class)
+{
+    memset(motor, 0, sizeof(MotorTypeDef));
+
+    // 关联电机类（推荐通过motor_class访问虚函数）
+    motor->motor_class.dm_motor_class = motor_class;
+
+    // 基本属性
+    motor->MotorID = id;
+    motor->MotorInf.band = DM_MOTOR_BAND;
+    motor->MotorInf.model = motor_class->model;
+
+    // 默认配置
+    motor->config.direction_bias = 0.0f;
+    motor->config.position_tolerance = 50.0f;
+    motor->config.reverse = 0;
+
+    // 绑定函数指针（已弃用，保留用于向后兼容，新代码请使用motor_class虚函数表）
+    motor->SendMotorControl = DM_Motor_SendControlInternal;
+    motor->calculate = motor_class->calculate;
+
+    // CAN报文头
+    motor->g_TxHeader.StdId = g_DM_MOTOR_BIAS_ADDR_TXID + id;
+    motor->g_TxHeader.IDE = CAN_ID_STD;
+    motor->g_TxHeader.RTR = CAN_RTR_DATA;
+    motor->g_TxHeader.DLC = CtrlMotorLen;
+
+    // 初始化DM特有配置（使用类的默认参数）
+    if (id > 0 && id <= 4)
+    {
+        g_DM_Configs[id - 1].kp = motor_class->default_kp;
+        g_DM_Configs[id - 1].kd = motor_class->default_kd;
+        g_DM_Configs[id - 1].torque_ff = motor_class->default_torque_ff;
+        g_DM_Configs[id - 1].reverse = 0;
+
+        // 从类的默认值初始化位置和速度限幅参数
+        g_DM_Configs[id - 1].pos_max = motor_class->pos_max;
+        g_DM_Configs[id - 1].pos_min = motor_class->pos_min;
+        g_DM_Configs[id - 1].vel_max = motor_class->vel_max;
+        g_DM_Configs[id - 1].vel_min = motor_class->vel_min;
+    }
+}
+
+static void DM_J3519_InitInternal(MotorTypeDef *motor, uint8_t id)
+{
+    DM_Motor_InitWithClass(motor, id, &DM_J3519_Class);
+}
+
+static void DM_J4310_InitInternal(MotorTypeDef *motor, uint8_t id)
+{
+    DM_Motor_InitWithClass(motor, id, &DM_J4310_Class);
+}
+
+/*============================== 兼容旧接口的初始化函数 ==============================*/
+
+void DM_J3519_Init(MotorTypeDef *motor, uint8_t id)
+{
+    if (motor == NULL || id < 1)
+        return;
+    DM_Motor_Create(motor, &DM_J3519_Class, id);
+}
+
+void DM_J4310_Init(MotorTypeDef *motor, uint8_t id)
+{
+    if (motor == NULL || id < 1)
+        return;
+    DM_Motor_Create(motor, &DM_J4310_Class, id);
+}
+
+/*============================== 电机配置函数 ==============================*/
+
+void DM_Motor_SetConfig(MotorTypeDef *motor, const DM_MotorConfig_t *config)
+{
+    if (motor == NULL || config == NULL)
+        return;
+    if (motor->MotorInf.band != DM_MOTOR_BAND)
+        return;
+
+    uint8_t id = motor->MotorID;
+    if (id > 0 && id <= 4)
+    {
+        g_DM_Configs[id - 1] = *config;
+        motor->config.reverse = config->reverse;
+    }
+}
+
+DM_MotorConfig_t *DM_Motor_GetConfig(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return NULL;
+    if (motor->MotorInf.band != DM_MOTOR_BAND)
+        return NULL;
+
+    uint8_t id = motor->MotorID;
+    if (id > 0 && id <= 4)
+    {
+        return &g_DM_Configs[id - 1];
+    }
+    return NULL;
+}
+
+/*============================== 单独配置参数函数 ==============================*/
+
+void DM_Motor_SetKp(MotorTypeDef *motor, float kp)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    // 获取电机类进行限幅
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls != NULL)
+    {
+        if (kp < cls->kp_min)
+            kp = cls->kp_min;
+        if (kp > cls->kp_max)
+            kp = cls->kp_max;
+    }
+
+    cfg->kp = kp;
+}
+
+void DM_Motor_SetKd(MotorTypeDef *motor, float kd)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    // 获取电机类进行限幅
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls != NULL)
+    {
+        if (kd < cls->kd_min)
+            kd = cls->kd_min;
+        if (kd > cls->kd_max)
+            kd = cls->kd_max;
+    }
+
+    cfg->kd = kd;
+}
+
+void DM_Motor_SetTorqueFF(MotorTypeDef *motor, float torque_ff)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    // 获取电机类进行限幅
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls != NULL)
+    {
+        if (torque_ff < cls->torque_min)
+            torque_ff = cls->torque_min;
+        if (torque_ff > cls->torque_max)
+            torque_ff = cls->torque_max;
+    }
+
+    cfg->torque_ff = torque_ff;
+}
+
+void DM_Motor_SetReverse(MotorTypeDef *motor, uint8_t reverse)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    cfg->reverse = reverse ? 1 : 0;
+    motor->config.reverse = cfg->reverse;
+}
+
+void DM_Motor_SetPosLimits(MotorTypeDef *motor, float pos_min, float pos_max)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    cfg->pos_min = pos_min;
+    cfg->pos_max = pos_max;
+}
+
+void DM_Motor_SetVelLimits(MotorTypeDef *motor, float vel_min, float vel_max)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    cfg->vel_min = vel_min;
+    cfg->vel_max = vel_max;
+}
+
+void DM_Motor_SetMITParams(MotorTypeDef *motor, float kp, float kd, float torque_ff)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    // 获取电机类进行限幅
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls != NULL)
+    {
+        // KP限幅
+        if (kp < cls->kp_min)
+            kp = cls->kp_min;
+        if (kp > cls->kp_max)
+            kp = cls->kp_max;
+
+        // KD限幅
+        if (kd < cls->kd_min)
+            kd = cls->kd_min;
+        if (kd > cls->kd_max)
+            kd = cls->kd_max;
+
+        // 力矩限幅
+        if (torque_ff < cls->torque_min)
+            torque_ff = cls->torque_min;
+        if (torque_ff > cls->torque_max)
+            torque_ff = cls->torque_max;
+    }
+
+    cfg->kp = kp;
+    cfg->kd = kd;
+    cfg->torque_ff = torque_ff;
+}
+
+float DM_Motor_GetKp(MotorTypeDef *motor)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return 0.0f;
+    return cfg->kp;
+}
+
+float DM_Motor_GetKd(MotorTypeDef *motor)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return 0.0f;
+    return cfg->kd;
+}
+
+float DM_Motor_GetTorqueFF(MotorTypeDef *motor)
+{
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return 0.0f;
+    return cfg->torque_ff;
+}
+
+/*============================== 使能/失能函数 ==============================*/
+
+uint8_t DM_Motor_Enable(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return 0;
+
+    const MotorHAL_t *hal = Motor_GetHAL();
+    if (hal->can_send(&motor->g_TxHeader, (uint8_t *)DM_MOTOR_ENABLE))
+    {
+        if (motor->MotorID > 0 && motor->MotorID <= 4)
+        {
+            DM_ENABLE_ARR[motor->MotorID - 1] = true;
+        }
+        hal->delay_ms(1);
+        return 1;
+    }
+    return 0;
+}
+
+uint8_t DM_Motor_Disable(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return 0;
+
+    const MotorHAL_t *hal = Motor_GetHAL();
+    if (hal->can_send(&motor->g_TxHeader, (uint8_t *)DM_MOTOR_DISABLE))
+    {
+        if (motor->MotorID > 0 && motor->MotorID <= 4)
+        {
+            DM_ENABLE_ARR[motor->MotorID - 1] = false;
+        }
+        hal->delay_ms(1);
+        return 1;
+    }
+    return 0;
+}
+
 uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
 {
-#if DM_TestUse
-    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[motor_cfg - 1].g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL)
+        return 0;
+
+    const MotorHAL_t *hal = Motor_GetHAL();
+    if (hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
     {
-        DM_ENABLE_ARR[motor_cfg - 1] = false;
-        // DWT_Delay_us(200); // 一个完整的8字节标准数据帧是108位，这里用一个200us的延时足以搞定
-        vTaskDelay(1);
+        if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+        {
+            DM_ENABLE_ARR[motor->MotorID - 1] = false;
+        }
+        hal->delay_ms(1);
         return 1;
     }
-#endif
     return 0;
 }
 
-/// @brief 用于使能达妙电机
-/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-/// @return 1：发送成功，0：发送失败
-/// @todo 这里逻辑混乱
 static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 {
-#if DM_TestUse
-    if (CAN_SendData(&hcan1, &(MotorManager.MotorList[motor_cfg - 1].g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL)
+        return 0;
+
+    const MotorHAL_t *hal = Motor_GetHAL();
+    if (hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
     {
-        DM_ENABLE_ARR[motor_cfg - 1] = true;
-        // DWT_Delay_us(200);
-        vTaskDelay(1);
+        if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+        {
+            DM_ENABLE_ARR[motor->MotorID - 1] = true;
+        }
+        hal->delay_ms(1);
         return 1;
     }
-#endif
     return 0;
 }
 
-/// @brief 用于控制达妙电机
-/// @param st 要控制的达妙电机的结构体
-/// @return 1：发送成功，0：发送失败
-/// @todo 目前发送逻辑有问题，需要在连续发送过程中添加一定的延时函数保证发送不会吞帧
-uint8_t DM_MotorSendControl(MotorTypeDef *st)
+/*============================== 发送控制函数 ==============================*/
+
+/// @brief 内部发送控制函数（优化版本）
+static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
 {
-    assert_param(st != NULL);
     if (st == NULL)
-    {
-        return 0; // 返回错误码
-    }
-    if (!DM_ENABLE_ARR[(st->MotorID) - 1])
-    {
-        DM_MotorEnable(st->MotorID);
-    }
-    if (CAN_SendData(&hcan1, &(st->g_TxHeader), (uint8_t *)st->SendMotorData))
-    {
-        // 发送成功
-        return 1;
-    }
-    else
-    {
         return 0;
+
+    // 自动使能（合并条件判断）
+    if (st->MotorID > 0 && st->MotorID <= 4 && !DM_ENABLE_ARR[st->MotorID - 1])
+    {
+        DM_Motor_Enable(st);
     }
+
+    // 使用Fast版本（内联，零开销）
+    return Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, st->SendMotorData) ? 1 : 0;
 }
 
-/// @brief 设置达妙电机发送的数据
-/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-/// @param data 数据所在数组的指针
+/***********************************
+ * 函数名: DM_MotorSetTxData
+ * 作用:   用于设置发送数据
+ * 参数:   motor_cfg 电机名称
+ * 参数:   data      数据指针
+ * 返回值: 无
+ * todo:   当前还需要加上各个电机的模式选择,不同的模式调用不同的发送函数
+ **********************************/
 void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 {
-// MIT模式
-#if DM_MIT_MODE
-    // 7F FF 7F F0 00 00 08 28 -> 位置0 速度0.0 KP为0, KD为0, 转矩0.20
-    // 按道理来说这个KP和KD都是固定的，这个转矩是前馈的量，可能固定也可能PID？是固定的前馈
     assert_param(data != NULL);
     if (data == NULL)
     {
-        Error_Handler(); // 返回错误码
+        Error_Handler();
     }
 
-    // 这里是要整个都清理一遍
-    memset(MotorManager.MotorList[motor_cfg - 1].SendMotorData, 0x00, CtrlMotorLen);
-    memcpy(MotorManager.MotorList[motor_cfg - 1].SendMotorData, data, CtrlMotorLen);
-    MotorManager.MotorList[motor_cfg - 1].SendMotorControl(&MotorManager.MotorList[motor_cfg - 1]); // 调用发送函数
-#endif
-
-// 位置速度模式
-#if DM_LOCATION_SPEED_MODE
-// 有心者自己补充
-#endif
-
-// 速度模式
-#if DM_SPEED_MODE
-// 有心者自己补充
-#endif
-
-// PVT模式
-#if DM_PVT_MODE
-// 有心者自己补充
-#endif
-}
-
-/**********************************************************电机数据接收解算专用函数******************************************************************/
-
-/************************************************************************
- * 达妙电机反馈帧(ID是MasterID)
- * 8Byte:
- * ID + ERR<<4 | POS[15 :  8] | POS[7 :  0] | VEL[11 :  4] | VEL[3  :  0]  T[11 :  8] | T[7  :  0] | T_Mos | T_Rotor
- * POS电机位置信息
- * VEL电机速度信息
- * T电机扭矩信息
- * T_MOS表示驱动上MOS管上的均温，单位℃
- * T_ROTOR表示电机内部线圈的均温，单位℃
- ***********************************************************************/
-
-/// @brief DM电机的解算（优化版）
-/// @param motor 电机结构体指针
-/// @note motor->motor_data.solved_data[0]: 位置(rad/°)
-/// @note motor->motor_data.solved_data[1]: 速度(rad/s)
-/// @note motor->motor_data.solved_data[2]: 力矩(N·m)
-/// @note motor->motor_data.solved_data[3]: MOS温度(℃)
-/// @note motor->motor_data.solved_data[4]: 转子温度(℃)
-void DM_MOTOR_CALCU(MotorTypeDef *motor)
-{
-    assert_param(motor != NULL);
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
     {
         return;
     }
 
+    memset(motor->SendMotorData, 0x00, CtrlMotorLen);
+    memcpy(motor->SendMotorData, data, CtrlMotorLen);
+    motor->SendMotorControl(motor); // 这里调用发送函数
+}
+
+/*============================== 电机解算函数 ==============================*/
+// note:关节电机是可以直接读取并且不做减速比
+
+/// @brief J3519电机解算（内部版本，优化：使用Fast版本获取配置）
+static void DM_J3519_CalculateInternal(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return;
+
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls == NULL)
+        cls = &DM_J3519_Class;
+
+    // 获取配置（使用Fast版本，内联无开销）
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfigFast(motor->MotorID);
+
     MotorSolvedData_t *pData = &motor->motor_data;
-    uint8_t *ReceiveData = motor->ReceiveMotorData;
+    uint8_t *rx = motor->ReceiveMotorData;
 
-    // =============== 1. 数据解析（位操作压缩） ===============
-    uint16_t pos_raw = ((uint16_t)ReceiveData[1] << 8) | ReceiveData[2];
-    uint16_t vel_raw = ((uint16_t)ReceiveData[3] << 4) | (ReceiveData[4] >> 4);
-    uint16_t tor_raw = ((ReceiveData[4] & 0x0F) << 8) | ReceiveData[5];
+    // 解析原始数据
+    uint16_t pos_raw = ((uint16_t)rx[1] << 8) | rx[2];
+    uint16_t vel_raw = ((uint16_t)rx[3] << 4) | (rx[4] >> 4);
+    uint16_t tor_raw = ((rx[4] & 0x0F) << 8) | rx[5];
 
-    // =============== 2. 数据转换（使用通用函数） ===============
-#ifdef DM_USE_4310 // 4310电机使用MIT协议范围
-    pData->solved_data[0] = uint_to_float_generic(pos_raw, g_DM_LOWER_LIMITATION_POS, g_DM_UPPER_LIMITATION_POS, 16);
-    float vel_new = uint_to_float_generic(vel_raw, g_DM_LOWER_LIMITATION_VEL, g_DM_UPPER_LIMITATION_VEL, 12);
-    pData->solved_data[2] = uint_to_float_generic(tor_raw, g_DM_LOWER_LIMITATION_TORQUE, g_DM_UPPER_LIMITATION_TORQUE, 12);
-#else // 3519等电机
-    pData->solved_data[0] = pos_raw / 8192.0f * 360.0f; // 位置(°)
-    float vel_new = (float)(int16_t)vel_raw;            // 速度原始值
-    pData->solved_data[2] = tor_raw / 16384.0f * 20.0f; // 力矩(N·m)
-#endif
+    // J3519: 使用MIT协议范围转换
+    pData->solved_data[0] = uint_to_float_generic(pos_raw, cfg->pos_min, cfg->pos_max, 16) / 19.2f;
 
-    // =============== 3. 速度滤波 ===============
+    // 速度滤波
+    float vel_new = uint_to_float_generic(vel_raw, cfg->vel_min, cfg->vel_max, 12);
+    if (!pData->filter_init)
+    {
+        pData->solved_data[1] = vel_new / 19.2f;
+        pData->filter_init = 1;
+    }
+    else
+    {
+        pData->solved_data[1] = (DM_SPEED_FILTER_COEF * pData->last_speed + (1.0f - DM_SPEED_FILTER_COEF) * vel_new) / 19.2f;
+    }
+    pData->last_speed = pData->solved_data[1];
+
+    // 力矩
+    pData->solved_data[2] = uint_to_float_generic(tor_raw, cls->torque_min, cls->torque_max, 12);
+
+    // 温度
+    pData->solved_data[3] = (float)rx[6];
+    pData->solved_data[4] = (float)rx[7];
+}
+
+/// @brief J4310电机解算（内部版本，优化：使用Fast版本获取配置）
+static void DM_J4310_CalculateInternal(MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return;
+
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls == NULL)
+        cls = &DM_J4310_Class;
+
+    // 获取配置（使用Fast版本，内联无开销）
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfigFast(motor->MotorID);
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+    uint8_t *rx = motor->ReceiveMotorData;
+
+    // 解析原始数据
+    uint16_t pos_raw = ((uint16_t)rx[1] << 8) | rx[2];
+    uint16_t vel_raw = ((uint16_t)rx[3] << 4) | (rx[4] >> 4);
+    uint16_t tor_raw = ((rx[4] & 0x0F) << 8) | rx[5];
+
+    // J4310: 使用MIT协议范围转换
+    pData->solved_data[0] = uint_to_float_generic(pos_raw, cfg->pos_min, cfg->pos_max, 16);
+
+    // 速度滤波
+    float vel_new = uint_to_float_generic(vel_raw, cfg->vel_min, cfg->vel_max, 12);
     if (!pData->filter_init)
     {
         pData->solved_data[1] = vel_new;
@@ -262,63 +770,115 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor)
     }
     pData->last_speed = pData->solved_data[1];
 
-    // =============== 4. 温度 ===============
-    pData->solved_data[3] = (float)ReceiveData[6]; // MOS温度
-    pData->solved_data[4] = (float)ReceiveData[7]; // 转子温度
+    // 力矩
+    pData->solved_data[2] = uint_to_float_generic(tor_raw, cls->torque_min, cls->torque_max, 12);
+
+    // 温度
+    pData->solved_data[3] = (float)rx[6];
+    pData->solved_data[4] = (float)rx[7];
 }
 
-/**********************************************************暴露接口，下面是外部一般用于调用的函数******************************************************/
-
-/****************************************************
- * 函数名： DmMotorSendCfg
- * 作用：用于设置发送DM电机数据
- * 参数：motor_cfg ：电机配置枚举值 (can_motor_cfg)
- * 参数：TargetPos：目标位置 angle
- * 参数：TargetVel：目标速度 rad/s
- * 返回值：无
- ****************************************************/
-void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel)
+void DM_MOTOR_CALCU(MotorTypeDef *motor)
 {
-    KP_RESULT = float_to_uint(g_DM_KP, DM_KP);
-    KD_RESULT = float_to_uint(g_DM_KD, DM_KD);
-    Torque_ff = float_to_uint(g_DM_Compensating_Torque, DM_TORQUE); // float 转 uint
-    int16_t Pos_des = float_to_uint((float)TargetPos, DM_POS);
-    int16_t Vel_des = float_to_uint((float)TargetVel, DM_VEL);
+    if (motor == NULL)
+        return;
+
+    // 如果设置了虚函数，使用虚函数
+    if (motor->calculate != NULL)
+    {
+        motor->calculate(motor);
+        return;
+    }
+
+    // // 否则根据型号调用对应解算
+    // switch (motor->MotorInf.model)
+    // {
+    // case DmS3519:
+    //     DM_J3519_Calculate(motor);
+    //     break;
+    // case DmJ4310:
+    //     DM_J4310_Calculate(motor);
+    //     break;
+    // default:
+    //     break;
+    // }
+}
+
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode)
+{
+    // 获取电机结构体并使用其配置参数（使用接口函数，解耦）
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL)
+        return;
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls == NULL)
+        return;
+
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
 
     static uint8_t data[8] = {0x00};
-    data[0] = Pos_des >> 8;
-    data[1] = (uint8_t)Pos_des;
-    data[2] = Vel_des >> 4;
-    data[3] = ((Vel_des & 0x000F) << 4) | ((KP_RESULT & 0x0F00) >> 8);
-    data[4] = KP_RESULT;
-    data[5] = KD_RESULT >> 4;
-    data[6] = ((KD_RESULT & 0x000F) << 4) | ((Torque_ff & 0x0F00) >> 8);
-    data[7] = Torque_ff;
+    if (workmode == DM_MIT)
+    {
+        // 使用用户配置的参数进行转换（修复：使用cfg而非cls->default）
+        int16_t KP_RESULT = float_to_uint_config(cfg->kp, DM_KP, DM_MIT, cfg, cls);
+        int16_t KD_RESULT = float_to_uint_config(cfg->kd, DM_KD, DM_MIT, cfg, cls);
+        int16_t Torque_ff = float_to_uint_config(cfg->torque_ff, DM_TORQUE, DM_MIT, cfg, cls);
+        int16_t Pos_des = float_to_uint_config(TargetPos, DM_POS, DM_MIT, cfg, cls);
+        int16_t Vel_des = float_to_uint_config(TargetVel, DM_VEL, DM_MIT, cfg, cls);
+
+        data[0] = Pos_des >> 8;
+        data[1] = (uint8_t)Pos_des;
+        data[2] = Vel_des >> 4;
+        data[3] = ((Vel_des & 0x000F) << 4) | ((KP_RESULT & 0x0F00) >> 8);
+        data[4] = KP_RESULT;
+        data[5] = KD_RESULT >> 4;
+        data[6] = ((KD_RESULT & 0x000F) << 4) | ((Torque_ff & 0x0F00) >> 8);
+        data[7] = Torque_ff;
+    }
+    else if (workmode == DM_LOCATION_SPEED)
+    {
+        // 位置速度模式：直接发送float原始字节（小端序）
+        uint8_t *pbuf = (uint8_t *)&TargetPos;
+        uint8_t *vbuf = (uint8_t *)&TargetVel;
+
+        data[0] = pbuf[0];
+        data[1] = pbuf[1];
+        data[2] = pbuf[2];
+        data[3] = pbuf[3];
+        data[4] = vbuf[0];
+        data[5] = vbuf[1];
+        data[6] = vbuf[2];
+        data[7] = vbuf[3];
+    }
+    else if (workmode == DM_SPEED)
+    {
+        // 速度模式：直接发送float原始字节（小端序）
+        uint8_t *vbuf = (uint8_t *)&TargetVel;
+
+        data[0] = vbuf[0];
+        data[1] = vbuf[1];
+        data[2] = vbuf[2];
+        data[3] = vbuf[3];
+        data[4] = 0;
+        data[5] = 0;
+        data[6] = 0;
+        data[7] = 0;
+    }
+    else if (workmode == DM_PVT)
+    {
+        // 达妙官方似乎也不管这个模式了
+        // PVT模式待实现 - 需要查阅官方文档确认数据格式
+        // TODO: 实现PVT模式
+        return;
+    }
     DM_MotorSetTxData(motor_cfg, data);
 }
 
-/**********************************************************电机初始化专用函数************************************************************************/
-
-/// @brief  测试单个DM电机
-/// @param  无
-/// @note   仅供测试使用
-/// @return 无
-void DmTestMotorSingleRegister(void)
-{
-    // 按照需求更改参数
-    MotorManager.MotorList[SingleMotorTest - 1].MotorID = SingleMotorTest;
-    MotorManager.MotorList[SingleMotorTest - 1].MotorInf.band = DM_MOTOR_BAND;
-    MotorManager.MotorList[SingleMotorTest - 1].SendMotorControl = DM_MotorSendControl;
-    MotorManager.registered_count = 1;
-
-    // CAN报文头配置在CanMotor.c中的CanRegisterMotorCfg函数完成
-}
-
-/// @brief DM电机输出
-/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-/// @param target 目标值
-/// @todo 增加PID控制
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
-    // 达妙电机无需PID（无功率控制情况下）,当需要功率控制时候,达妙自带任何PID一项都不可使用,只可以对前馈力矩进行调参
+    // 达妙电机无需PID（无功率控制情况下）,如果是有功率控制情况下,需要结合本身的系数将力矩转换成电流
+
+    // DM_Motor_SetTorqueFF(); // 最后是对力矩进行设置
 }
