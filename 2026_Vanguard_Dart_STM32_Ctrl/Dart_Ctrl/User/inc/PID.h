@@ -20,6 +20,7 @@ typedef enum
     PID_DELTA = 1     // 增量式PID
 } PID_MODE_e;
 
+#pragma pack(push, 1)
 // 前馈PID结构体
 // PID基本参数(包含前馈)
 // 反馈值
@@ -71,6 +72,7 @@ typedef struct
     PID_t inner; // 内环PID（速度环）
 
 } CASCADE_PID_t;
+#pragma pack(pop)
 
 /*********************************************************函数声明***************************************************************/
 

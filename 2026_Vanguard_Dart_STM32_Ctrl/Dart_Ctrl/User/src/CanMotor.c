@@ -67,7 +67,6 @@ void Motor_SetHAL(const MotorHAL_t *hal)
 /// @return 无
 void CanRegisterMotorCfg(MotorTypeDef *ptr)
 {
-    assert_param(ptr != NULL);
     if (ptr == NULL)
     {
         return; // 或返回错误码
@@ -90,9 +89,13 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
     {
         ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_6020;
     }
-    else
+    else if ((ptr->MotorInf.band == DM_MOTOR_BAND) && (ptr->motor_class.dm_motor_class->WorkMode == DM_MIT))
     {
-        ptr->g_TxHeader.StdId = g_DM_MOTOR_BIAS_ADDR_TXID + ptr->MotorID;
+        ptr->g_TxHeader.StdId = DM_MIT_TX_BIAS + ptr->MotorID;
+    }
+    else if ((ptr->MotorInf.band == DM_MOTOR_BAND) && (ptr->motor_class.dm_motor_class->WorkMode == DM_LOCATION_SPEED))
+    {
+        ptr->g_TxHeader.StdId = DM_LS_TX_BIAS + ptr->MotorID;
     }
 
     ptr->g_TxHeader.IDE = CAN_ID_STD;   // 标准帧标识符
@@ -121,38 +124,41 @@ void MotorRegister(void)
                            178.91f, 0.40f, 0.0f, 7.95f,   // 内环: P=175.91, I=0.40, D=0, F=7.95
                            20673.0f, 0.0f, 2.0f,          // 外环: max_out, min_out, max_iout
                            1691.0f, 0.0f, 300.0f);        // 内环: max_out, min_out, max_iout
+    MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机
     RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
-                           0.0001f, 0.0f, 0.0f, 0.002f, // 外环: P=0.0001, I=0, D=0, F=0.002
+                           0.1058f, 0.0f, 0.0f, 0.002f, // 外环: P=0.0001, I=0, D=0, F=0.002
                            27.91f, 0.08f, 0.0f, 1.0f,   // 内环: P=27.91, I=0.08, D=0, F=1.0
-                           20673.0f, 0.0f, 5000.0f,     // 外环: max_out, min_out, max_iout
+                           1300.0f, 0.0f, 5000.0f,      // 外环: max_out, min_out, max_iout
                            5000.0f, 0.0f, 1000.0f);     // 内环: max_out, min_out, max_iout
+    MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = RM_2006_TRIGGER + g_RM_MOTOR_BIAS_ADDR_2006 + 0x004;
 
     // ==================== DM电机注册 ====================
 
     // 左侧蓄力电机 - J3519
     DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1],
                   DM_3519_STRENTH_LEFT - g_RM_MOTOR_NUM);
-    // DM_Motor_SetVelLimits(); // 速度上下限20
-    // DM_Motor_SetPosLimits(); // 位置上下限200
-    // DM_Motor_SetMITParams(); // MIT参数不知道,3519禁用MIT模式
+    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -20.0f, 20.0f);   // 速度上下限20
+    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -200.0f, 200.0f); // 位置上下限200
+    MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].CAN_Rid = (DM_3519_STRENTH_LEFT | DM_LS_RX_BIAS) - g_RM_MOTOR_NUM;
     // 位置速度模式（PID已经调好了，速度KP：0.5395794，速度KI：0.002，位置KP：54，位置KI：0）
 
     // 右侧蓄力电机 - J3519
     DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1],
                   DM_3519_STRENTH_RIGHT - g_RM_MOTOR_NUM);
-    // DM_Motor_SetVelLimits(); // 速度上下限20
-    // DM_Motor_SetPosLimits(); // 位置上下限200
-    // DM_Motor_SetMITParams(); // MIT参数不知道,3519和3519禁用MIT模式
+    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -20.0f, 20.0f);   // 速度上下限20
+    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -200.0f, 200.0f); // 位置上下限200
+    MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].CAN_Rid = (DM_3519_STRENTH_RIGHT | DM_LS_RX_BIAS) - g_RM_MOTOR_NUM;
     // 位置速度模式（PID已经调好了，速度KP：0.5395794，速度KI：0.002，位置KP：54，位置KI：0）
 
     // Yaw轴电机 - J4310
-    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1], DM_4310_YAW);                 // 这个电机解算等待处理
-    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], 30.0f, -30.0f);       // 速度上下限+-30
-    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], 160.0f, -160.0f);     // 位置上下限+-160
-    DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4561f, 1.0f, 0.0f); // Kp->1.4591f, Kd->1.0f,但是位置不给就对了
+    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1], DM_4310_YAW - g_RM_MOTOR_NUM); // 这个电机解算等待处理
+    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -30.0f, 30.0f);        // 速度上下限 -30~30 rad/s
+    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -160.0f, 160.0f);      // 位置上下限 -160~160 rad (约±25圈)
+    DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4591f, 1.0f, 0.0f);  // Kp->1.4591f, Kd->1.0f, Torque_ff->0.0f
+    MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = (DM_4310_YAW | DM_MIT_RX_BIAS) - g_RM_MOTOR_NUM;
 
     // ==================== 完成注册 ====================
     MotorManager.registered_count = 5;
@@ -265,7 +271,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
         {
             // 检查是否为RM3508电机的反馈帧
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
-                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR_3508 + MotorManager.MotorList[i].MotorID)))
+                (pRxHeader.StdId == MotorManager.MotorList[i].CAN_Rid))
             {
                 // 找到对应的RM电机，存储接收数据并解算
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
@@ -275,7 +281,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 
             // 检查是否为RM2006电机的反馈帧
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
-                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 3)))
+                (pRxHeader.StdId == MotorManager.MotorList[i].CAN_Rid))
             {
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
                 MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);
@@ -284,7 +290,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 
             // 检查是否为RM6020电机的反馈帧
             if ((MotorManager.MotorList[i].MotorInf.band == RM_MOTOR_BAND) &&
-                (pRxHeader.StdId == (g_RM_MOTOR_BIAS_ADDR + MotorManager.MotorList[i].MotorID + 8)))
+                (pRxHeader.StdId == MotorManager.MotorList[i].CAN_Rid))
             {
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
                 MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);
@@ -293,7 +299,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 
             // 检查是否为DM电机的反馈帧
             else if ((MotorManager.MotorList[i + g_RM_MOTOR_NUM].MotorInf.band == DM_MOTOR_BAND) &&
-                     (pRxHeader.StdId == (g_DM_MOTOR_BIAS_ADDR_RXID + MotorManager.MotorList[i].MotorID)))
+                     (pRxHeader.StdId == MotorManager.MotorList[i].CAN_Rid))
             {
                 memcpy(MotorManager.MotorList[i].ReceiveMotorData, MotorRxDataTempArray, 8);
                 MotorManager.MotorList[i].calculate(&MotorManager.MotorList[i]);

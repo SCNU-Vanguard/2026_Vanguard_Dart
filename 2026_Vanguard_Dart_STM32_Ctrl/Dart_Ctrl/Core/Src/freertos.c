@@ -48,7 +48,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-float Target = 597.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
+float Target = 12960.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
 static uint32_t lastServoTime = 0;
 static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
 
@@ -196,8 +196,8 @@ void StartDefaultTask(void *argument)
     //   // ServoControlPos(1, 500, 500); // 控制1号舵机
     // }
 
-    // RmMotorPID_Calc(RM_3508_GRIPPER, Target);
-    // RmMotorSendCfg(RM_3508_GRIPPER, 550);
+    // RmMotorPID_Calc(RM_2006_TRIGGER, Target);
+    // RmMotorSendCfg(RM_2006_TRIGGER, 1000);
   }
   /* USER CODE END StartDefaultTask */
 }

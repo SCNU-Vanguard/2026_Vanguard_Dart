@@ -1,10 +1,11 @@
-/**************************************
+/************************************************************************************************************************
  * 文件：UserTask.c
  * 用途：用户任务定义，所有的任务都在此
  * 创建者：邓金水
  * 创建日期：忘了
  * 目标：15s内完成4次发射过程
- *************************************/
+ * 流程：视觉/遥控器(可调射程)纠正方向->第一发飞镖->滑台下滑(同时扳机要放下来)->到达地点(扳机绷紧)->根据所需射程调节电机->释放扳机
+ ***********************************************************************************************************************/
 #include "UserTask.h"
 
 // 19271（上限）<长度>
@@ -138,33 +139,54 @@ void LoadMotorTaskFunc(void *argument);
  **********************************/
 void TaskInitFunc(void)
 {
+    // RTOS_ModuleInit();
+
     // 任务初始化
-    // GimbalTaskHandle = osThreadNew(GimbalTaskFunc, NULL, &GimbalTask_attributes);
+    GimbalTaskHandle = osThreadNew(GimbalTaskFunc, NULL, &GimbalTask_attributes);
     // StoreEnergyTaskHandle = osThreadNew(StoreEnergyTaskFunc, NULL, &StoreEnergyTask_attributes);
-    LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
+    // LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
     // ShootTaskHandle = osThreadNew(ShootTaskFunc, NULL, &ShootTask_attributes);
     // UartModuleTaskHandle = osThreadNew(UartModuleTaskFunc, NULL, &UartModuleTask_attributes);
-
-    RTOS_ModuleInit();
 }
 
+// 87 FF 7F F0 0B 33 37 FF -> 位置 10 rad, 速度 0 rad/s, kp = 1.4591, kd = 1.0f, 转矩0.0f
+// 7F FF 7F F0 0B 33 37 FF -> 位置变为 0 rad
 void GimbalTaskFunc(void *argument)
 {
     // 根据上位机和遥控器的命令对4310进行旋转
+    DM_Motor_Enable(&MotorManager.MotorList[DM_4310_YAW - 1]);
+    DmMotorSendCfg(DM_4310_YAW, 10.0f, 0.0f, DM_MIT);
+    vTaskDelay(5000);
+    DmMotorSendCfg(DM_4310_YAW, 0.0f, 0.0f, DM_MIT);
+    DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
+    while (1)
+    {
+        /* code */
+    }
 }
 
+// 00 00 20 41 00 00 A0 40 -> 位置 10 rad, 速度 5 rad/s
 void StoreEnergyTaskFunc(void *argument)
 {
-    // 3510电机运动从顶部到底部
+    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
+    DmMotorSendCfg(DM_3519_STRENTH_LEFT, 10.0f, 5.0f, DM_LOCATION_SPEED);
+    // DM_Motor_Enable(DM_3519_STRENTH_RIGHT);
+    // J3519电机运动从顶部到底部
 
-    // 3510电机底部等待换弹
+    // vTaskDelay(2000);
+    // DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
+    while (1)
+    {
+        DmMotorSendCfg(DM_3519_STRENTH_LEFT, 10.0f, 5.0f, DM_LOCATION_SPEED);
+        // DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
+    }
+    // J3519电机底部等待换弹
 }
 
 /***********************************
  * 函数名: LoadTaskFunc
- * 作用:   换弹任务（舵机释放以及电机目标设定）
+ * 作用:   换弹任务（传送带电机控制以及电机目标设定）
  * 参数:   无
- * todo:   增加code注释,为之后的更新作准备
  **********************************/
 void LoadTaskFunc(void *argument)
 {
@@ -269,6 +291,11 @@ void LoadTaskFunc(void *argument)
     }
 }
 
+/***********************************
+ * 函数名: LoadMotorTaskFunc
+ * 作用:   换弹任务（舵机释放）
+ * 参数:   无
+ **********************************/
 void LoadMotorTaskFunc(void *argument)
 {
     uint8_t fQueueDartNum = 0; // 目标为0最初
@@ -326,7 +353,11 @@ void ShootTaskFunc(void *argument)
         // 2.这里进行正常的发射函数,TIM2_CH1-PD12->A板H接口
         // 根据同步带电机反馈数据进行发射
         // 接收任务通知 / 互斥量
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_shoot); // 这个地方设置为未释放状态
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
+
+        // delay一会再次释放
+        vTaskDelay(100);
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_shoot);
     }
 }
 

@@ -340,7 +340,7 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
     // 将RM2006电机的数据进行拼接
     if (st->MotorInf.model == RmM2006)
     {
-        for (uint8_t a = st->MotorID - 1; a < g_RM_M2006_NUM; a++)
+        for (uint8_t a = st->MotorID - 1; a <= g_RM_M2006_NUM; a++)
         {
             MotorTypeDef *motor_a = &MotorManager.MotorList[a];
             uint8_t offset = 2 * a - 2 * (st->MotorID - 1);
@@ -352,7 +352,7 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
     // 将RM6020电机的数据进行拼接
     if (st->MotorInf.model == RmGM6020)
     {
-        for (uint8_t a = st->MotorID - 1; a < g_RM_GM6020_NUM; a++)
+        for (uint8_t a = st->MotorID - 1; a <= g_RM_GM6020_NUM; a++)
         {
             MotorTypeDef *motor_a = &MotorManager.MotorList[a];
             uint8_t offset = 2 * a - 2 * (st->MotorID - 1);
@@ -373,7 +373,6 @@ uint8_t RM_MotorSendControl(MotorTypeDef *st)
 
 void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 {
-    assert_param(data != NULL);
     if (data == NULL)
     {
         return;
@@ -566,23 +565,6 @@ void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent)
     RM_MotorSetTxData(motor_cfg, data);
 }
 
-void RmTestMotorSingleRegister(void)
-{
-    // 直接访问电机句柄
-    MotorTypeDef *motor = &MotorManager.MotorList[SingleMotorTest - 1];
-
-    // 使用新的初始化方式
-    RM_M2006_Init(motor, SingleMotorTest);
-    Motor_SetRegisteredCount(1);
-
-    // 配置PID (外环: 位置环, 内环: 速度环)
-    RM_Motor_SetCascadePID(motor,
-                           0.000091f, 0.0f, 0.0f, 0.002f, // 外环 P/I/D/F
-                           27.91f, 0.08f, 0.0f, 1.0f,     // 内环 P/I/D/F
-                           20673.0f, 0.0f, 5000.0f,       // 外环 max_out, min_out, max_iout
-                           3000.0f, 0.0f, 1000.0f);       // 内环 max_out, min_out, max_iout
-}
-
 float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
@@ -657,7 +639,7 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
     MotorSolvedData_t *pData = &motor->motor_data;
 
     output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
-    // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]);
+    // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
     RmMotorSendCfg(motor_cfg, output);
 }
 

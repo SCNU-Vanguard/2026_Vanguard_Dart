@@ -38,7 +38,7 @@
 #define RM_GM6020_CURRENT_RATIO (16384.0f / 3.0f) // 16384对应3A
 
 /*============================== 前向声明 ==============================*/
-
+#pragma pack(push, 1)
 struct _MotorTypeDef; // 前向声明电机结构体
 
 /*============================== RM电机类定义（面向对象） ==============================*/
@@ -72,7 +72,7 @@ typedef struct _RM_MotorClass
     float (*pid_calc)(struct _MotorTypeDef *self, float target);
 
 } RM_MotorClass_t;
-
+#pragma pack(pop)
 /*============================== 预定义的电机类实例（类似C++静态类） ==============================*/
 
 extern const RM_MotorClass_t RM_M2006_Class;  // M2006电机类
@@ -80,7 +80,7 @@ extern const RM_MotorClass_t RM_M3508_Class;  // M3508电机类
 extern const RM_MotorClass_t RM_GM6020_Class; // GM6020电机类
 
 /*============================== RM电机配置结构 ==============================*/
-
+#pragma pack(push, 1)
 // RM电机配置（用户可调）
 typedef struct
 {
@@ -88,6 +88,7 @@ typedef struct
     float position_tolerance; // 位置误差容限(°)，用于判断是否到达目标
     uint8_t reverse;          // 是否反向: 0-正向, 1-反向
 } RM_MotorConfig_t;
+#pragma pack(pop)
 
 // 需要在CanMotor.h之后包含，因为需要完整的MotorTypeDef定义
 #include "CanMotor.h"

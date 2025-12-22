@@ -26,6 +26,7 @@ typedef enum
     BSP_UART_MAX
 } BSP_UART_NUM_e;
 
+#pragma pack(push, 1)
 /* 帧位置记录结构体 - 环形缓冲区记录帧头帧尾在数据缓冲区中的位置 */
 typedef struct
 {
@@ -79,6 +80,7 @@ typedef struct
     bool isSending;                      // 发送状态标志
     UART_HandleTypeDef *huart;           // 关联的UART句柄
 } UartTxRingBuffer;
+#pragma pack(pop)
 
 /* 协议类型枚举 */
 typedef enum
@@ -92,6 +94,7 @@ typedef enum
 // 为了兼容性，保留PROTOCOL_SERVO别名
 #define PROTOCOL_SERVO PROTOCOL_SERVO_MCU
 
+#pragma pack(push, 1)
 /* 协议数据包结构体 - 舵机协议 */
 typedef struct
 {
@@ -114,6 +117,7 @@ typedef struct
     uint16_t data_len; // 数据长度
     bool is_valid;     // 数据包是否有效
 } DartPacket_t;
+#pragma pack(pop)
 
 /* 协议解析状态 */
 typedef enum
@@ -131,6 +135,7 @@ typedef enum
     PARSE_COMPLETE     // 解析完成
 } ParseState_e;
 
+#pragma pack(push, 1)
 /* 循环接收缓冲区结构体 */
 typedef struct
 {
@@ -151,6 +156,7 @@ typedef struct
     DartPacket_t dart_packet;      // DART协议数据包
     bool packet_ready;             // 是否有完整数据包
 } UartRxRingBuffer;
+#pragma pack(pop)
 
 /* ========== 用户API接口 ========== */
 

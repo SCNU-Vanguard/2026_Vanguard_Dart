@@ -21,7 +21,7 @@
 #define RadToDegree(radian) ((radian) * 57.29578f)
 
 /*============================== 前向声明 ==============================*/
-
+#pragma pack(push, 1)
 struct _RM_MotorClass; // RM电机类前向声明
 struct _DM_MotorClass; // DM电机类前向声明（预留扩展）
 
@@ -41,6 +41,7 @@ typedef struct
     /// @param ms 延时时间（毫秒）
     void (*delay_ms)(uint32_t ms);
 } MotorHAL_t;
+#pragma pack(pop)
 
 /// @brief 获取当前电机HAL接口指针
 /// @return HAL接口指针
@@ -81,16 +82,20 @@ typedef enum
     CmG80
 } can_motor_model;
 
+#pragma pack(push, 1)
 typedef struct
 {
     can_motor_band band;
     can_motor_model model;
 } motor_inf;
+#pragma pack(pop)
 
 // 电机解算数据存储结构体（用于存储反馈解算后的数据）
 // RM电机: [0]单圈角度(°), [1]速度(rpm), [2]电流(A), [3]累计角度(°), [4]速度(rad/s)
 // DM电机: [0]位置(rad/°), [1]速度(rad/s), [2]力矩(N·m), [3]MOS温度(℃), [4]转子温度(℃)
-#define MOTOR_SOLVED_DATA_NUM 5
+#define MOTOR_SOLVED_DATA_NUM 8
+
+#pragma pack(push, 1)
 typedef struct
 {
     float solved_data[MOTOR_SOLVED_DATA_NUM]; // 解算后的数据数组
@@ -113,6 +118,7 @@ typedef struct
     float pre_last_target;    // 上上次目标值
     uint8_t target_init_flag; // 目标值初始化标志（首次调用RmMotorRemoveBias时置1）
 } MotorSolvedData_t;
+#pragma pack(pop)
 
 // CAN线挂载的电机（包含RM和DM电机）
 typedef enum
@@ -125,6 +131,7 @@ typedef enum
     DM_4310_YAW
 } can_motor_cfg;
 
+#pragma pack(push, 1)
 // 电机配置结构体（用户可调参数）
 typedef struct
 {
@@ -177,6 +184,9 @@ typedef struct _MotorTypeDef
     PID_t inner_pid;           // 内环PID（单环控制时使用）
     CASCADE_PID_t cascade_pid; // 串级PID
     uint8_t use_cascade;       // 是否使用串级控制：0-单环，1-串级
+
+    // CAN_RX_ID
+    uint16_t CAN_Rid;
 } MotorTypeDef;
 
 // 电机管理器结构体
@@ -187,6 +197,7 @@ typedef struct
     uint8_t registered_count;
     uint8_t RM_MOTOR_DATA_ARRAY[8]; // 电机列表发送数据的数组，每次发送RM电机的控制数据发送的都是这个arr
 } MotorManager_t;
+#pragma pack(pop)
 
 extern MotorManager_t MotorManager;
 
