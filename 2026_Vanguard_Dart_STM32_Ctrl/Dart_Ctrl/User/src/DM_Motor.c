@@ -280,11 +280,11 @@ void DM_Motor_Calculate(MotorTypeDef *motor)
         return;
     }
 
-    // // 兼容旧接口：使用直接绑定的函数指针
-    // if (motor->calculate != NULL)
-    // {
-    //     motor->calculate(motor);
-    // }
+    // 兼容旧接口：使用直接绑定的函数指针
+    if (motor->calculate != NULL)
+    {
+        motor->calculate(motor);
+    }
 }
 
 /// @brief 调用电机的发送控制函数
@@ -635,7 +635,7 @@ static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 }
 
 /*============================== 刷新数据函数 ==============================*/
-static void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
 {
     MotorTypeDef *st = &MotorManager.MotorList[motor_cfg - 1];
     if (st == NULL)
@@ -656,7 +656,6 @@ static void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
 
 /*============================== 发送控制函数 ==============================*/
 
-/// @brief 内部发送控制函数（优化版本）
 static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
 {
     if (st == NULL)

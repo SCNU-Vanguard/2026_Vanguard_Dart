@@ -143,11 +143,10 @@ void RM_Motor_Calculate(MotorTypeDef *motor)
         return;
     }
 
-    // 兼容旧接口：使用直接绑定的函数指针
-    if (motor->calculate != NULL)
-    {
-        motor->calculate(motor);
-    }
+    // if (motor->calculate != NULL)
+    // {
+    //     motor->calculate(motor);
+    // }
 }
 
 /// @brief 调用电机的发送控制函数
