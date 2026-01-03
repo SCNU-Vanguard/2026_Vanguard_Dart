@@ -9,6 +9,7 @@
 #include "event_groups.h" // ARM.FreeRTOS::RTOS:Event Groups
 #include "semphr.h"       // ARM.FreeRTOS::RTOS:Core
 #include "queue.h"
+#include "stream_buffer.h"
 
 #include "config.h"
 #include "bsp_dwt.h"

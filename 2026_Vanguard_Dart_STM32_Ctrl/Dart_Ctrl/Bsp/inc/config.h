@@ -9,6 +9,25 @@
 #ifndef __CONFIG_H_
 #define __CONFIG_H_
 
+#include <math.h>
+
+// 通用系统参数
+#define MOTOR_TIMEOUT_MS 5000          // 电机运动超时时间（毫秒）
+#define MOTOR_DEAD_ZONE 1.0f           // 电机死区（用于位置判定）
+#define TRIGGER_DEAD_ZONE 5.0f         // 扳机电机死区
+#define SERVO_MOVE_TIME_MS 310         // 舵机转动时间（毫秒）
+#define POWER_ON_DELAY_MS 100          // 上电延迟时间（毫秒）
+#define RELOAD_BUFFER_MS 1000          // 换弹缓冲时间（毫秒）
+
+// 死区判定宏
+#define IS_IN_DEADZONE(value, target, zone) \
+    (((value) >= ((target) - (zone))) && ((value) <= ((target) + (zone))))
+
+// 事件组位定义
+#define EVENT_GIMBAL_READY  (1 << 6)  // 0x40 - 云台就绪
+#define EVENT_TRIGGER_READY (1 << 2)  // 0x04 - 扳机就绪
+#define EVENT_ALL_READY     (EVENT_GIMBAL_READY | EVENT_TRIGGER_READY)  // 0x44 - 全部就绪
+
 // 换弹结构相关
 #define ConveyorBeltLength 20673
 #define SeperationAngle 375
@@ -19,7 +38,18 @@
 // 第二个舵机（距离13200）<与第三个相距5653>
 // 第一个舵机（距离18749）<与第二个相距5549>
 
-// 同步带相关
+// 储能电机相关（统一使用浮点数类型）
+#define StoreLocPrimitive 0.0f  // 两个电机的初始位置
+#define LeftStoreLocBase 2.0f   // 基地位置力度-左边3519电机
+#define RightStoreLocBase 3.0f  // 基地位置力度-右边35199电机
+#define LeftStoreOutpost 4.0f   // 前哨站力度-左边3519电机
+#define RightStoreOutpost 5.0f  // 前哨站力度-右边3519电机
+#define LeftStoreTrigger 6.0f   // 靠近扳机位置-左边3519电机
+#define RightStoreTrigger 7.0f  // 靠近扳机位置-右边3519电机
+#define LeftStoreBottom 16.0f   // 左侧电机下底（原0x10=16）
+#define RightStoreBottom 17.0f  // 右侧电机下底（原0x11=17）
+#define LimitStore 910.0f       // 电机的位置限制
+#define ShotSpeed 10.0f         // 发射速度
 
 // 扳机射程相关
 #define MG996R_store 2500   // 发射扳机待机状态。
