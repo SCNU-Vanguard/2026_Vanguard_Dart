@@ -144,7 +144,7 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
                     rb->packet_ready = true;
                     Protocol_ResetParserState(rb);
 
-                    // 这里放一个任务通知
+                    // 这里放一个任务通知(裸机跑这部分不管)
                     // xTaskNotifyFromISR(UartModuleTaskHandle, 0x01, eSetValueWithoutOverwrite, &xHigherPriorityTaskWoken);
                 }
             }
@@ -295,13 +295,26 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
 
         case PARSE_DART_LENGTH:
             rb->dart_packet.data_len = byte;
-            rb->parse_state = PARSE_DART_DATA;
+            if (rb->dart_packet.data_len <= sizeof(rb->dart_packet.data))
+            {
+                rb->parse_state = (rb->dart_packet.data_len == 0) ? PARSE_DART_CRC : PARSE_DART_DATA;
+                rb->parse_index = 0;
+            }
+            else
+            {
+                Protocol_ResetParser(rb);
+            }
             break;
 
         case PARSE_DART_DATA:
             if (rb->parse_index < rb->dart_packet.data_len)
             {
                 rb->dart_packet.data[rb->parse_index++] = byte;
+                if (rb->parse_index >= rb->dart_packet.data_len)
+                {
+                    rb->parse_state = PARSE_DART_CRC;
+                    rb->parse_index = 0;
+                }
             }
             break;
 
@@ -701,9 +714,9 @@ bool Protocol_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet)
 
     if (rb->packet_ready && rb->protocol_type == PROTOCOL_DART && rb->dart_packet.is_valid)
     {
-        memcpy(packet, &rb->dart_packet, rb->dart_packet.data_len + 6);
+        memcpy(packet, &rb->dart_packet, sizeof(DartPacket_t));
 
-        uint16_t packet_total_len = 4 + rb->dart_packet.data_len + 1;
+        uint16_t packet_total_len = 4 + 1 + rb->dart_packet.data_len + 1;
         db->ReadIndex = (db->ReadIndex + packet_total_len) % UART_RX_BUFFER_SIZE;
 
         return true;

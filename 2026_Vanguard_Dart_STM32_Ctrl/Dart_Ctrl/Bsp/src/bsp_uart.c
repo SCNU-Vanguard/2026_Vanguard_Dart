@@ -10,7 +10,6 @@
 static UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
 static UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
 static DataBuffer g_data_buffers[BSP_UART_MAX]; // DataBuffer实例（用于指针操作）
-static uint8_t g_temp_tx_buffer[32];            // 临时发送缓冲区
 
 /* 内部函数声明 */
 static void TxRingBuffer_Init(UartTxRingBuffer *rb, UART_HandleTypeDef *huart);
@@ -74,6 +73,7 @@ static void TxRingBuffer_Init(UartTxRingBuffer *rb, UART_HandleTypeDef *huart)
     rb->isSending = false;
     rb->huart = huart;
     memset(rb->buffer, 0, UART_TX_BUFFER_SIZE);
+    memset(rb->temp_buffer, 0, UART_TX_CHUNK_SIZE);
 }
 
 /**
@@ -144,14 +144,16 @@ static void StartTransmit(UartTxRingBuffer *rb)
         return;
 
     // 每次最多发送32字节
-    uint16_t sendLen = (rb->count > sizeof(g_temp_tx_buffer)) ? sizeof(g_temp_tx_buffer) : rb->count;
-    sendLen = TxRingBuffer_Read(rb, g_temp_tx_buffer, sendLen);
+    uint16_t sendLen = (rb->count > UART_TX_CHUNK_SIZE) ? UART_TX_CHUNK_SIZE : rb->count;
+    sendLen = TxRingBuffer_Read(rb, rb->temp_buffer, sendLen);
 
     if (sendLen > 0)
     {
         rb->isSending = true;
-        HAL_UART_Transmit(rb->huart, g_temp_tx_buffer, sendLen, HAL_MAX_DELAY);
-        rb->isSending = false;
+        if (HAL_UART_Transmit_IT(rb->huart, rb->temp_buffer, sendLen) != HAL_OK)
+        {
+            rb->isSending = false;
+        }
     }
 }
 

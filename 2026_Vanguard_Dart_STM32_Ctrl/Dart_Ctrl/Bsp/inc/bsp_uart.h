@@ -9,6 +9,7 @@
 /* 循环缓冲区大小定义 */
 #define UART_TX_BUFFER_SIZE 64
 #define UART_RX_BUFFER_SIZE 64
+#define UART_TX_CHUNK_SIZE 32
 
 /* 帧头帧尾位置记录数组大小定义 */
 // DART协议（4字节帧头）：64字节缓冲区最多装16个协议帧
@@ -79,6 +80,7 @@ typedef struct
     uint16_t count;                      // 当前缓冲区数据量
     bool isSending;                      // 发送状态标志
     UART_HandleTypeDef *huart;           // 关联的UART句柄
+    uint8_t temp_buffer[UART_TX_CHUNK_SIZE];
 } UartTxRingBuffer;
 #pragma pack(pop)
 
