@@ -32,9 +32,11 @@
  *                                                                              |                  TriggerServo               |
  *                                                                              |=============================================|
  *
- * 现在的毛胚房版本是没有加上视觉和上位机的,但是要用的话那么,首先要注释掉串口通信部份的代码,也就是说
+ * 现在的毛胚房版本是没有加上视觉和上位机的,但是要用的话那么,首先要注释掉串口通信部份的代码,也就说全靠自己
  * 无视觉方案:
- * 云台不动或者固定动一个角度/扳机移动之后直接释放任务通知,储能开始,储能到底换弹之地,发信号量,开始换弹？或者通过信号量改变数据,储能电机上升到扳机位置,释放飞镖
+ * 上电、初始化后根据预设方案调节扳机位置和Yaw角度,让储能电机开始工作,拉到指定位置之后电机停止,之后等待换弹
+ * 第一发可以不用换弹,直接拉到舵机位置,之后扳机处于位置之后电机不用动,扳机释放飞镖(电机处于失能状态),这里还
+ * 要等待测试达妙电机的具体逻辑
  ***********************************************************************************************************************/
 #include "UserTask.h"
 
@@ -44,15 +46,15 @@
 // 第一个（距离18749）<与第二个相距5549>
 
 // 任务：
+// 状态设置任务(云台Yaw轴角度和扳机位置调节任务)
 // 换弹任务
 // 扳机任务 (包含调节扳机松紧任务)
-// 通信任务 (can, uart)
 // 存储拉簧动能任务
 // yaw调整任务
 
 /************************全局或静态作用域*********************/
-static DartPacket_t g_xDartData;
 static ServoPacket_t g_xServoData;
+static IbusPacket_t g_xIbusData;
 static __IO uint8_t DartNum = 4;
 extern MotorManager_t MotorManager;
 static float MotorData = 0.0f;
@@ -61,79 +63,62 @@ static __IO float GripperTarget = 0.0f; // 位置不动
 // 储能任务互斥量
 static StaticSemaphore_t g_xLoadMutexBuffer;
 static SemaphoreHandle_t g_xLoadMutexHandle;
+static SemaphoreHandle_t g_xShootMutexHandle;
+static StaticSemaphore_t g_xShootMutexBuffer;
 
 // 储能任务信号量
 static StaticSemaphore_t g_xStoreSemaphore;
 SemaphoreHandle_t g_xStoreSemaphoreHandle;
+
+// 储能任务消息
+static StreamBufferHandle_t xLoadStreamBuf;
 
 // 换弹结构电机队列
 static uint8_t g_ucReloadQueueStorage[4 * sizeof(uint8_t)];
 static StaticQueue_t g_xReloadQueue;
 static QueueHandle_t g_xLoad3508QueueHandler;
 
-// Uart信号量
-static StaticSemaphore_t g_xUartSemaphore;
-SemaphoreHandle_t g_xUartSemaphoreHandle;
-
-// Uart任务的Stream流传输
-static StreamBufferHandle_t xGimbalStreamBuf;
-static StreamBufferHandle_t xTriggerStreamBuf;
-
-// Load任务的事件组
-static StaticEventGroup_t g_pxLoadEventGroupBuffer;
-static EventGroupHandle_t g_pxLoadEventGroupHandeler;
+// StateSet任务的事件组
+static StaticEventGroup_t g_pxStateSetEventGroupBuffer;
+static EventGroupHandle_t g_pxStateSetEventGroupHandeler;
 /*---------------------------------------------------------------------------------------*/
+
 // 模块驱动初始化
 void Module_Init(void)
 {
     BSP_POWER_DeInit(); // 失能无绿灯，亮红灯
     DWT_Init(180);
     MotorInit();
-    CanFliterCfg();
+    CanFilterCfg();
     BSP_UART_Init();
     // while (!ServoInit())
     //     ; // 这个地方有一个回调,需要进行数据读取
     ServoInit();
     // HAL_TIMEx_PWM_Start();
-
-    // 云台遥控器初始化
 }
 
 /// @brief 创建RTOS的通信量
 /// @param  无
 void RTOS_ModuleInit(void)
 {
-    // 任务通知 ：给串口通信确认是操控什么类型的（2006 / 4310 / HX06L）
-
-    // 软件定时器：定时向上位机回复确认当前状态正常，否则加一些安全措施，Tick大概30s触发一次
-
     // QUEUE（队列）：1.融合到云台调节当中，保证云台调节正常<队列集>; 2.融入到换弹结构当中,确保换弹结构正常
     g_xLoad3508QueueHandler = xQueueCreateStatic(4, sizeof(uint8_t), g_ucReloadQueueStorage, &g_xReloadQueue); // 这个队列用于换弹结构当中
 
     // SEMAPHORE（信号量）：信号量与DartNum共同决定飞镖换弹的状态
-    // g_xUartSemaphoreHandle = xSemaphoreCreateCountingStatic(3, 0, &g_xUartSemaphore); // 初始值为0，上限为2，接收时候释放
     g_xStoreSemaphoreHandle = xSemaphoreCreateCountingStatic(5, sizeof(uint8_t), &g_xStoreSemaphore);
 
     // MUTEX（互斥量）：调控云台方式只有一种，不允许上位机和遥控器同时调控
-    // g_xGimbalMutexHandle = xSemaphoreCreateMutexStatic(&g_xGimbalMutexBuffer);
     g_xLoadMutexHandle = xSemaphoreCreateMutexStatic(&g_xLoadMutexBuffer);
+    g_xShootMutexHandle = xSemaphoreCreateMutexStatic(&g_xShootMutexBuffer);
 
     // 使用stream流传输,也可以改成使用Message传输
-    xGimbalStreamBuf = xStreamBufferCreate(1, 1);  // 1字节触发,总共空间1字节
-    xTriggerStreamBuf = xStreamBufferCreate(1, 1); // 1字节触发
+    xLoadStreamBuf = xStreamBufferCreate(1, 1); // 1字节触发
 
     // EVENTGROUPS（事件组）：用于确认云台电机和射程电机正常设置,只有这两个正常设置之后才可以进行下面的流程
-    g_pxLoadEventGroupHandeler = xEventGroupCreateStatic(&g_pxLoadEventGroupBuffer);
+    g_pxStateSetEventGroupHandeler = xEventGroupCreateStatic(&g_pxStateSetEventGroupBuffer);
 }
 
 /***********************************************TASK******************************************************/
-// 云台调节任务(yaw调整任务),默认优先度较低,继承中断函数优先级
-osThreadId_t GimbalTaskHandle;
-const osThreadAttr_t GimbalTask_attributes = {
-    .name = "GimbalTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
-};
 
 // 拉簧储能任务
 osThreadId_t StoreEnergyTaskHandle;
@@ -159,28 +144,19 @@ const osThreadAttr_t ShootTask_attributes = {
     .priority = (osPriority_t)osPriorityNormal,
 };
 
-// CAN通信任务(似乎已经直接存在于电机调控过程)
-// osThreadId_t CanModuleTaskHandle;
-// const osThreadAttr_t CanModuleTask_attributes = {
-//     .name = "CanModuleTaskHandle",
-//     .stack_size = 128 * 4,
-//     .priority = (osPriority_t)osPriorityNormal,
-// };
-
-// UART通信任务 (上位机 / 总线舵机   共同使用)
-osThreadId_t UartModuleTaskHandle;
+// 飞镖状态设置(设置Yaw和射程)
+osThreadId_t StateSetTaskHandle;
 const osThreadAttr_t UartModuleTask_attributes = {
     .name = "UartModuleTask",
     .stack_size = 128 * 4,
     .priority = (osPriority_t)osPriorityNormal,
 };
 
-void GimbalTaskFunc(void *argument);
 void StoreEnergyTaskFunc(void *argument);
 void LoadTaskFunc(void *argument);
 void ShootTaskFunc(void *argument);
-void UartModuleTaskFunc(void *argument);
 void LoadMotorTaskFunc(void *argument);
+void StateSetTaskFunc(void *argument);
 
 /***********************************
  * 函数名: TaskInitFunc
@@ -192,63 +168,9 @@ void TaskInitFunc(void)
     RTOS_ModuleInit();
 
     // 任务初始化
-    GimbalTaskHandle = osThreadNew(GimbalTaskFunc, NULL, &GimbalTask_attributes);
     StoreEnergyTaskHandle = osThreadNew(StoreEnergyTaskFunc, NULL, &StoreEnergyTask_attributes);
     LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
     ShootTaskHandle = osThreadNew(ShootTaskFunc, NULL, &ShootTask_attributes);
-    UartModuleTaskHandle = osThreadNew(UartModuleTaskFunc, NULL, &UartModuleTask_attributes);
-}
-
-/**********************************
- * 函数名：GimbalTaskFunc
- * 作用：  调节飞镖云台
- * 参数：  无
- *********************************/
-void GimbalTaskFunc(void *argument)
-{
-    // 87 FF 7F F0 0B 33 37 FF -> 位置 10 rad, 速度 0 rad/s, kp = 1.4591, kd = 1.0f, 转矩0.0f
-    // 7F FF 7F F0 0B 33 37 FF -> 位置变为 0 rad
-
-    float GimablTarget = 0.0f;
-
-    while (1)
-    {
-        // 根据上位机和遥控器的命令对4310进行旋转
-        xStreamBufferReceive(xGimbalStreamBuf, &GimablTarget, sizeof(float), portMAX_DELAY);
-        DM_Motor_Enable(&MotorManager.MotorList[DM_4310_YAW - 1]);
-        DmMotorSendCfg(DM_4310_YAW, GimablTarget, 0.0f, DM_MIT);
-
-        // 等待云台电机到达目标位置，使用死区判定并带超时保护
-        {
-            uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-            float current_pos;
-
-            while (1)
-            {
-                current_pos = MotorManager.MotorList[DM_4310_YAW - 1].motor_data.solved_data[0];
-
-                // 检查是否到达目标位置（使用死区判定）
-                if (fabsf(current_pos - GimablTarget) <= MOTOR_DEAD_ZONE)
-                {
-                    break; // 到达目标
-                }
-
-                // 超时保护
-                if (osKernelGetTickCount() > timeout)
-                {
-                    // TODO: 添加错误处理（日志、报警等）
-                    break;
-                }
-
-                DmMotorSendCfg(DM_4310_YAW, GimablTarget, 0.0f, DM_MIT);
-                osDelay(10);
-            }
-        }
-
-        DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
-        // 这里释放一个事件组
-        xEventGroupSetBits(g_pxLoadEventGroupHandeler, EVENT_GIMBAL_READY);
-    }
 }
 
 /***********************************
@@ -259,13 +181,14 @@ void GimbalTaskFunc(void *argument)
 void StoreEnergyTaskFunc(void *argument)
 {
     // 等待事件组：云台和扳机都就绪后才开始
-    xEventGroupWaitBits(g_pxLoadEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
 
     // 接收计数型信号量之后才可以正常,这里更新第一次目标值（下拉至换弹位置 -> 上拉至扳机位置 -> 释放（同时回到零点）-> 下一次循环）
 
     DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
     DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
     uint8_t StoreState = 0x00;
+    int8_t Dart = 4;
     vTaskDelay(POWER_ON_DELAY_MS); // 上电保护延迟
 
     // J3519电机运动从顶部到底部
@@ -275,125 +198,85 @@ void StoreEnergyTaskFunc(void *argument)
         switch (StoreState)
         {
         case 0x00:
-            // 发射滑台下移到达换弹位置
+        {
+            // 发射滑台下移到达换弹位置(即为底部位置)
             // 循环到达发射位置,释放计数量/信号量/Stream流
             // 等待对方执行完任务,这可以直接读DartNum进行确定
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreBottom, 5.0f, DM_LOCATION_SPEED);
             DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreBottom, 5.0f, DM_LOCATION_SPEED);
 
-            // 等待电机到达目标位置，带超时保护
+            float left_pos, right_pos;
+
+            while (1)
             {
-                uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-                float left_pos, right_pos;
+                left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
+                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
-                while (1)
+                // 检查是否都到达目标位置（死区判定）
+                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
                 {
-                    left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                    right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
-
-                    // 检查是否都到达目标位置（死区判定）
-                    if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
-                        IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
-                    {
-                        break; // 到达目标
-                    }
-
-                    // 超时保护
-                    if (osKernelGetTickCount() > timeout)
-                    {
-                        // TODO: 添加错误处理（日志、报警等）
-                        break;
-                    }
-
-                    // 刷新电机数据
-                    osDelay(10);
+                    break; // 到达目标
                 }
+                // TODO: 添加错误处理（日志、报警等）
             }
 
             // 这里通信,改变飞镖数值之后释放一个互斥量让其进行运动
-            xSemaphoreGive(g_xStoreSemaphoreHandle);
+            xStreamBufferSend(xLoadStreamBuf, (const uint8_t *)(&Dart), 1, 0);
             xSemaphoreGive(g_xLoadMutexHandle);
+            vTaskSuspend(StoreEnergyTaskHandle);
             StoreState++;
             break;
+        }
+
         case 0x01:
+        {
             // 发射滑台上移到达扳机位置
             // 释放一个信号量或者任务通知量进行通信
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
             DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
 
             // 等待电机到达目标位置，带超时保护
+            float left_pos, right_pos;
+
+            while (1)
             {
-                uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-                float left_pos, right_pos;
+                left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
+                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
-                while (1)
+                // 检查是否都到达目标位置（死区判定）
+                if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
                 {
-                    left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                    right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
-
-                    // 检查是否都到达目标位置（死区判定）
-                    if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
-                        IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
-                    {
-                        break; // 到达目标
-                    }
-
-                    // 超时保护
-                    if (osKernelGetTickCount() > timeout)
-                    {
-                        // TODO: 添加错误处理（日志、报警等）
-                        break;
-                    }
-
-                    // 刷新电机数据
-                    osDelay(10);
+                    break; // 到达目标
                 }
+
+                // TODO: 添加错误处理（日志、报警等）
             }
 
             StoreState++;
             break;
+        }
+
         case 0x02:
-            // 发射滑台飞速向上发射
-            DmMotorSendCfg(DM_3519_STRENTH_LEFT, StoreLocPrimitive, ShotSpeed, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, StoreLocPrimitive, ShotSpeed, DM_LOCATION_SPEED);
-
+        {
             // 等待电机到达目标位置，带超时保护
-            {
-                uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-                float left_pos, right_pos;
-
-                while (1)
-                {
-                    left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                    right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
-
-                    // 检查是否都到达目标位置（死区判定）
-                    if (IS_IN_DEADZONE(left_pos, StoreLocPrimitive, MOTOR_DEAD_ZONE) &&
-                        IS_IN_DEADZONE(right_pos, StoreLocPrimitive, MOTOR_DEAD_ZONE))
-                    {
-                        break; // 到达目标
-                    }
-
-                    // 超时保护
-                    if (osKernelGetTickCount() > timeout)
-                    {
-                        // TODO: 添加错误处理（日志、报警等）
-                        break;
-                    }
-
-                    // 刷新电机数据
-                    osDelay(10);
-                }
-            }
-
-            vTaskDelay(RELOAD_BUFFER_MS); // 等待缓冲进行换弹
+            float left_pos, right_pos;
+            xSemaphoreGive(g_xShootMutexHandle);
+            // TODO: 添加错误处理（日志、报警等），完善整体流程，这个地方应该是DM电机失能之后输出数据
+            DM_MotorDisable(DM_3519_STRENTH_LEFT);
+            DM_MotorDisable(DM_3519_STRENTH_RIGHT);
+            vTaskSuspend(StoreEnergyTaskHandle);
             StoreState = 0x00;
+            Dart--;
+            StoreState = 0;
             break;
+        }
         default:
             break;
         }
 
-        if (uxSemaphoreGetCount(g_xStoreSemaphoreHandle) >= 4)
+        if (Dart == 0)
         {
             // 4发打完，失能所有电机，实际上这里需要归中
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
@@ -401,7 +284,7 @@ void StoreEnergyTaskFunc(void *argument)
             DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
 
             // 挂起任务（可恢复）
-            vTaskSuspend(NULL);
+            vTaskSuspend(StoreEnergyTaskHandle);
         }
 
         // 根据反馈数据进行确定是否放飞镖
@@ -419,6 +302,8 @@ void StoreEnergyTaskFunc(void *argument)
  **********************************/
 void LoadTaskFunc(void *argument)
 {
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+
     uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
     uint16_t servo_angles[3] = {0x0000};
     uint16_t servo_work_angle[3] = {SeperationAngle, SeperationAngle, SeperationAngle};
@@ -431,32 +316,40 @@ void LoadTaskFunc(void *argument)
 
     // 任务创建
     TaskHandle_t Load3508TaskHandle = NULL;
-    xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityAboveNormal, &Load3508TaskHandle); // 换弹3508电机任务
+    xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityBelowNormal7, &Load3508TaskHandle); // 换弹舵机任务
     GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, GripperTarget, false);
     while (1)
     {
         xSemaphoreTake(g_xLoadMutexHandle, portMAX_DELAY); // 等待互斥量,之后进一个循环
 
-        dart_num = uxQueueMessagesWaiting((QueueHandle_t)g_xStoreSemaphoreHandle);
+        xStreamBufferReceive(xLoadStreamBuf, &dart_num, 1, portMAX_DELAY);
         switch (dart_num)
         {
-        case 1:
+        case 4:
+        {
             GripperTarget = 0.0f;
             MutexTake = false;
             xSemaphoreGive(g_xLoadMutexHandle); // 等待互斥量,之后进一个循环
             break;
-        case 2:
+        }
+        case 3:
+        {
             GripperTarget = FirstServoLoc;
             MutexTake = true;
             break;
-        case 3:
+        }
+        case 2:
+        {
             GripperTarget = SecondServoLoc;
             MutexTake = true;
             break;
-        case 4:
+        }
+        case 1:
+        {
             GripperTarget = ThirdServoLoc;
             MutexTake = true;
             break;
+        }
         default:
             break;
         }
@@ -556,6 +449,7 @@ void LoadTaskFunc(void *argument)
                 // GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, 0.0f, true);
                 MutexTake = false;
                 xSemaphoreGive(g_xLoadMutexHandle); // 等待互斥量,之后进一个循环
+                vTaskResume(StoreEnergyTaskHandle);
             }
         }
     }
@@ -568,6 +462,8 @@ void LoadTaskFunc(void *argument)
  **********************************/
 void LoadMotorTaskFunc(void *argument)
 {
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+
     uint8_t fQueueDartNum = 0; // 目标为0最初
     vTaskDelay(1);             // 最开始放一个Tick
     // 在这里驱动换弹的3508电机运动
@@ -608,123 +504,52 @@ void LoadMotorTaskFunc(void *argument)
  **********************************/
 void ShootTaskFunc(void *argument)
 {
-    // 1.这里放一个队列，等待解析上位机发来的射程调整数据之后直接激活扳机位置调节，随时准备调节射程
-    float TriggerTarget = 0.0f; // 先转1圈
-    xStreamBufferReceive(xTriggerStreamBuf, &TriggerTarget, sizeof(float), portMAX_DELAY);
-
-    // 等待扳机电机到达目标位置，使用死区判定并带超时保护
-    {
-        uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-        float current_angle;
-
-        while (1)
-        {
-            current_angle = Motor_GetTotalAngle(RM_2006_TRIGGER) - MotorManager.MotorList[RM_2006_TRIGGER - 1].motor_data.offset_ecd;
-
-            // 检查是否到达目标位置（使用死区判定）
-            if (fabsf(current_angle - TriggerTarget) <= TRIGGER_DEAD_ZONE)
-            {
-                break; // 到达目标
-            }
-
-            // 超时保护
-            if (osKernelGetTickCount() > timeout)
-            {
-                // TODO: 添加错误处理（日志、报警等）
-                break;
-            }
-
-            TriggerTarget = RmMotorRemoveBias(RM_2006_TRIGGER, TriggerTarget, false); // 位置环,这里先转1圈看看,主要不知道限幅
-            RmMotorPID_Calc(RM_2006_TRIGGER, TriggerTarget);
-            // RmMotorSendCfg(RM_2006_TRIGGER, 5000);
-            osDelay(10);
-        }
-    }
-
-    // 转到指定位置,直接归位这个扳机
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
-    // 这里释放一个事件组
-    xEventGroupSetBits(g_pxLoadEventGroupHandeler, EVENT_TRIGGER_READY);
-
     while (1)
     {
         // 2.这里进行正常的发射函数,TIM2_CH1-PD12->A板H接口
-        // 根据同步带电机反馈数据进行发射
-        // 接收任务通知 / 互斥量
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
-
-        // delay一会再次释放
-        vTaskDelay(100);
+        xSemaphoreTake(g_xShootMutexHandle, portMAX_DELAY);
         __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_shoot);
+        // delay一会再次释放
+        vTaskDelay(500);
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
+        xSemaphoreGive(g_xShootMutexHandle);
+        vTaskResume(StoreEnergyTaskHandle);
     }
 }
 
 /************************************
- * 函数名：UartModuleTaskFunc
- * 作用：  获取串口数据包任务
+ * 函数名：StateSetTaskFunc
+ * 作用：  飞镖状态设置
  * 参数：  无
  * // TODO：  等待链接上位机和测试无上位机版本
  ***********************************/
-void UartModuleTaskFunc(void *argument)
+void StateSetTaskFunc(void *argument)
 {
-    // 等待TaskNotification
-    uint32_t xTaskNotificationNum = 0x00;
+    // 接收上位机 / 遥控器 传递的数据
+
+    // preset the target at the base
+    float preseting_distance = RmMotorRemoveBias(RM_2006_TRIGGER, 20.0f, true); // pay attention to this params, its unit is degree not rad!!!!
+    float preseting_yaw = 45.0f;                                                // this param is limited at (-160.0f, 160.0f)
     while (1)
     {
-        // xTaskNotifyWait(0xffffffff, 0xffffffff, &xTaskNotificationNum, portMAX_DELAY); // 32位全部清空,直接死等
-        // switch (xTaskNotificationNum)
-        // {
-        // case 0x00:
-        //     break;
+        // 调节位置,并等待位置调节成功,确保所有的任务处于阻塞态,防止其他任务有所影响,但是要确保所有电机停转并且失能
+        RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance);
+        while (Motor_GetTotalAngle(RM_2006_TRIGGER) != preseting_distance)
+        {
+            RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance);
+        }
+        DmMotorSendCfg(DM_4310_YAW, preseting_yaw, 0.0f, DM_MIT); // 调节Yaw轴位置
+        while (Motor_GetTotalAngle(DM_4310_YAW) != preseting_yaw)
+        {
+            DM_Motor_RefreshData(DM_4310_YAW);
+        }
+        // 扳机位置归位
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
+        // 事件组唤醒所有其他的任务
+        xEventGroupSetBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY);
 
-        //     // 有MCU控制协议
-        // case 0x01:
-        //     xTaskNotificationNum = 0x00;
-        //     // 处理数据
-        //     UartModule_GetServoPacket(BSP_UART6, &g_xServoData);
-        //     // 给队列处理数据
-        //     break;
-
-        //     // 无MCU控制协议
-        // case 0x02:
-        //     xTaskNotificationNum = 0x00;
-        //     // 处理数据
-        //     UartModule_GetServoPacket(BSP_UART6, &g_xServoData);
-        //     // 给队列处理数据
-        //     break;
-
-        //     // DART通信协议
-        // case 0x03:
-        //     xTaskNotificationNum = 0x00;
-        //     // 处理数据
-        //     // 对数据进行解析，看看是什么要求？是云台调整还是扳机调整
-        //     UartModule_GetDartPacket(BSP_UART3, &g_xDartData);
-        //     if (g_xDartData.is_valid)
-        //     {
-        //         // 4310电机调节
-        //         if (g_xDartData.data[0] == 0x43)
-        //         {
-        //             // 这里给一个队列
-        //         }
-        //         // 4310电机调节射程
-        //         if (g_xDartData.data[0] == 0x60)
-        //         {
-        //             // 这里给一个队列
-        //         }
-        //     }
-        //     break;
-
-        // default:
-        //     Error_Handler();
-        // }
-
-        // 这部分逻辑跑无视觉上位机处理
-
-        float gimbal_data = 20.0f;    // 云台偏移20
-        float trigger_data = 5184.0f; // 先转一圈
-
-        // 通知云台任务进行运动,使用任务通知将量传输过去,这可以考虑不用这个任务通知
-        xStreamBufferSend(xGimbalStreamBuf, &gimbal_data, sizeof(float), portMAX_DELAY);
-        xStreamBufferSend(xTriggerStreamBuf, &trigger_data, sizeof(float), portMAX_DELAY);
+        // 最后进入阻塞态,等待遥控器解算唤醒 / 串口接收唤醒
     }
 }
