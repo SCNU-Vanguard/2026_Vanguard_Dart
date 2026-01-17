@@ -2,20 +2,15 @@
 #define __BSP_UART_H
 
 #include "main.h"
+#include "config.h"
+#include "usart.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include "usart.h"
 
 /* 循环缓冲区大小定义 */
 #define UART_TX_BUFFER_SIZE 64
 #define UART_RX_BUFFER_SIZE 64
 #define UART_TX_CHUNK_SIZE 32
-
-/* 帧头帧尾位置记录数组大小定义 */
-// DART协议（4字节帧头）：64字节缓冲区最多装16个协议帧
-#define DART_FRAME_INDEX_SIZE 16
-// 0x55 0x55协议（2字节帧头）：64字节缓冲区最多装32个协议帧
-#define SERVO_FRAME_INDEX_SIZE 32
 
 /* UART编号枚举 */
 typedef enum
@@ -26,50 +21,6 @@ typedef enum
     BSP_UART8,
     BSP_UART_MAX
 } BSP_UART_NUM_e;
-
-#pragma pack(push, 1)
-/* 帧位置记录结构体 - 环形缓冲区记录帧头帧尾在数据缓冲区中的位置 */
-typedef struct
-{
-    // DART协议帧位置记录（4字节帧头，最多16帧）
-    uint8_t DartHeaderIndex[DART_FRAME_INDEX_SIZE]; // DART帧头在RxDataBuffer中的位置
-    uint8_t DartTailIndex[DART_FRAME_INDEX_SIZE];   // DART帧尾在RxDataBuffer中的位置
-    uint8_t DartFrameCount;                         // 有效帧数量
-    uint8_t DartWritePtr;                           // DART帧位置写指针（中断中使用）
-    uint8_t DartReadPtr;                            // DART帧位置读指针（用户读取时使用）
-    bool DartFrameValid[DART_FRAME_INDEX_SIZE];     // 帧有效标志（用于标记被覆盖的帧）
-
-    // 0x55 0x55协议帧位置记录（2字节帧头，最多32帧）
-    uint8_t ServoHeaderIndex[SERVO_FRAME_INDEX_SIZE]; // Servo帧头在RxDataBuffer中的位置
-    uint8_t ServoTailIndex[SERVO_FRAME_INDEX_SIZE];   // Servo帧尾在RxDataBuffer中的位置
-    uint8_t ServoFrameCount;                          // 有效帧数量
-    uint8_t ServoWritePtr;                            // Servo帧位置写指针（中断中使用）
-    uint8_t ServoReadPtr;                             // Servo帧位置读指针（用户读取时使用）
-    bool ServoFrameValid[SERVO_FRAME_INDEX_SIZE];     // 帧有效标志
-} FrameIndexBuffer;
-
-/* 接收缓冲区结构体 - 真正的环形缓冲区 */
-typedef struct
-{
-    uint8_t RxDataBuffer[UART_RX_BUFFER_SIZE];
-    uint16_t ReadIndex;  // 读索引（用户读取数据时移动），指向待读取的位置
-    uint16_t WriteIndex; // 写索引（接收中断时移动），指向待写入的位置
-    // 环形缓冲区特性：
-    // - 空状态: WriteIndex == ReadIndex
-    // - 满状态: (WriteIndex + 1) % SIZE == ReadIndex
-    // - 可用数据长度: (WriteIndex - ReadIndex + SIZE) % SIZE
-    // - 写指针可循环回绕到数组开头，覆盖旧数据
-    bool OverflowFlag;   // 溢出标志位（表示发生了数据覆盖）
-    bool WrapAroundFlag; // 环绕标志位（表示写指针已经从末尾回绕到开头）
-
-    // 帧头帧尾位置记录
-    FrameIndexBuffer FrameIndex;
-
-    // 帧头识别状态机
-    uint8_t HeaderMatchCount; // 帧头匹配字节计数
-    uint8_t PendingHeaderPos; // 待确认的帧头起始位置
-    bool HeaderCrossWrap;     // 帧头跨越缓冲区边界标志
-} DataBuffer;
 
 /* 循环发送缓冲区结构体 */
 typedef struct
@@ -82,15 +33,14 @@ typedef struct
     UART_HandleTypeDef *huart;           // 关联的UART句柄
     uint8_t temp_buffer[UART_TX_CHUNK_SIZE];
 } UartTxRingBuffer;
-#pragma pack(pop)
 
 /* 协议类型枚举 */
 typedef enum
 {
     PROTOCOL_SERVO_MCU = 0,    // 有MCU控制板协议 (0x55 0x55 | Length | Cmd | Params) - 无CRC
     PROTOCOL_SERVO_NO_MCU = 1, // 无MCU驱动板协议 (0x55 0x55 | ID | Length | Cmd | Params | CRC) - 有CRC
-    PROTOCOL_DART = 2,         // DART协议 (DART)
-    PROTOCOL_OTHER = -1        // 其他协议
+    PROTOCOL_IBUS = 2,         // IBUS协议 (0x20 0x40 | ... | CRC16)
+    PROTOCOL_OTHER = 3         // 其他协议
 } PROTOCOL_TYPE_e;
 
 // 为了兼容性，保留PROTOCOL_SERVO别名
@@ -110,15 +60,12 @@ typedef struct
     bool is_valid;     // 数据包是否有效
 } ServoPacket_t;
 
-/* 协议数据包结构体 - DART协议 */
+/* 协议数据包结构体 - IBUS协议（原始32字节） */
 typedef struct
 {
-    uint8_t header[4]; // 包头 "DART"
-    uint8_t data[64];  // 数据内容
-    uint8_t checksum;  // CRC校验
-    uint16_t data_len; // 数据长度
+    uint8_t data[IBUS_FRAME_LEN];
     bool is_valid;     // 数据包是否有效
-} DartPacket_t;
+} IbusPacket_t;
 #pragma pack(pop)
 
 /* 协议解析状态 */
@@ -130,10 +77,6 @@ typedef enum
     PARSE_SERVO_CMD,    // 解析指令
     PARSE_SERVO_PARAMS, // 解析参数
     PARSE_SERVO_CRC,    // 解析CRC
-
-    PARSE_DART_LENGTH, // DART数据长度
-    PARSE_DART_DATA,   // 解析DART数据
-    PARSE_DART_CRC,    // 解析DART的CRC
     PARSE_COMPLETE     // 解析完成
 } ParseState_e;
 
@@ -155,18 +98,27 @@ typedef struct
     ParseState_e parse_state;      // 解析状态
     uint16_t parse_index;          // 解析索引
     ServoPacket_t servo_packet;    // 舵机协议数据包
-    DartPacket_t dart_packet;      // DART协议数据包
     bool packet_ready;             // 是否有完整数据包
+
+    // IBUS协议数据包
+    IbusPacket_t ibus_packet;
+    bool ibus_ready;
+    uint32_t ibus_error_count;
+    uint8_t ibus_stream[IBUS_STREAM_BUFFER_LEN];
+    uint16_t ibus_stream_len;
 } UartRxRingBuffer;
 #pragma pack(pop)
 
 /* ========== 用户API接口 ========== */
 
-// 初始化BSP UART模块（初始化所有UART的缓冲区，自动启动中断接收）
+// 初始化BSP UART模块（初始化所有UART的缓冲区，自动启动接收）
 void BSP_UART_Init(void);
 
 // 设置协议类型（根据SERVO_COM标志）
 void UART_SetProtocol(BSP_UART_NUM_e uart_num, bool is_servo_mode);
+
+// 设置协议类型（推荐使用）
+void UART_SetProtocolType(BSP_UART_NUM_e uart_num, PROTOCOL_TYPE_e protocol_type);
 
 // 发送数据
 uint16_t UART_Send(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len);
@@ -197,11 +149,17 @@ bool UART_HasPacket(BSP_UART_NUM_e uart_num);
 // 获取舵机协议数据包
 bool UART_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet);
 
-// 获取DART协议数据包
-bool UART_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet);
-
 // 清除数据包标志
 void UART_ClearPacket(BSP_UART_NUM_e uart_num);
+
+// 检查是否有完整的IBUS数据包
+bool UART_HasIbusPacket(BSP_UART_NUM_e uart_num);
+
+// 获取IBUS数据包
+bool UART_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet);
+
+// 清除IBUS数据包标志
+void UART_ClearIbusPacket(BSP_UART_NUM_e uart_num);
 
 /* ========== 工具函数 ========== */
 
@@ -214,6 +172,5 @@ void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 
 /* ========== 缓冲区访问函数（供UartProtocol模块使用） ========== */
 UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num);
-DataBuffer *BSP_UART_GetDataBuffer(BSP_UART_NUM_e uart_num);
 
 #endif

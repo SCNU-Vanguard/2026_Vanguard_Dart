@@ -23,13 +23,6 @@
 bool UartModule_HasServoPacket(BSP_UART_NUM_e uart_num);
 
 /**
- * @brief 检查是否有完整的DART数据包
- * @param uart_num UART编号
- * @return true-有完整数据包，false-无
- */
-bool UartModule_HasDartPacket(BSP_UART_NUM_e uart_num);
-
-/**
  * @brief 获取舵机协议数据包
  * @param uart_num UART编号
  * @param packet 数据包指针
@@ -38,18 +31,31 @@ bool UartModule_HasDartPacket(BSP_UART_NUM_e uart_num);
 bool UartModule_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet);
 
 /**
- * @brief 获取DART协议数据包
- * @param uart_num UART编号
- * @param packet 数据包指针
- * @return true-获取成功，false-失败
- */
-bool UartModule_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet);
-
-/**
  * @brief 清除数据包标志
  * @param uart_num UART编号
  */
 void UartModule_ClearPacket(BSP_UART_NUM_e uart_num);
+
+/**
+ * @brief 检查是否有完整的IBUS数据包
+ * @param uart_num UART编号
+ * @return true-有完整数据包，false-无
+ */
+bool UartModule_HasIbusPacket(BSP_UART_NUM_e uart_num);
+
+/**
+ * @brief 获取IBUS协议数据包
+ * @param uart_num UART编号
+ * @param packet 数据包指针
+ * @return true-获取成功，false-失败
+ */
+bool UartModule_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet);
+
+/**
+ * @brief 清除IBUS数据包标志
+ * @param uart_num UART编号
+ */
+void UartModule_ClearIbusPacket(BSP_UART_NUM_e uart_num);
 
 /* ========== 用户级发送接口 ========== */
 
@@ -63,15 +69,6 @@ void UartModule_ClearPacket(BSP_UART_NUM_e uart_num);
  * @return true-发送成功，false-失败
  */
 bool UartModule_SendServoCmd(BSP_UART_NUM_e uart_num, uint8_t id, uint8_t cmd, uint8_t *params, uint8_t param_len);
-
-/**
- * @brief 发送DART数据包
- * @param uart_num UART编号
- * @param data 数据内容
- * @param data_len 数据长度
- * @return true-发送成功，false-失败
- */
-bool UartModule_SendDartPacket(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t data_len);
 
 /**
  * @brief 发送原始数据

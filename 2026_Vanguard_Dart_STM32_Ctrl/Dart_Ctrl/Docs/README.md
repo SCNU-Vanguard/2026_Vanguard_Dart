@@ -81,10 +81,10 @@ DM_Motor_SendControl(yaw_motor);
 
 ### 3. UART通信示例
 ```c
-// 检查是否有DART协议包
-if (UartModule_HasDartPacket(BSP_UART6)) {
-    DartPacket_t pkt;
-    if (UartModule_GetDartPacket(BSP_UART6, &pkt)) {
+// 检查是否有IBUS协议包
+if (UartModule_HasIbusPacket(BSP_UART6)) {
+    IbusPacket_t pkt;
+    if (UartModule_GetIbusPacket(BSP_UART6, &pkt)) {
         // 处理数据 pkt.data
     }
 }

@@ -9,7 +9,7 @@
 /* 内部缓冲区定义（用户无需关心） */
 static UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
 static UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
-static DataBuffer g_data_buffers[BSP_UART_MAX]; // DataBuffer实例（用于指针操作）
+static uint8_t g_ibus_dma_buffer[IBUS_DMA_BUFFER_LEN];
 
 /* 内部函数声明 */
 static void TxRingBuffer_Init(UartTxRingBuffer *rb, UART_HandleTypeDef *huart);
@@ -21,6 +21,7 @@ static bool RxRingBuffer_WriteByte(UartRxRingBuffer *rb, uint8_t byte);
 static uint16_t RxRingBuffer_Read(UartRxRingBuffer *rb, uint8_t *data, uint16_t len);
 static UART_HandleTypeDef *GetUartHandle(BSP_UART_NUM_e uart_num);
 static BSP_UART_NUM_e GetUartNum(UART_HandleTypeDef *huart);
+static void StartIbusDma(UartRxRingBuffer *rb);
 
 /**
  * @brief CRC校验生成（公开函数，供所有模块使用）
@@ -90,6 +91,8 @@ static void RxRingBuffer_Init(UartRxRingBuffer *rb, UART_HandleTypeDef *huart)
     rb->huart = huart;
     rb->protocol_type = PROTOCOL_SERVO; // 默认舵机协议
     rb->packet_ready = false;
+    rb->ibus_ready = false;
+    rb->ibus_error_count = 0;
     Protocol_ResetParser(rb);
     memset(rb->buffer, 0, UART_RX_BUFFER_SIZE);
 }
@@ -158,26 +161,43 @@ static void StartTransmit(UartTxRingBuffer *rb)
 }
 
 /**
+ * @brief 启动IBUS DMA接收（UART6专用）
+ */
+static void StartIbusDma(UartRxRingBuffer *rb)
+{
+    if (rb == NULL || rb->huart == NULL)
+        return;
+
+    rb->isReceiving = true;
+    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN) != HAL_OK)
+    {
+        rb->isReceiving = false;
+        return;
+    }
+    if (rb->huart->hdmarx != NULL)
+    {
+        __HAL_DMA_DISABLE_IT(rb->huart->hdmarx, DMA_IT_HT);
+    }
+}
+
+/**
  * @brief 向接收缓冲区写入一个字节（支持覆盖写入）
  * @note  去除读写指针间隔1的限制，允许完全覆盖
  *        缓冲区满时自动覆盖旧数据
  */
 static bool RxRingBuffer_WriteByte(UartRxRingBuffer *rb, uint8_t byte)
 {
-    // 直接写入，无论缓冲区是否满
     rb->buffer[rb->head] = byte;
     rb->head = (rb->head + 1) % UART_RX_BUFFER_SIZE;
 
-    // 如果head追上tail，说明覆盖了旧数据，需要移动tail
-    if (rb->head == rb->tail)
+    if (rb->count < UART_RX_BUFFER_SIZE)
     {
-        rb->tail = (rb->tail + 1) % UART_RX_BUFFER_SIZE;
-        rb->overflowFlag = true;
-        // count保持为最大值
+        rb->count++;
     }
     else
     {
-        rb->count++;
+        rb->tail = (rb->tail + 1) % UART_RX_BUFFER_SIZE;
+        rb->overflowFlag = true;
     }
 
     return true;
@@ -209,7 +229,7 @@ static uint16_t RxRingBuffer_Read(UartRxRingBuffer *rb, uint8_t *data, uint16_t 
  * @brief 初始化BSP UART模块
  * @note 自动开启所有UART的中断接收，并为每个串口设置默认协议
  *       - UART3: SERVO_MCU协议（舵机通信，有MCU控制板，无CRC）
- *       - UART6: DART协议（上位机通信）
+ *       - UART6: IBUS协议（遥控器接收）
  *       - 其他: OTHER（暂未定义）
  */
 void BSP_UART_Init(void)
@@ -222,9 +242,6 @@ void BSP_UART_Init(void)
             TxRingBuffer_Init(&g_uart_tx_buffers[i], huart);
             RxRingBuffer_Init(&g_uart_rx_buffers[i], huart);
 
-            // 初始化DataBuffer（包含帧索引缓冲区，调用UartProtocol模块）
-            Protocol_DataBufferInit(&g_data_buffers[i]);
-
             // 为每个串口设置默认协议
             UartRxRingBuffer *rb = &g_uart_rx_buffers[i];
             switch ((BSP_UART_NUM_e)i)
@@ -233,7 +250,7 @@ void BSP_UART_Init(void)
                 rb->protocol_type = PROTOCOL_SERVO_MCU; // UART3: 舵机通信（有MCU控制板，无CRC）
                 break;
             case BSP_UART6:
-                rb->protocol_type = PROTOCOL_DART; // UART6: 上位机通信，使用DART协议
+                rb->protocol_type = PROTOCOL_IBUS; // UART6: IBUS接收
                 break;
             default:
                 rb->protocol_type = PROTOCOL_OTHER; // 其他串口暂未定义
@@ -241,21 +258,61 @@ void BSP_UART_Init(void)
             }
 
             // 自动开启中断接收
-            rb->isReceiving = true;
-            HAL_UART_Receive_IT(huart, &rb->rxByte, 1);
+            if (rb->protocol_type == PROTOCOL_IBUS)
+            {
+                StartIbusDma(rb);
+            }
+            else
+            {
+                rb->isReceiving = true;
+                HAL_UART_Receive_IT(huart, &rb->rxByte, 1);
+            }
         }
     }
 }
 
 /**
- * @brief 设置协议类型（调用UartProtocol模块）
+ * @brief 设置协议类型（兼容旧接口）
  * @param uart_num UART编号
- * @param is_servo_mode true=舵机协议, false=DART协议
- * @note 协议设置逻辑已移至 UartProtocol.c
+ * @param is_servo_mode true=舵机协议, false=IBUS协议
  */
 void UART_SetProtocol(BSP_UART_NUM_e uart_num, bool is_servo_mode)
 {
-    Protocol_SetType(uart_num, is_servo_mode ? PROTOCOL_SERVO : PROTOCOL_DART);
+    UART_SetProtocolType(uart_num, is_servo_mode ? PROTOCOL_SERVO : PROTOCOL_IBUS);
+}
+
+/**
+ * @brief 设置协议类型（推荐使用）
+ * @param uart_num UART编号
+ * @param protocol_type 协议类型
+ */
+void UART_SetProtocolType(BSP_UART_NUM_e uart_num, PROTOCOL_TYPE_e protocol_type)
+{
+    if (uart_num >= BSP_UART_MAX)
+        return;
+
+    UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
+    Protocol_SetType(uart_num, protocol_type);
+
+    // 重新配置接收方式
+    if (rb->huart != NULL)
+    {
+        HAL_UART_AbortReceive(rb->huart);
+    }
+    else
+    {
+        return;
+    }
+
+    if (protocol_type == PROTOCOL_IBUS && uart_num == BSP_UART6)
+    {
+        StartIbusDma(rb);
+    }
+    else
+    {
+        rb->isReceiving = true;
+        HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+    }
 }
 
 /**
@@ -298,8 +355,17 @@ void UART_RestartRx(BSP_UART_NUM_e uart_num)
         return;
 
     UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
-    rb->isReceiving = true;
-    HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+    if (rb->huart == NULL)
+        return;
+    if (rb->protocol_type == PROTOCOL_IBUS && uart_num == BSP_UART6)
+    {
+        StartIbusDma(rb);
+    }
+    else
+    {
+        rb->isReceiving = true;
+        HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+    }
 }
 
 /**
@@ -310,23 +376,7 @@ uint16_t UART_Read(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t len)
     if (uart_num >= BSP_UART_MAX || data == NULL || len == 0)
         return 0;
 
-    DataBuffer *db = &g_data_buffers[uart_num];
-
-    // 计算环形缓冲区中可读数据量
-    uint16_t dataCount = (db->WriteIndex - db->ReadIndex + UART_RX_BUFFER_SIZE) % UART_RX_BUFFER_SIZE;
-    uint16_t readLen = (len > dataCount) ? dataCount : len;
-
-    // 从环形缓冲区读取数据并移动ReadIndex
-    for (uint16_t i = 0; i < readLen; i++)
-    {
-        data[i] = db->RxDataBuffer[db->ReadIndex];
-        db->ReadIndex = (db->ReadIndex + 1) % UART_RX_BUFFER_SIZE;
-    }
-
-    // 同时从UartRxRingBuffer读取（保持同步）
-    RxRingBuffer_Read(&g_uart_rx_buffers[uart_num], NULL, 0);
-
-    return readLen;
+    return RxRingBuffer_Read(&g_uart_rx_buffers[uart_num], data, len);
 }
 
 /**
@@ -364,6 +414,7 @@ void UART_ClearRx(BSP_UART_NUM_e uart_num)
     rb->tail = 0;
     rb->count = 0;
     rb->overflowFlag = false;
+    rb->ibus_error_count = 0;
     Protocol_ResetParser(rb);
 }
 
@@ -386,19 +437,35 @@ bool UART_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet)
 }
 
 /**
- * @brief 获取DART协议数据包（调用UartProtocol模块）
- */
-bool UART_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet)
-{
-    return Protocol_GetDartPacket(uart_num, packet);
-}
-
-/**
  * @brief 清除数据包标志（调用UartProtocol模块）
  */
 void UART_ClearPacket(BSP_UART_NUM_e uart_num)
 {
     Protocol_ClearPacket(uart_num);
+}
+
+/**
+ * @brief 检查是否有完整的IBUS数据包
+ */
+bool UART_HasIbusPacket(BSP_UART_NUM_e uart_num)
+{
+    return Protocol_HasIbusPacket(uart_num);
+}
+
+/**
+ * @brief 获取IBUS数据包
+ */
+bool UART_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet)
+{
+    return Protocol_GetIbusPacket(uart_num, packet);
+}
+
+/**
+ * @brief 清除IBUS数据包标志
+ */
+void UART_ClearIbusPacket(BSP_UART_NUM_e uart_num)
+{
+    Protocol_ClearIbusPacket(uart_num);
 }
 
 /* ========== HAL回调函数实现 ========== */
@@ -422,14 +489,9 @@ void BSP_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /**
- * @brief UART接收完成回调（包含协议解析、帧头识别和DataBuffer环形写入）
- * @note  环形缓冲区特性：
- *        - 写指针可循环回绕到数组开头，覆盖旧数据
- *        - 缓冲区满时自动覆盖旧数据
- *        - 去除读写指针间隔1的限制，允许完全覆盖
- *        - 覆盖时读指针强制移动到下一个有效帧头位置
- *        - 自动识别帧头位置并记录到帧索引数组
- *        - 溢出时自动使被覆盖的帧无效化
+ * @brief UART接收完成回调
+ * @note  UART6 使用DMA接收IBUS固定32字节帧；
+ *        其他串口使用中断按字节接收并解析舵机协议
  */
 void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -438,63 +500,14 @@ void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         return;
 
     UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
-    DataBuffer *db = &g_data_buffers[uart_num];
+    if (uart_num == BSP_UART6 && rb->protocol_type == PROTOCOL_IBUS)
+        return;
 
     // 将字节写入环形缓冲区（用于原始数据读取）
     RxRingBuffer_WriteByte(rb, rb->rxByte);
 
-    // 记录当前写入位置（用于帧头识别）
-    uint8_t currentWritePos = (uint8_t)db->WriteIndex;
-
-    // 检测环绕：写指针即将从末尾回到开头
-    if (db->WriteIndex == UART_RX_BUFFER_SIZE - 1)
-    {
-        db->WrapAroundFlag = true; // 标记即将发生环绕
-    }
-
-    // 环形缓冲区写入DataBuffer
-    // 计算下一个写位置
-    uint16_t nextWriteIndex = (db->WriteIndex + 1) % UART_RX_BUFFER_SIZE;
-
-    // 检查写指针是否追上读指针（缓冲区满，发生覆盖）
-    // 去除间隔1的限制，允许完全覆盖
-    if (db->WriteIndex == db->ReadIndex && db->OverflowFlag)
-    {
-        // 已经处于覆盖状态，每次写入都需要处理
-        // 1. 使被覆盖位置的帧无效化（调用UartProtocol模块）
-        Protocol_InvalidateOverwrittenFrames(db, rb, (uint8_t)db->WriteIndex);
-
-        // 2. 移动读指针到下一个有效帧头位置（调用UartProtocol模块）
-        Protocol_MoveReadIndexToNextFrame(db, rb);
-    }
-    else if (nextWriteIndex == db->ReadIndex)
-    {
-        // 首次追上读指针，进入覆盖模式
-        // 1. 使被覆盖位置的帧无效化（调用UartProtocol模块）
-        Protocol_InvalidateOverwrittenFrames(db, rb, (uint8_t)db->ReadIndex);
-
-        // 2. 移动读指针到下一个有效帧头位置（调用UartProtocol模块）
-        Protocol_MoveReadIndexToNextFrame(db, rb);
-
-        db->OverflowFlag = true; // 标记发生了数据覆盖
-    }
-
-    // 写入数据
-    db->RxDataBuffer[db->WriteIndex] = rb->rxByte;
-    db->WriteIndex = nextWriteIndex;
-
-    // 帧头识别（在写入数据后进行，调用UartProtocol模块）
-    Protocol_DetectFrameHeader(db, rb, rb->rxByte, currentWritePos);
-
-    // 协议解析（在帧头识别后进行，调用UartProtocol模块）
+    // 舵机协议解析
     Protocol_ParseByte(rb, rb->rxByte);
-
-    // 如果协议解析完成且CRC校验通过，记录帧尾位置并设置有效标志
-    if (rb->packet_ready)
-    {
-        // 帧尾位置是当前写入位置（刚写入的CRC字节位置，调用UartProtocol模块）
-        Protocol_RecordFrameTail(db, rb, currentWritePos);
-    }
 
     // 继续接收下一个字节
     if (rb->isReceiving)
@@ -513,6 +526,26 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     BSP_UART_RxCpltCallback(huart);
 }
 
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+    if (huart != &huart6)
+        return;
+
+    UartRxRingBuffer *rb = &g_uart_rx_buffers[BSP_UART6];
+    if (rb->protocol_type != PROTOCOL_IBUS)
+        return;
+
+    if (Size > 0 && Size <= IBUS_DMA_BUFFER_LEN)
+    {
+        Protocol_ParseIbusStream(rb, g_ibus_dma_buffer, Size);
+    }
+
+    if (rb->isReceiving)
+    {
+        StartIbusDma(rb);
+    }
+}
+
 /* ========== 缓冲区访问函数（供UartProtocol模块使用） ========== */
 
 /**
@@ -527,14 +560,3 @@ UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num)
     return &g_uart_rx_buffers[uart_num];
 }
 
-/**
- * @brief 获取数据缓冲区指针
- * @param uart_num UART编号
- * @return 数据缓冲区指针，失败返回NULL
- */
-DataBuffer *BSP_UART_GetDataBuffer(BSP_UART_NUM_e uart_num)
-{
-    if (uart_num >= BSP_UART_MAX)
-        return NULL;
-    return &g_data_buffers[uart_num];
-}

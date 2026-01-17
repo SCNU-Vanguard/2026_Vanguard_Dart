@@ -24,7 +24,7 @@ SerialServoControllerTypeDef serial_servo_controller;
 #define BYTE_TO_HW(A, B) ((((uint16_t)(A)) << 8) | (uint8_t)(B)) // 高低八位合成十六位
 
 // UART 配置
-#define SERVO_UART_PORT BSP_UART6 // 舵机使用的UART端口
+#define SERVO_UART_PORT BSP_UART3 // 舵机使用的UART端口
 
 // 超时配置
 #define SERVO_TIMEOUT_MS 100 // 命令超时时间(ms)
@@ -87,7 +87,7 @@ static void cmd_frame_complete(SerialServoCmdTypeDef *frame, uint8_t args_num)
 static uint16_t servo_send_frame(SerialServoCmdTypeDef *frame, uint8_t frame_len)
 {
     // 设置协议为舵机模式
-    UART_SetProtocol(SERVO_UART_PORT, true);
+    UART_SetProtocolType(SERVO_UART_PORT, PROTOCOL_SERVO_NO_MCU);
 
     // 发送数据帧
     return UART_Send(SERVO_UART_PORT, (uint8_t *)frame, frame_len);
@@ -456,7 +456,7 @@ void serial_servo_init(void)
     serial_servo_controller.serial_write_and_read = serial_write_and_read;
 
     // 设置UART为舵机协议模式
-    UART_SetProtocol(SERVO_UART_PORT, true);
+    UART_SetProtocolType(SERVO_UART_PORT, PROTOCOL_SERVO_NO_MCU);
 
     // 启动接收
     UART_RestartRx(SERVO_UART_PORT);

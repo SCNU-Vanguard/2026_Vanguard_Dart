@@ -40,21 +40,6 @@ bool UartModule_HasServoPacket(BSP_UART_NUM_e uart_num)
 }
 
 /**
- * @brief 检查是否有完整的DART数据包
- */
-bool UartModule_HasDartPacket(BSP_UART_NUM_e uart_num)
-{
-    if (uart_num >= BSP_UART_MAX)
-        return false;
-
-    UartRxRingBuffer *rb = BSP_UART_GetRxBuffer(uart_num);
-    if (rb == NULL)
-        return false;
-
-    return (Protocol_HasPacket(uart_num) && rb->protocol_type == PROTOCOL_DART);
-}
-
-/**
  * @brief 获取舵机协议数据包
  */
 bool UartModule_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet)
@@ -63,19 +48,35 @@ bool UartModule_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet)
 }
 
 /**
- * @brief 获取DART协议数据包
- */
-bool UartModule_GetDartPacket(BSP_UART_NUM_e uart_num, DartPacket_t *packet)
-{
-    return Protocol_GetDartPacket(uart_num, packet);
-}
-
-/**
  * @brief 清除数据包标志
  */
 void UartModule_ClearPacket(BSP_UART_NUM_e uart_num)
 {
     Protocol_ClearPacket(uart_num);
+}
+
+/**
+ * @brief 检查是否有完整的IBUS数据包
+ */
+bool UartModule_HasIbusPacket(BSP_UART_NUM_e uart_num)
+{
+    return Protocol_HasIbusPacket(uart_num);
+}
+
+/**
+ * @brief 获取IBUS协议数据包
+ */
+bool UartModule_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet)
+{
+    return Protocol_GetIbusPacket(uart_num, packet);
+}
+
+/**
+ * @brief 清除IBUS数据包标志
+ */
+void UartModule_ClearIbusPacket(BSP_UART_NUM_e uart_num)
+{
+    Protocol_ClearIbusPacket(uart_num);
 }
 
 /* ========== 用户级发送接口实现 ========== */
@@ -150,39 +151,6 @@ bool UartModule_SendServoCmd(BSP_UART_NUM_e uart_num, uint8_t id, uint8_t cmd, u
 }
 
 /**
- * @brief 发送DART数据包
- * @note 数据包格式：DART | Length | Data... | CRC
- */
-bool UartModule_SendDartPacket(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t data_len)
-{
-    if (uart_num >= BSP_UART_MAX || data == NULL || data_len > 64)
-        return false;
-
-    uint8_t tx_buf[72];
-    uint16_t tx_len = 0;
-
-    // 帧头 "DART"
-    tx_buf[tx_len++] = 'D';
-    tx_buf[tx_len++] = 'A';
-    tx_buf[tx_len++] = 'R';
-    tx_buf[tx_len++] = 'T';
-
-    // 数据长度
-    tx_buf[tx_len++] = (uint8_t)data_len;
-
-    // 数据内容
-    memcpy(&tx_buf[tx_len], data, data_len);
-    tx_len += data_len;
-
-    // CRC校验
-    tx_buf[tx_len++] = Protocol_Calculate_CRC(data, data_len);
-
-    // 发送
-    uint16_t sent = UART_Send(uart_num, tx_buf, tx_len);
-    return (sent == tx_len);
-}
-
-/**
  * @brief 发送原始数据
  */
 uint16_t UartModule_SendRaw(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len)
@@ -197,7 +165,7 @@ uint16_t UartModule_SendRaw(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16
  */
 void UartModule_SetProtocol(BSP_UART_NUM_e uart_num, PROTOCOL_TYPE_e protocol_type)
 {
-    Protocol_SetType(uart_num, protocol_type);
+    UART_SetProtocolType(uart_num, protocol_type);
 }
 
 /**
