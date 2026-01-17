@@ -103,6 +103,7 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
+  // 对各个外设进行初始化
   Module_Init();
 
   /* USER CODE END 2 */
