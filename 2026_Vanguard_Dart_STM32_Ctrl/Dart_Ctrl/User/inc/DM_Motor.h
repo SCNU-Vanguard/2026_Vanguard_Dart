@@ -348,4 +348,8 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
 /// @param target 目标值
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
+/// @brief 电机数据刷新函数(只刷新数据)
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
+
 #endif

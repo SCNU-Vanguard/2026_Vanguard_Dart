@@ -38,7 +38,7 @@ DM_MotorConfig_t g_DM_Configs[4] = {0};
 
 /*============================== 静态函数声明（私有方法） ==============================*/
 // 达妙电机通用函数
-static void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
 
 // J3519专用函数
 static void DM_J3519_InitInternal(MotorTypeDef *motor, uint8_t id);
@@ -80,6 +80,8 @@ const DM_MotorClass_t DM_J3519_Class = {
     .WorkMode = DM_LOCATION_SPEED,
 };
 
+// 87 FF 7F F0 0B 33 37 FF -> 位置 10 rad, 速度 0 rad/s, kp = 1.4591, kd = 1.0f, 转矩0.0f
+// 7F FF 7F F0 0B 33 37 FF -> 位置变为 0 rad
 /// @brief J4310电机类
 const DM_MotorClass_t DM_J4310_Class = {
     .name = "J4310",

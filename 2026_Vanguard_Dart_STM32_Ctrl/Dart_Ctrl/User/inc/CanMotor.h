@@ -151,7 +151,17 @@ typedef struct
 // 电机结构体定义
 typedef struct _MotorTypeDef
 {
-    uint8_t MotorID;
+    // ==================== 快速访问区 (展平数据) ====================
+    uint8_t MotorID;              // 电机ID
+    can_motor_band band;          // 电机品牌 (冗余存储以加快分支判断)
+    can_motor_model model;        // 电机型号
+    uint16_t can_id_tx;           // CAN发送ID
+    uint16_t can_id_rx;           // CAN接收ID (即 CAN_Rid)
+    float gear_ratio;             // 减速比
+    float current_ratio;          // 电流/力矩转换系数
+    int16_t max_current;          // 最大电流/限幅值
+
+    // ==================== 原始存储区 ====================
     motor_inf MotorInf;
     uint8_t ReceiveMotorData[8];    // 电机接收数据存储
     uint8_t SendMotorData[8];       // 电机发送数据存储
@@ -173,7 +183,7 @@ typedef struct _MotorTypeDef
         const struct _DM_MotorClass *dm_motor_class; // DM电机类指针
     } motor_class;
 
-    // ==================== 弃用的函数指针 ====================
+    // ==================== 兼容性接口 (保留旧代码) ====================
     // 以下函数指针保留用于向后兼容，新代码请使用 motor_class 虚函数表
     // @deprecated 使用 RM_Motor_SendControl() 或 DM_Motor_SendControl() 代替
     uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);
@@ -185,7 +195,7 @@ typedef struct _MotorTypeDef
     CASCADE_PID_t cascade_pid; // 串级PID
     uint8_t use_cascade;       // 是否使用串级控制：0-单环，1-串级
 
-    // CAN_RX_ID
+    // CAN_RX_ID (冗余保留以防旧代码引用)
     uint16_t CAN_Rid;
 } MotorTypeDef;
 
@@ -218,11 +228,10 @@ void MotorRegister(void);
 /// @return 无
 void CanRegisterMotorCfg(MotorTypeDef *ptr);
 
-/// @brief CAN过滤器的再初始化，其实都是因为强迫症所以只过滤了这个
+/// @brief CAN过滤器的再初始化
 /// @param 无
 /// @note 默认接收全部数据,调用该函数之后将只接收达妙MIT模式的反馈和RM电机的反馈帧
-///       但是要对比一下ID
-void CanFliterCfg(void);
+void CanFilterCfg(void);
 
 /// @brief CAN FIFO中断回调处理函数
 /// @param fifo_num FIFO的对应号
