@@ -195,7 +195,7 @@ typedef struct _MotorTypeDef
     CASCADE_PID_t cascade_pid; // 串级PID
     uint8_t use_cascade;       // 是否使用串级控制：0-单环，1-串级
 
-    // CAN_RX_ID (冗余保留以防旧代码引用)
+    // CAN_RX_ID
     uint16_t CAN_Rid;
 } MotorTypeDef;
 

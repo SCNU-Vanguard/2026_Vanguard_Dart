@@ -505,15 +505,15 @@ void LoadMotorTaskFunc(void *argument)
 void ShootTaskFunc(void *argument)
 {
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_store); // 这个地方设置为未释放状态
     while (1)
     {
         // 2.这里进行正常的发射函数,TIM2_CH1-PD12->A板H接口
         xSemaphoreTake(g_xShootMutexHandle, portMAX_DELAY);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_shoot);
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_shoot);
         // delay一会再次释放
         vTaskDelay(500);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_store); // 这个地方设置为未释放状态
         xSemaphoreGive(g_xShootMutexHandle);
         vTaskResume(StoreEnergyTaskHandle);
     }
@@ -546,7 +546,7 @@ void StateSetTaskFunc(void *argument)
             DM_Motor_RefreshData(DM_4310_YAW);
         }
         // 扳机位置归位
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, MG996R_store); // 这个地方设置为未释放状态
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_store); // 这个地方设置为未释放状态
         // 事件组唤醒所有其他的任务
         xEventGroupSetBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY);
 
