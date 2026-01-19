@@ -5,5 +5,7 @@
 #include "FreeRTOS.h"
 #include "cmsis_os.h"
 #include "task.h"
+#include "config.h"
+#include "bsp_uart.h"
 
 #endif
