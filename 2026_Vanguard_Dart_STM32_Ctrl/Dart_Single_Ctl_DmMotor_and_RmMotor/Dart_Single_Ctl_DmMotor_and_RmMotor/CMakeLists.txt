@@ -42,14 +42,22 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
+# User and Bsp sources
+file(GLOB_RECURSE USER_SOURCES "User/src/*.c")
+file(GLOB_RECURSE BSP_SOURCES "Bsp/src/*.c")
+
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    ${USER_SOURCES}
+    ${BSP_SOURCES}
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    User/inc
+    Bsp/inc
 )
 
 # Add project symbols (macros)
