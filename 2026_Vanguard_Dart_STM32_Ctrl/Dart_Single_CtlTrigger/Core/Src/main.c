@@ -72,6 +72,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -92,18 +93,24 @@ int main(void)
   /* USER CODE BEGIN 2 */
 	HAL_TIM_Base_Start(&htim8);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
+	HAL_Delay(2000);
+  __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 500); // 直接复位
 	HAL_Delay(1000);
-  __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 1000 - 1); // 直接复位
-	
-	HAL_Delay(1000);
-	
-	// __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500 - 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+	uint16_t a = 1000;
   while (1)
   {
+		a = a + 112;
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, a);
+		
+	  HAL_Delay(500);
+		if(a >= 2500)
+		{
+			a = 1000; // notes；新释放状态 1000，新绷紧状态2500
+		}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
