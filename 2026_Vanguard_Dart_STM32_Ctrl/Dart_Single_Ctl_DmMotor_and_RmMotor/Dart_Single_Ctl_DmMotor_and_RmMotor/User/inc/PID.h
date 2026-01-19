@@ -1,0 +1,149 @@
+#ifndef __PID_H_
+#define __PID_H_
+
+#include "main.h"
+#include "bsp_dwt.h"
+
+/*********************************************************配置宏***************************************************************/
+
+// 微分先行选择：1=启用微分先行，0=普通微分
+// 微分先行：D项对测量值变化进行微分，避免目标值突变时产生尖峰
+// 普通微分：D项对误差变化进行微分
+#define PID_DERIVATIVE_ON_MEASUREMENT 0U
+
+/*********************************************************类型定义*************************************************************/
+
+// PID计算模式枚举
+typedef enum
+{
+    PID_POSITION = 0, // 位置式PID
+    PID_DELTA = 1     // 增量式PID
+} PID_MODE_e;
+
+#pragma pack(push, 1)
+// 前馈PID结构体
+// PID基本参数(包含前馈)
+// 反馈值
+// 输出值储存
+typedef struct
+{
+    // 初始化标志位
+    uint8_t initialized; // 是否已初始化
+    uint8_t calc_count;  // 计算次数计数器（用于首次计算判断）
+
+    // PID工作模式
+    PID_MODE_e mode; // 位置式或增量式
+
+    // PID基本参数(包含前馈)
+    float KP; // 比例系数
+    float KI; // 积分系数
+    float KD; // 微分系数
+    float KF; // 前馈系数
+
+    // 限幅参数
+    float max_output; // 输出上限（实际输出范围为 [-max_output, +max_output]）
+    float min_output; // 输出下限（防止输出与目标方向相反：target>0时output>=min_output）
+    float max_iout;   // 积分限幅
+
+    // 反馈值
+    float target;       // 目标值
+    float measure;      // 测量值（反馈值）
+    float last_measure; // 上次测量值（微分先行用）
+    float prev_measure; // 上上次测量值（增量式微分先行用）
+    float error;        // 当前误差
+    float last_error;   // 上次误差
+    float prev_error;   // 上上次误差（增量式用）
+    float sum_error;    // 误差积分
+
+    // 前馈值
+    float feedforward; // 前馈输入值
+
+    // 输出值储存
+    float output;      // 当前输出值
+    float last_output; // 上次输出值
+    float delta_out;   // 增量输出（增量式用）
+
+} PID_t;
+
+// 串级PID结构体（基于前馈PID）
+typedef struct
+{
+    PID_t outer; // 外环PID（位置环）
+    PID_t inner; // 内环PID（速度环）
+
+} CASCADE_PID_t;
+#pragma pack(pop)
+
+/*********************************************************函数声明***************************************************************/
+
+// PID初始化函数
+void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout);
+
+/**
+ * @brief 串级PID初始化函数
+ * @param cascade_pid 串级PID结构体指针
+ * @param outer_kp 外环比例系数
+ * @param outer_ki 外环积分系数
+ * @param outer_kd 外环微分系数
+ * @param outer_kf 外环前馈系数
+ * @param inner_kp 内环比例系数
+ * @param inner_ki 内环积分系数
+ * @param inner_kd 内环微分系数
+ * @param inner_kf 内环前馈系数
+ * @param outer_max_out 外环输出上限
+ * @param outer_min_out 外环输出下限（防止输出与目标方向相反）
+ * @param outer_max_iout 外环积分限幅
+ * @param inner_max_out 内环输出上限
+ * @param inner_min_out 内环输出下限（防止输出与目标方向相反）
+ * @param inner_max_iout 内环积分限幅
+ */
+void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
+                      float outer_kp, float outer_ki, float outer_kd, float outer_kf,
+                      float inner_kp, float inner_ki, float inner_kd, float inner_kf,
+                      float outer_max_out, float outer_min_out, float outer_max_iout,
+                      float inner_max_out, float inner_min_out, float inner_max_iout);
+
+// PID计算函数（统一接口，根据mode自动选择位置式或增量式）
+float PID_Calculate(PID_t *pid, float target, float measure);
+
+// 位置式PID计算
+float PID_Position_Calc(PID_t *pid, float target, float measure);
+
+// 增量式PID计算
+float PID_Incremental_Calc(PID_t *pid, float target, float measure);
+
+/**
+ * @brief 串级PID计算
+ * @param cascade_pid 串级PID结构体指针
+ * @param outer_target 外环目标值（位置）
+ * @param outer_measure 外环测量值（位置）
+ * @param inner_measure 内环测量值（速度）
+ * @param outer_feedforward 外环前馈值
+ * @param inner_feedforward 内环前馈值
+ * @return 内环PID输出值
+ */
+float CASCADE_PID_Calculate(CASCADE_PID_t *cascade_pid,
+                            float outer_target,
+                            float outer_measure,
+                            float inner_measure);
+
+// PID清零函数（清除所有误差和输出）
+void PID_Clear(PID_t *pid);
+
+// PID积分项清零函数
+void PID_Clear_Integral(PID_t *pid);
+
+// 串级PID清零
+void CASCADE_PID_Clear(CASCADE_PID_t *cascade_pid);
+
+// 串级PID积分项清零
+void CASCADE_PID_Clear_Integral(CASCADE_PID_t *cascade_pid);
+
+// PID参数设置函数
+void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf);
+void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout);
+
+// 检查PID是否已初始化
+uint8_t PID_Is_Initialized(PID_t *pid);
+
+#endif
