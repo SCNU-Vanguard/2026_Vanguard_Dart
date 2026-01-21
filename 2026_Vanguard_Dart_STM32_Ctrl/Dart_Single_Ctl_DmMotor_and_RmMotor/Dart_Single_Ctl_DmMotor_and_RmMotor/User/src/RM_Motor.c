@@ -21,7 +21,7 @@
 #include "RM_Motor.h"
 #include "CanMotor.h"
 #include <stdbool.h>
-#include "usart.h"
+// #include "usart.h"
 #include <stdio.h>
 
 // 直接访问电机管理器（减少函数调用开销）
