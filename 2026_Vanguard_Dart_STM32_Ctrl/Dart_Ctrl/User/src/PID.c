@@ -105,6 +105,8 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
         return 0.0f;
 
     // 更新目标值、测量值
+    float last_target = pid->target;
+
     pid->target = target;
     pid->measure = measure;
 
@@ -135,7 +137,7 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     }
 
     // 计算前馈值（目标值变化量）
-    pid->feedforward = target - pid->target;
+    pid->feedforward = target - last_target;
 
     // 第二次及之后：使用完整P、I、D、F
     // 积分项累加（带限幅）
@@ -205,6 +207,8 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
         return 0.0f;
 
     // 更新目标值、测量值
+    float last_target = pid->target;
+
     pid->target = target;
     pid->measure = measure;
 
@@ -237,7 +241,7 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     }
 
     // 计算前馈值（目标值变化量）
-    pid->feedforward = target - pid->target;
+    pid->feedforward = target - last_target;
 
     // 第二次及之后：使用完整增量式P、I、D、F
     // Δu(k) = Kp[e(k) - e(k-1)] + Ki*e(k) + Kd[e(k) - 2e(k-1) + e(k-2)]

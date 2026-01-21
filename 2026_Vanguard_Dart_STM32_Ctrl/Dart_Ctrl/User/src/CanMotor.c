@@ -84,16 +84,19 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
             ptr->gear_ratio = ptr->motor_class.rm_motor_class->gear_ratio;
             ptr->current_ratio = ptr->motor_class.rm_motor_class->current_ratio;
             ptr->max_current = ptr->motor_class.rm_motor_class->max_current;
-            
+
             // 旧接口兼容
             ptr->calculate = ptr->motor_class.rm_motor_class->calculate;
             ptr->SendMotorControl = ptr->motor_class.rm_motor_class->send_control;
         }
 
         // 配置发送ID (StdId)
-        if (ptr->model == RmM3508) ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_3508;
-        else if (ptr->model == RmM2006) ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_2006;
-        else if (ptr->model == RmGM6020) ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_6020;
+        if (ptr->model == RmM3508)
+            ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_3508;
+        else if (ptr->model == RmM2006)
+            ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_2006;
+        else if (ptr->model == RmGM6020)
+            ptr->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_6020;
     }
     else if (ptr->band == DM_MOTOR_BAND)
     {
@@ -101,16 +104,19 @@ void CanRegisterMotorCfg(MotorTypeDef *ptr)
         {
             // DM电机参数暂无统一减速比，可根据需要扩展
             ptr->max_current = (int16_t)ptr->motor_class.dm_motor_class->torque_max;
-            
+
             // 旧接口兼容
             ptr->calculate = ptr->motor_class.dm_motor_class->calculate;
             ptr->SendMotorControl = ptr->motor_class.dm_motor_class->send_control;
 
-            // 配置发送ID
-            if (ptr->motor_class.dm_motor_class->WorkMode == DM_MIT)
-                ptr->g_TxHeader.StdId = DM_MIT_TX_BIAS + ptr->MotorID;
-            else if (ptr->motor_class.dm_motor_class->WorkMode == DM_LOCATION_SPEED)
-                ptr->g_TxHeader.StdId = DM_LS_TX_BIAS + ptr->MotorID;
+            // 配置发送ID（从ID配置表获取）
+            uint8_t idx = (uint8_t)(ptr - MotorManager.MotorList);
+            can_motor_cfg motor_cfg = (can_motor_cfg)(idx + 1);
+            const DM_MotorIdConfig_t *id_cfg = DM_GetIdConfig(motor_cfg);
+            if (id_cfg != NULL)
+            {
+                ptr->g_TxHeader.StdId = id_cfg->tx_id;
+            }
         }
     }
 
@@ -133,42 +139,43 @@ void MotorRegister(void)
     // 夹爪传动带结构 - M3508电机
     RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
-                           0.06591f, 0.1f, 0.0f, 0.0001f, 
-                           178.91f, 0.40f, 0.0f, 7.95f,   
-                           20673.0f, 0.0f, 2.0f,          
-                           1691.0f, 0.0f, 300.0f);        
+                           0.06591f, 0.1f, 0.0f, 0.0001f,
+                           178.91f, 0.40f, 0.0f, 7.95f,
+                           20673.0f, 0.0f, 2.0f,
+                           1691.0f, 0.0f, 300.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机
     RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
-                           0.1058f, 0.0f, 0.0f, 0.002f, 
-                           27.91f, 0.08f, 0.0f, 1.0f,   
-                           1300.0f, 0.0f, 5000.0f,      
-                           5000.0f, 0.0f, 1000.0f);     
+                           0.1058f, 0.0f, 0.0f, 0.002f,
+                           27.91f, 0.08f, 0.0f, 1.0f,
+                           1300.0f, 0.0f, 5000.0f,
+                           5000.0f, 0.0f, 1000.0f);
     MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = RM_2006_TRIGGER + g_RM_MOTOR_BIAS_ADDR_2006 + 0x004;
 
     // ==================== DM电机注册 ====================
     // 左侧蓄力电机 - J3519
     DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1],
-                  DM_3519_STRENTH_LEFT - g_RM_MOTOR_NUM);
+                  DM_GetIdConfig(DM_3519_STRENTH_LEFT)->motor_id);
     DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -20.0f, 20.0f);
     DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -200.0f, 200.0f);
-    MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].CAN_Rid = (DM_3519_STRENTH_LEFT | DM_LS_RX_BIAS) - g_RM_MOTOR_NUM;
+    MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].CAN_Rid = DM_GetIdConfig(DM_3519_STRENTH_LEFT)->rx_id;
 
     // 右侧蓄力电机 - J3519
     DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1],
-                  DM_3519_STRENTH_RIGHT - g_RM_MOTOR_NUM);
+                  DM_GetIdConfig(DM_3519_STRENTH_RIGHT)->motor_id);
     DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -20.0f, 20.0f);
     DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -200.0f, 200.0f);
-    MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].CAN_Rid = (DM_3519_STRENTH_RIGHT | DM_LS_RX_BIAS) - g_RM_MOTOR_NUM;
+    MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].CAN_Rid = DM_GetIdConfig(DM_3519_STRENTH_RIGHT)->rx_id;
 
     // Yaw轴电机 - J4310
-    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1], DM_4310_YAW - g_RM_MOTOR_NUM);
+    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1],
+                  DM_GetIdConfig(DM_4310_YAW)->motor_id);
     DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -30.0f, 30.0f);
     DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -160.0f, 160.0f);
     DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4591f, 1.0f, 0.0f);
-    MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = (DM_4310_YAW | DM_MIT_RX_BIAS) - g_RM_MOTOR_NUM;
+    MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = DM_GetIdConfig(DM_4310_YAW)->rx_id;
 
     // ==================== 完成注册 ====================
     MotorManager.registered_count = 5;
@@ -221,7 +228,7 @@ void MotorInit(void)
 void CanFilterCfg(void)
 {
     HAL_CAN_Stop(&hcan1);
-    uint16_t ID_MASK_ARR[2] = {0x0000, 0x0000}; 
+    uint16_t ID_MASK_ARR[2] = {0x0000, 0x0000};
     uint16_t ID_ARR[2] = {0x0200, 0x0010};
     FliterIdCfg_Init(&hcan1, ID_ARR, ID_MASK_ARR, 0, fifo0);
     HAL_Delay(5);
@@ -236,7 +243,7 @@ void CanFilterCfg(void)
  ****************************************************/
 void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum)
 {
-    static uint8_t MotorRxDataTempArray[8]; 
+    static uint8_t MotorRxDataTempArray[8];
     CAN_RxHeaderTypeDef pRxHeader;
 
     for (uint8_t a = 0; a < FIFOmessageNum; a++)
@@ -303,7 +310,8 @@ float Motor_GetTotalAngle(can_motor_cfg motor_id)
     {
         // DM电机: solved_data[0] = 位置(rad)，需要转换为度
         // 等待修改
-        return RadToDegree(motor->motor_data.solved_data[0] - motor->motor_data.offset_ecd);
+        // return RadToDegree(motor->motor_data.solved_data[0] - motor->motor_data.offset_ecd);
+        return motor->motor_data.solved_data[0];
     }
 
     return 0.0f;

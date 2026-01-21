@@ -86,8 +86,52 @@ typedef struct _MotorTypeDef {
 
 ---
 
+## DM电机ID配置表
+
+### 2026-01-21 新增：集中式ID管理
+
+DM电机的CAN ID现在通过配置表集中管理，修改ID只需修改一处。
+
+#### 配置结构体
+```c
+typedef struct {
+    uint8_t  motor_id;      // 达妙上位机设置的电机ID (0-15)
+    uint16_t tx_id;         // 发送CAN ID
+    uint16_t rx_id;         // 接收CAN ID
+    DM_WorkMode work_mode;  // 工作模式
+} DM_MotorIdConfig_t;
+```
+
+#### 当前ID配置 (`DM_Motor.c`)
+```c
+static const DM_MotorIdConfig_t g_DM_IdTable[] = {
+    [DM_3519_STRENTH_LEFT]  = {1, 0x101, 0x021, DM_LOCATION_SPEED},
+    [DM_3519_STRENTH_RIGHT] = {2, 0x102, 0x022, DM_LOCATION_SPEED},
+    [DM_4310_YAW]           = {3, 0x003, 0x013, DM_MIT},
+};
+```
+
+#### ID计算规则（供参考）
+| 模式 | 发送ID | 接收ID |
+|------|--------|--------|
+| MIT | `0x000 + motor_id` | `0x010 + motor_id` |
+| 位置速度 | `0x100 + motor_id` | `0x020 + motor_id` |
+| 速度 | `0x200 + motor_id` | `0x030 + motor_id` |
+
+#### 新建DM电机步骤
+1. **CanMotor.h**: 在 `can_motor_cfg` 枚举中添加新电机
+2. **DM_Motor.c**: 在 `g_DM_IdTable[]` 中添加ID配置
+3. **DM_Motor.c**: 修改 `DM_GetIdConfig()` 范围检查
+4. **CanMotor.c**: 在 `MotorRegister()` 中注册电机
+5. **CanMotor.h**: 确保 `g_CanMotorNum` 足够
+
+---
+
 ## 更新日志
 
+- **2026-01-21**:
+  - 新增DM电机ID配置表，集中管理所有DM电机CAN ID
+  - 添加 `DM_MotorIdConfig_t` 结构体和 `DM_GetIdConfig()` 函数
 - **2026-01-17**: 
   - 实施数据展平架构优化。
   - 优化中断分发逻辑。

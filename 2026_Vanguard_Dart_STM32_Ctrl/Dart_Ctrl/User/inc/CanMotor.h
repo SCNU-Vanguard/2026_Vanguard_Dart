@@ -152,14 +152,14 @@ typedef struct
 typedef struct _MotorTypeDef
 {
     // ==================== 快速访问区 (展平数据) ====================
-    uint8_t MotorID;              // 电机ID
-    can_motor_band band;          // 电机品牌 (冗余存储以加快分支判断)
-    can_motor_model model;        // 电机型号
-    uint16_t can_id_tx;           // CAN发送ID
-    uint16_t can_id_rx;           // CAN接收ID (即 CAN_Rid)
-    float gear_ratio;             // 减速比
-    float current_ratio;          // 电流/力矩转换系数
-    int16_t max_current;          // 最大电流/限幅值
+    uint8_t MotorID;       // 电机ID
+    can_motor_band band;   // 电机品牌 (冗余存储以加快分支判断)
+    can_motor_model model; // 电机型号
+    uint16_t can_id_tx;    // CAN发送ID
+    uint16_t can_id_rx;    // CAN接收ID (即 CAN_Rid)
+    float gear_ratio;      // 减速比
+    float current_ratio;   // 电流/力矩转换系数
+    int16_t max_current;   // 最大电流/限幅值
 
     // ==================== 原始存储区 ====================
     motor_inf MotorInf;

@@ -45,9 +45,9 @@
 #define RightStoreLocBase 3.0f // 基地位置力度-右边35199电机
 #define LeftStoreOutpost 4.0f  // 前哨站力度-左边3519电机
 #define RightStoreOutpost 5.0f // 前哨站力度-右边3519电机
-#define LeftStoreTrigger 6.0f  // 靠近扳机位置-左边3519电机
+#define LeftStoreTrigger 80.0f // 靠近扳机位置-左边3519电机
 #define RightStoreTrigger 7.0f // 靠近扳机位置-右边3519电机
-#define LeftStoreBottom 16.0f  // 左侧电机下底（原0x10=16）
+#define LeftStoreBottom 0.0f   // 左侧电机下底（原0x10=16）
 #define RightStoreBottom 17.0f // 右侧电机下底（原0x11=17）
 #define LimitStore 910.0f      // 电机的位置限制
 

@@ -127,7 +127,7 @@ void MX_FREERTOS_Init(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  // defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -198,6 +198,8 @@ void StartDefaultTask(void *argument)
 
     // RmMotorPID_Calc(RM_2006_TRIGGER, Target);
     // RmMotorSendCfg(RM_2006_TRIGGER, 1000);
+    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
+    vTaskDelay(250);
   }
   /* USER CODE END StartDefaultTask */
 }

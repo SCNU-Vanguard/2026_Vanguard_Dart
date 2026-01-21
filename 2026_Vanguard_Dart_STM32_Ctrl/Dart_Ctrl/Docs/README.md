@@ -119,8 +119,9 @@ serial_servo_set_position(&serial_servo_controller, 0x01, 500, 500);
 - **电机 ID 分配**:
   - **RM-M3508 (换弹)**: 0x201
   - **RM-M2006 (扳机)**: 0x205
-  - **DM-J4310 (Yaw)**: 0x003 (MIT 模式)
-  - **DM-S3519 (储能)**: 0x001 (左), 0x002 (右)
+  - **DM-J4310 (Yaw)**: TX=0x003, RX=0x013 (MIT 模式, motor_id=3)
+  - **DM-S3519 (储能左)**: TX=0x101, RX=0x021 (位置速度模式, motor_id=1)
+  - **DM-S3519 (储能右)**: TX=0x102, RX=0x022 (位置速度模式, motor_id=2)
 - **总线舵机 ID**: 0x01, 0x02, 0x03 (换弹机构)
 
 ---
@@ -133,7 +134,7 @@ serial_servo_set_position(&serial_servo_controller, 0x01, 500, 500);
 
 ---
 **维护者**: 邓金水 / Vanguard Team  
-**最后更新**: 2026-01-18# STM32 飞镖控制系统 (Vanguard Dart)
+**最后更新**: 2026-01-21# STM32 飞镖控制系统 (Vanguard Dart)
 
 ## 项目概述
 本系统是基于 STM32F427IIH 开发的飞镖机器人控制系统。该系统集成了多电机协同控制、高精度传感器反馈、多协议串口通信以及基于 FreeRTOS 的实时任务调度，旨在 15 秒内高效完成 4 次飞镖发射过程。
@@ -254,8 +255,9 @@ serial_servo_set_position(&serial_servo_controller, 0x01, 500, 500);
 - **电机 ID 分配**:
   - **RM-M3508 (换弹)**: 0x201
   - **RM-M2006 (扳机)**: 0x205
-  - **DM-J4310 (Yaw)**: 0x003 (MIT 模式)
-  - **DM-S3519 (储能)**: 0x001 (左), 0x002 (右)
+  - **DM-J4310 (Yaw)**: TX=0x003, RX=0x013 (MIT 模式, motor_id=3)
+  - **DM-S3519 (储能左)**: TX=0x101, RX=0x021 (位置速度模式, motor_id=1)
+  - **DM-S3519 (储能右)**: TX=0x102, RX=0x022 (位置速度模式, motor_id=2)
 - **总线舵机 ID**: 0x01, 0x02, 0x03 (换弹机构)
 
 ---
@@ -268,4 +270,4 @@ serial_servo_set_position(&serial_servo_controller, 0x01, 500, 500);
 
 ---
 **维护者**: 邓金水 / Vanguard Team  
-**最后更新**: 2026-01-18
+**最后更新**: 2026-01-21

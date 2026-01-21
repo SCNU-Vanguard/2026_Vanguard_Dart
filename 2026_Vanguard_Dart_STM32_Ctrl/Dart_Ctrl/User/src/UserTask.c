@@ -39,6 +39,7 @@
  * 要等待测试达妙电机的具体逻辑
  ***********************************************************************************************************************/
 #include "UserTask.h"
+#include "PID.h"
 
 // 19271（上限）<长度>
 // 第三个（距离7547）
@@ -55,16 +56,20 @@
 /************************全局或静态作用域*********************/
 static ServoPacket_t g_xServoData;
 static IbusPacket_t g_xIbusData;
-static __IO uint8_t DartNum = 4;
 extern MotorManager_t MotorManager;
 static float MotorData = 0.0f;
 static __IO float GripperTarget = 0.0f; // 位置不动
+// Store <-> Load 双向同步信号量
+static StaticSemaphore_t g_xStore2LoadSemBuffer;
+static SemaphoreHandle_t g_xStore2LoadSemHandle; // Store通知Load开始
+static StaticSemaphore_t g_xLoad2StoreSemBuffer;
+static SemaphoreHandle_t g_xLoad2StoreSemHandle; // Load通知Store完成
 
-// 储能任务互斥量
-static StaticSemaphore_t g_xLoadMutexBuffer;
-static SemaphoreHandle_t g_xLoadMutexHandle;
-static SemaphoreHandle_t g_xShootMutexHandle;
-static StaticSemaphore_t g_xShootMutexBuffer;
+// Store <-> Shoot 双向同步信号量
+static StaticSemaphore_t g_xStore2ShootSemBuffer;
+static SemaphoreHandle_t g_xStore2ShootSemHandle; // Store通知Shoot开始
+static StaticSemaphore_t g_xShoot2StoreSemBuffer;
+static SemaphoreHandle_t g_xShoot2StoreSemHandle; // Shoot通知Store完成
 
 // 储能任务信号量
 static StaticSemaphore_t g_xStoreSemaphore;
@@ -94,7 +99,9 @@ void Module_Init(void)
     // while (!ServoInit())
     //     ; // 这个地方有一个回调,需要进行数据读取
     ServoInit();
-    // HAL_TIMEx_PWM_Start();
+    HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
+    HAL_TIM_Base_Start(&htim8);
+    HAL_Delay(100);
 }
 
 /// @brief 创建RTOS的通信量
@@ -104,12 +111,14 @@ void RTOS_ModuleInit(void)
     // QUEUE（队列）：1.融合到云台调节当中，保证云台调节正常<队列集>; 2.融入到换弹结构当中,确保换弹结构正常
     g_xLoad3508QueueHandler = xQueueCreateStatic(4, sizeof(uint8_t), g_ucReloadQueueStorage, &g_xReloadQueue); // 这个队列用于换弹结构当中
 
-    // SEMAPHORE（信号量）：信号量与DartNum共同决定飞镖换弹的状态
+    // SEMAPHORE（信号量）：信号量与dart_num共同决定飞镖换弹的状态
     g_xStoreSemaphoreHandle = xSemaphoreCreateCountingStatic(5, sizeof(uint8_t), &g_xStoreSemaphore);
 
-    // MUTEX（互斥量）：调控云台方式只有一种，不允许上位机和遥控器同时调控
-    g_xLoadMutexHandle = xSemaphoreCreateMutexStatic(&g_xLoadMutexBuffer);
-    g_xShootMutexHandle = xSemaphoreCreateMutexStatic(&g_xShootMutexBuffer);
+    // 二值信号量：用于任务间双向同步（创建后初始状态为"空"）
+    g_xStore2LoadSemHandle = xSemaphoreCreateBinaryStatic(&g_xStore2LoadSemBuffer);
+    g_xLoad2StoreSemHandle = xSemaphoreCreateBinaryStatic(&g_xLoad2StoreSemBuffer);
+    g_xStore2ShootSemHandle = xSemaphoreCreateBinaryStatic(&g_xStore2ShootSemBuffer);
+    g_xShoot2StoreSemHandle = xSemaphoreCreateBinaryStatic(&g_xShoot2StoreSemBuffer);
 
     // 使用stream流传输,也可以改成使用Message传输
     xLoadStreamBuf = xStreamBufferCreate(1, 1); // 1字节触发
@@ -146,9 +155,9 @@ const osThreadAttr_t ShootTask_attributes = {
 
 // 飞镖状态设置(设置Yaw和射程)
 osThreadId_t StateSetTaskHandle;
-const osThreadAttr_t UartModuleTask_attributes = {
-    .name = "UartModuleTask",
-    .stack_size = 128 * 4,
+const osThreadAttr_t StateSetTask_attributes = {
+    .name = "StateSetTask",
+    .stack_size = 512 * 4,
     .priority = (osPriority_t)osPriorityNormal,
 };
 
@@ -171,6 +180,7 @@ void TaskInitFunc(void)
     StoreEnergyTaskHandle = osThreadNew(StoreEnergyTaskFunc, NULL, &StoreEnergyTask_attributes);
     LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
     ShootTaskHandle = osThreadNew(ShootTaskFunc, NULL, &ShootTask_attributes);
+    StateSetTaskHandle = osThreadNew(StateSetTaskFunc, NULL, &StateSetTask_attributes);
 }
 
 /***********************************
@@ -182,16 +192,18 @@ void StoreEnergyTaskFunc(void *argument)
 {
     // 等待事件组：云台和扳机都就绪后才开始
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
-
+    HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
     // 接收计数型信号量之后才可以正常,这里更新第一次目标值（下拉至换弹位置 -> 上拉至扳机位置 -> 释放（同时回到零点）-> 下一次循环）
 
     DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
-    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
+    // DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
     uint8_t StoreState = 0x00;
     int8_t Dart = 4;
     vTaskDelay(POWER_ON_DELAY_MS); // 上电保护延迟
+    float left_pos = 0.0f, right_pos = 0.0f;
 
     // J3519电机运动从顶部到底部
+    // TODO:当前运动的死区检测有些问题
     while (1)
     {
         // 由StoreState决定循环
@@ -203,28 +215,30 @@ void StoreEnergyTaskFunc(void *argument)
             // 循环到达发射位置,释放计数量/信号量/Stream流
             // 等待对方执行完任务,这可以直接读DartNum进行确定
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreBottom, 5.0f, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreBottom, 5.0f, DM_LOCATION_SPEED);
+            // DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreBottom, 5.0f, DM_LOCATION_SPEED);
 
-            float left_pos, right_pos;
+            bool temp = true;
 
-            while (1)
+            while (temp)
             {
-                left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
+                DM_Motor_RefreshData(DM_3519_STRENTH_LEFT);
+                left_pos = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT); // 这里打一个断点,看一下返回数据
+                // right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
                 // 检查是否都到达目标位置（死区判定）
-                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
-                    IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
+                // if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
+                //     IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
+                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE))
                 {
-                    break; // 到达目标
+                    temp = false; // 到达目标
                 }
                 // TODO: 添加错误处理（日志、报警等）
             }
 
-            // 这里通信,改变飞镖数值之后释放一个互斥量让其进行运动
+            // 这里通信,改变飞镖数值之后通知Load任务开始工作
             xStreamBufferSend(xLoadStreamBuf, (const uint8_t *)(&Dart), 1, 0);
-            xSemaphoreGive(g_xLoadMutexHandle);
-            vTaskSuspend(StoreEnergyTaskHandle);
+            xSemaphoreGive(g_xStore2LoadSemHandle);                // 通知Load开始
+            xSemaphoreTake(g_xLoad2StoreSemHandle, portMAX_DELAY); // 等待Load完成
             StoreState++;
             break;
         }
@@ -234,19 +248,18 @@ void StoreEnergyTaskFunc(void *argument)
             // 发射滑台上移到达扳机位置
             // 释放一个信号量或者任务通知量进行通信
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
+            // DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
 
-            // 等待电机到达目标位置，带超时保护
-            float left_pos, right_pos;
-
+            // 等待电机到达目标位置
             while (1)
             {
                 left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
+                // right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
                 // 检查是否都到达目标位置（死区判定）
-                if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
-                    IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
+                // if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
+                //     IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
+                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE))
                 {
                     break; // 到达目标
                 }
@@ -260,13 +273,12 @@ void StoreEnergyTaskFunc(void *argument)
 
         case 0x02:
         {
-            // 等待电机到达目标位置，带超时保护
-            float left_pos, right_pos;
-            xSemaphoreGive(g_xShootMutexHandle);
+            // 通知Shoot任务开始发射
+            xSemaphoreGive(g_xStore2ShootSemHandle); // 通知Shoot开始
             // TODO: 添加错误处理（日志、报警等），完善整体流程，这个地方应该是DM电机失能之后输出数据
             DM_MotorDisable(DM_3519_STRENTH_LEFT);
             DM_MotorDisable(DM_3519_STRENTH_RIGHT);
-            vTaskSuspend(StoreEnergyTaskHandle);
+            xSemaphoreTake(g_xShoot2StoreSemHandle, portMAX_DELAY); // 等待Shoot完成
             StoreState = 0x00;
             Dart--;
             StoreState = 0;
@@ -280,8 +292,8 @@ void StoreEnergyTaskFunc(void *argument)
         {
             // 4发打完，失能所有电机，实际上这里需要归中
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
-            DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
-            DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
+            // DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
+            // DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
 
             // 挂起任务（可恢复）
             vTaskSuspend(StoreEnergyTaskHandle);
@@ -308,52 +320,60 @@ void LoadTaskFunc(void *argument)
     uint16_t servo_angles[3] = {0x0000};
     uint16_t servo_work_angle[3] = {SeperationAngle, SeperationAngle, SeperationAngle};
     bool MutexTake = false;
-    UBaseType_t dart_num = 0x0000;
+    uint8_t dart_num = 0x0000;
 
     // 直接设置成0°,限位确认
-    ServoControlMulti(3, servo_ids, servo_angles, 300); // 当前角度是0°,在设置后(MCU驱动板上电无法读取)
+    ServoControlMulti(3, servo_ids, servo_angles, 300);
+
+    // 获取电机偏移角度，用于目标值补偿
     float offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
 
     // 任务创建
     TaskHandle_t Load3508TaskHandle = NULL;
-    xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityBelowNormal7, &Load3508TaskHandle); // 换弹舵机任务
-    GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, GripperTarget, false);
+    xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityBelowNormal7, &Load3508TaskHandle);
+
+    // 初始目标为当前位置（上电零点 + 偏移）
+    GripperTarget = offset_angle;
     while (1)
     {
-        xSemaphoreTake(g_xLoadMutexHandle, portMAX_DELAY); // 等待互斥量,之后进一个循环
-
+        xSemaphoreTake(g_xStore2LoadSemHandle, portMAX_DELAY); // 等待Store通知开始
+        vTaskDelay(175);
         xStreamBufferReceive(xLoadStreamBuf, &dart_num, 1, portMAX_DELAY);
         switch (dart_num)
         {
         case 4:
         {
-            GripperTarget = 0.0f;
+            GripperTarget = offset_angle;
             MutexTake = false;
-            xSemaphoreGive(g_xLoadMutexHandle); // 等待互斥量,之后进一个循环
+            xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
             break;
         }
         case 3:
         {
-            GripperTarget = FirstServoLoc;
+            GripperTarget = FirstServoLoc + offset_angle;
             MutexTake = true;
+            HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
             break;
         }
         case 2:
         {
-            GripperTarget = SecondServoLoc;
+            GripperTarget = SecondServoLoc + offset_angle;
             MutexTake = true;
+            HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
             break;
         }
         case 1:
         {
-            GripperTarget = ThirdServoLoc;
+            GripperTarget = ThirdServoLoc + offset_angle;
             MutexTake = true;
+            HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
             break;
         }
         default:
+        {
             break;
         }
-        GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, GripperTarget, true);
+        }
         while (MutexTake)
         {
             MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
@@ -361,95 +381,70 @@ void LoadTaskFunc(void *argument)
 
             // 使用死区判断：MotorData 在 [GripperTarget-MOTOR_DEAD_ZONE, GripperTarget+MOTOR_DEAD_ZONE] 范围内视为到达
             if (IS_IN_DEADZONE(MotorData, FirstServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 2)) // 首次上电电机的零点为offest_ecd,负向转动,距离为-7547
+                (dart_num == 3)) // 首次上电电机的零点为offest_ecd,负向转动,距离为-7547
             {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&DartNum, 0);
+                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
                 vTaskDelay(SERVO_MOVE_TIME_MS);
                 // 等待电机到达过渡位置
+                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
                 MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                // 回到上电零点位置：当前累计角度的负值，带超时保护
+                GripperTarget = offset_angle;
+                // 回到上电零点位置：当前累计角度的负值
+                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
                 {
-                    uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-                    while (!IS_IN_DEADZONE(MotorData, 0, MOTOR_DEAD_ZONE))
-                    {
-                        // 超时保护
-                        if (osKernelGetTickCount() > timeout)
-                        {
-                            // TODO: 添加错误处理
-                            break;
-                        }
-
-                        GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData, true);
-                        RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
-                        osDelay(10);
-                    }
+                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
+                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+                    osDelay(2);
                 }
-                // 更新数据位置应该有所变化
-                // GripperTarget = SecondServoLoc; // 这里的数据变化还得是靠别人传进来,不然就轧钢了
-                // GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, GripperTarget, true);
                 MutexTake = false;
-                xSemaphoreGive(g_xLoadMutexHandle); // 等待互斥量,之后进一个循环
+                HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
+                xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
             }
 
             if (IS_IN_DEADZONE(MotorData, SecondServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 3)) // 负向转动,距离为-5653
+                (dart_num == 2)) // 负向转动,距离为-5653
             {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&DartNum, 0);
+                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
                 vTaskDelay(SERVO_MOVE_TIME_MS);
                 // 等待电机到达过渡位置
+                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
+                GripperTarget = offset_angle;
                 MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                // 回到上电零点位置：当前累计角度的负值，带超时保护
+                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
                 {
-                    uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
-                    while (!IS_IN_DEADZONE(MotorData, 0, MOTOR_DEAD_ZONE))
-                    {
-                        if (osKernelGetTickCount() > timeout)
-                        {
-                            // TODO: 添加错误处理
-                            break;
-                        }
-
-                        GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData, true);
-                        RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
-                        osDelay(10);
-                    }
+                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
+                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+                    osDelay(2);
                 }
-                // GripperTarget = ThirdServoLoc;
-                // GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, GripperTarget, true);
                 MutexTake = false;
-                xSemaphoreGive(g_xLoadMutexHandle); // 等待互斥量,之后进一个循环
+                HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
+                xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
             }
 
             if (IS_IN_DEADZONE(MotorData, ThirdServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 4)) // 负向转动,距离为-5549
+                (dart_num == 1)) // 负向转动,距离为-5549
             {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&DartNum, 0);
+                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
                 vTaskDelay(SERVO_MOVE_TIME_MS);
                 // 等待电机到达过渡位置
                 MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
                 // 回到上电零点位置：当前累计角度的负值，带超时保护
                 {
-                    uint32_t timeout = osKernelGetTickCount() + MOTOR_TIMEOUT_MS;
+                    CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
+                    GripperTarget = offset_angle;
+                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
                     while (!IS_IN_DEADZONE(MotorData, 0, MOTOR_DEAD_ZONE))
                     {
-                        if (osKernelGetTickCount() > timeout)
-                        {
-                            // TODO: 添加错误处理
-                            break;
-                        }
-
-                        GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, -MotorData, true);
                         RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); // 更新位置数据
-                        osDelay(10);
+                        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+                        osDelay(2);
                     }
                 }
-                // GripperTarget = RmMotorRemoveBias(RM_3508_GRIPPER, 0.0f, true);
+
                 MutexTake = false;
-                xSemaphoreGive(g_xLoadMutexHandle); // 等待互斥量,之后进一个循环
-                vTaskResume(StoreEnergyTaskHandle);
+                HAL_GPIO_TogglePin(LED5_GPIO_Port, LED5_Pin);
+                xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
+                vTaskDelay(200);
             }
         }
     }
@@ -505,17 +500,18 @@ void LoadMotorTaskFunc(void *argument)
 void ShootTaskFunc(void *argument)
 {
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_store); // 这个地方设置为未释放状态
+    vTaskDelay(10);
     while (1)
     {
-        // 2.这里进行正常的发射函数,TIM2_CH1-PD12->A板H接口
-        xSemaphoreTake(g_xShootMutexHandle, portMAX_DELAY);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_shoot);
+        // 等待Store通知开始发射
+        xSemaphoreTake(g_xStore2ShootSemHandle, portMAX_DELAY);
+        HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
+        __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
         // delay一会再次释放
-        vTaskDelay(500);
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_store); // 这个地方设置为未释放状态
-        xSemaphoreGive(g_xShootMutexHandle);
-        vTaskResume(StoreEnergyTaskHandle);
+        vTaskDelay(2000);
+        __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store); // 这个地方设置为未释放状态
+        vTaskDelay(2000);
+        xSemaphoreGive(g_xShoot2StoreSemHandle); // 通知Store完成
     }
 }
 
@@ -528,28 +524,35 @@ void ShootTaskFunc(void *argument)
 void StateSetTaskFunc(void *argument)
 {
     // 接收上位机 / 遥控器 传递的数据
-
+    vTaskDelay(1);
     // preset the target at the base
-    float preseting_distance = RmMotorRemoveBias(RM_2006_TRIGGER, 20.0f, true); // pay attention to this params, its unit is degree not rad!!!!
-    float preseting_yaw = 45.0f;                                                // this param is limited at (-160.0f, 160.0f)
+    float temp = -5000.0f;
+    float degree = 0.0f;
+    float preseting_distance = RmMotorRemoveBias(RM_2006_TRIGGER, temp, true); // pay attention to this params, its unit is degree not rad!!!!
+    float preseting_yaw = 0.0f;                                                // this param is limited at (-160.0f, 160.0f)
+    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
     while (1)
     {
         // 调节位置,并等待位置调节成功,确保所有的任务处于阻塞态,防止其他任务有所影响,但是要确保所有电机停转并且失能
-        RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance);
-        while (Motor_GetTotalAngle(RM_2006_TRIGGER) != preseting_distance)
+
+        while (!IS_IN_DEADZONE(Motor_GetTotalAngle(RM_2006_TRIGGER), temp, 2.0f))
         {
             RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance);
+            vTaskDelay(1);
         }
         DmMotorSendCfg(DM_4310_YAW, preseting_yaw, 0.0f, DM_MIT); // 调节Yaw轴位置
-        while (Motor_GetTotalAngle(DM_4310_YAW) != preseting_yaw)
+        while (degree = Motor_GetTotalAngle(DM_4310_YAW), !IS_IN_DEADZONE(degree, preseting_yaw, 1.0f))
         {
             DM_Motor_RefreshData(DM_4310_YAW);
+            vTaskDelay(1);
         }
-        // 扳机位置归位
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, MG996R_store); // 这个地方设置为未释放状态
         // 事件组唤醒所有其他的任务
         xEventGroupSetBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY);
+        // DM_MotorDisable(DM_4310_YAW);
+        // DM_MotorDisable(DM_3519_STRENTH_LEFT);
+        vTaskDelay(1);
 
         // 最后进入阻塞态,等待遥控器解算唤醒 / 串口接收唤醒
+        vTaskSuspend(NULL);
     }
 }

@@ -36,6 +36,27 @@ static bool DM_ENABLE_ARR[g_DM_MOTOR_NUM] = {false};
 // DM电机配置存储（非static，供头文件内联函数使用）
 DM_MotorConfig_t g_DM_Configs[4] = {0};
 
+/*============================== DM电机ID配置表 ==============================*/
+// 集中管理所有DM电机的CAN ID配置，修改ID只需改这里
+// motor_id: 达妙上位机设置的ID, tx_id: 发送ID, rx_id: 接收ID, work_mode: 工作模式
+static const DM_MotorIdConfig_t g_DM_IdTable[] = {
+    // 左侧蓄力电机 - J3519 (位置速度模式, ID=1)
+    [DM_3519_STRENTH_LEFT] = {1, 0x108, 0x028, DM_LOCATION_SPEED},
+    // 右侧蓄力电机 - J3519 (位置速度模式, ID=2)
+    [DM_3519_STRENTH_RIGHT] = {2, 0x109, 0x029, DM_LOCATION_SPEED},
+    // Yaw轴电机 - J4310 (MIT模式, ID=3)
+    [DM_4310_YAW] = {3, 0x003, 0x013, DM_MIT},
+};
+
+const DM_MotorIdConfig_t *DM_GetIdConfig(can_motor_cfg motor_cfg)
+{
+    if (motor_cfg >= DM_3519_STRENTH_LEFT && motor_cfg <= DM_4310_YAW)
+    {
+        return &g_DM_IdTable[motor_cfg];
+    }
+    return NULL;
+}
+
 /*============================== 静态函数声明（私有方法） ==============================*/
 // 达妙电机通用函数
 void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
@@ -345,8 +366,8 @@ static void DM_Motor_InitWithClass(MotorTypeDef *motor, uint8_t id,
     motor->SendMotorControl = DM_Motor_SendControlInternal;
     motor->calculate = motor_class->calculate;
 
-    // CAN报文头
-    motor->g_TxHeader.StdId = DM_MIT_TX_BIAS + id;
+    // CAN报文头（发送ID由CanRegisterMotorCfg从配置表统一设置）
+    motor->g_TxHeader.StdId = 0; // 占位，由CanRegisterMotorCfg设置
     motor->g_TxHeader.IDE = CAN_ID_STD;
     motor->g_TxHeader.RTR = CAN_RTR_DATA;
     motor->g_TxHeader.DLC = CtrlMotorLen;

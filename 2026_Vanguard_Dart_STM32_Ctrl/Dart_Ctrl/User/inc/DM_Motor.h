@@ -62,6 +62,20 @@ typedef enum
 
 #define g_DM_MOTOR_NUM 3
 
+/*============================== DM电机ID配置表（集中管理） ==============================*/
+
+// DM电机ID配置结构体
+typedef struct
+{
+    uint8_t motor_id;      // 达妙上位机设置的电机ID (0-15)
+    uint16_t tx_id;        // 发送CAN ID
+    uint16_t rx_id;        // 接收CAN ID
+    DM_WorkMode work_mode; // 工作模式
+} DM_MotorIdConfig_t;
+
+// 获取DM电机ID配置（根据电机枚举）
+const DM_MotorIdConfig_t *DM_GetIdConfig(can_motor_cfg motor_cfg);
+
 /*============================== DM电机参数常量 ==============================*/
 
 // 数据类型枚举
