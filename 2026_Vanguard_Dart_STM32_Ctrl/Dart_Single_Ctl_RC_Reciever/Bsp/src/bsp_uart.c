@@ -169,7 +169,7 @@ static void StartIbusDma(UartRxRingBuffer *rb)
         return;
 
     rb->isReceiving = true;
-    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN) != HAL_OK)
+    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_FRAME_LEN) != HAL_OK)
     {
         rb->isReceiving = false;
         return;

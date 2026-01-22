@@ -99,6 +99,7 @@ void Module_Init(void)
     // while (!ServoInit())
     //     ; // 这个地方有一个回调,需要进行数据读取
     ServoInit();
+    UART_SetProtocolType(BSP_UART6, PROTOCOL_IBUS);
     HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
     HAL_TIM_Base_Start(&htim8);
     HAL_Delay(100);

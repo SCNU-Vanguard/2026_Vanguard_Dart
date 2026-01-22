@@ -2,9 +2,6 @@
 #define __IA6B_H_
 
 #include "main.h"
-#include "FreeRTOS.h"
-#include "cmsis_os.h"
-#include "task.h"
 #include "config.h"
 #include "bsp_uart.h"
 
