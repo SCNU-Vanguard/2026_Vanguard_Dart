@@ -9,7 +9,7 @@
 #include "config.h"
 #include "IA6B.h"
 
-int16_t Channel[17] = {0};
+int16_t Channel[13] = {0};
 void IA6B_HandleData2Channel(uint8_t *data)
 {
     // 传进来的channel数据是符合对应信道格式的,除去帧头和校验帧尾一共28字节
@@ -19,7 +19,6 @@ void IA6B_HandleData2Channel(uint8_t *data)
         // 两字节循环,直到26
         Channel[i] = data[2 * i] | (data[2 * i + 1] << 8);
     }
-    
 }
 
 // 初始化队列接受任务,同时使用DMA加缓冲区接收,但是这个固定很麻烦
