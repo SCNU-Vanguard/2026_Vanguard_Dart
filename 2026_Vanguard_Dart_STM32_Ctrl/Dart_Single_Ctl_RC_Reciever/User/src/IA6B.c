@@ -5,11 +5,31 @@
  * 创建人：bale
  * notice：有16位校验码，通信速率115200（8N1）
  * //TODO：将数据读取到这里并返回位移后的数据，同时解算一定的数据并存放好
+ * NOTE:
+ * 右边摇杆
+ *
+ * （左右）
+ * RawChannel 0 : 属于 1000左 -> 1500中 -> 2000右
+ * （上下）
+ * RawChannel 1 : 属于 2000上 -> 1500中 -> 1000下
+ *
+ *  左边摇杆
+ *
+ * （上下）
+ * RawChannel 2 : 属于 2000上 -> 1500中 -> 1000下
+ * （左右）
+ * RawChannel 3 : 属于 1000左 -> 1500中 -> 2000右
+ *
+ * SWB
+ * RawChannel 4 : 属于1对应1000，2对应2000
+ *
+ * RAWChannel 5 : 属于1对应1000，2对应1500，3对应2000
  ********************************************/
 #include "config.h"
 #include "IA6B.h"
 
-int16_t Channel[13] = {0};
+int8_t Channel[13] = {0};
+int16_t RawChannel[13] = {0};
 void IA6B_HandleData2Channel(uint8_t *data)
 {
     // 传进来的channel数据是符合对应信道格式的,除去帧头和校验帧尾一共28字节
@@ -17,7 +37,47 @@ void IA6B_HandleData2Channel(uint8_t *data)
     for (uint8_t i = 0; i < 14; i++)
     {
         // 两字节循环,直到26
-        Channel[i] = data[2 * i] | (data[2 * i + 1] << 8);
+        RawChannel[i] = data[2 * i] | (data[2 * i + 1] << 8);
+    }
+    for (uint8_t temp = 0; temp < 4; temp++)
+    {
+        // 一般中间为0
+        if ((RawChannel[temp] >= 1400) && (RawChannel[temp] <= 1600))
+        {
+            Channel[temp] = 0;
+        }
+        // 下和左为-1
+        else if (RawChannel[temp] < 1400)
+        {
+            Channel[temp] = -1;
+        }
+        else
+        {
+            Channel[temp] = 1;
+        }
+    }
+
+    // 对应SWB,1为默认状态为真,2为手动调节为0
+    if (RawChannel[4] == 1000)
+    {
+        Channel[4] = 1;
+    }
+    else
+    {
+        Channel[4] = 0;
+    }
+
+    if (RawChannel[5] == 1000)
+    {
+        Channel[5] = 1;
+    }
+    else if (RawChannel[5] == 1500)
+    {
+        Channel[5] = 0;
+    }
+    else
+    {
+        Channel[5] = -1;
     }
 }
 

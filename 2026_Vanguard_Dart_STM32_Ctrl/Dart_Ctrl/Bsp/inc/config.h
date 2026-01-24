@@ -39,17 +39,14 @@
 // 第二个舵机（距离13200）<与第三个相距5653>
 // 第一个舵机（距离18749）<与第二个相距5549>
 
-// 储能电机相关（统一使用浮点数类型）
-#define StoreLocPrimitive 0.0f // 两个电机的初始位置
-#define LeftStoreLocBase 2.0f  // 基地位置力度-左边3519电机
-#define RightStoreLocBase 3.0f // 基地位置力度-右边35199电机
-#define LeftStoreOutpost 4.0f  // 前哨站力度-左边3519电机
-#define RightStoreOutpost 5.0f // 前哨站力度-右边3519电机
-#define LeftStoreTrigger 80.0f // 靠近扳机位置-左边3519电机
-#define RightStoreTrigger 7.0f // 靠近扳机位置-右边3519电机
-#define LeftStoreBottom 0.0f   // 左侧电机下底（原0x10=16）
-#define RightStoreBottom 17.0f // 右侧电机下底（原0x11=17）
-#define LimitStore 910.0f      // 电机的位置限制
+// 储能电机相关
+#define LeftStoreTrigger -800.0f // 靠近扳机位置-左边3519电机
+#define RightStoreTrigger 800.0f // 靠近扳机位置-右边3519电机
+#define LeftStoreBottom -900.0f  // 左侧电机下底（原0x10=16）
+#define RightStoreBottom 900.0f  // 右侧电机下底（原0x11=17）
+#define LeftStoreTop 50.0f       // 左侧滑台叉上滑顶部
+#define RightStoreTop -50.0f     // 右侧滑台叉上滑顶部
+#define LimitStore 910.0f        // 电机的位置限制
 
 // 扳机射程相关
 #define MG996R_store 2500   // 发射扳机待机状态。

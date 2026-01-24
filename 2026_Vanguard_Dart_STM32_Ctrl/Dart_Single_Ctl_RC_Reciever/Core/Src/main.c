@@ -124,6 +124,7 @@ int main(void)
   while (1)
   {
     RC_Task();
+		HAL_Delay(10);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

@@ -98,7 +98,7 @@ void Module_Init(void)
     BSP_UART_Init();
     // while (!ServoInit())
     //     ; // 这个地方有一个回调,需要进行数据读取
-    ServoInit();
+    // ServoInit();
     UART_SetProtocolType(BSP_UART6, PROTOCOL_IBUS);
     HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
     HAL_TIM_Base_Start(&htim8);
@@ -197,7 +197,8 @@ void StoreEnergyTaskFunc(void *argument)
     // 接收计数型信号量之后才可以正常,这里更新第一次目标值（下拉至换弹位置 -> 上拉至扳机位置 -> 释放（同时回到零点）-> 下一次循环）
 
     DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
-    // DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
+    vTaskDelay(2);
+    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
     uint8_t StoreState = 0x00;
     int8_t Dart = 4;
     vTaskDelay(POWER_ON_DELAY_MS); // 上电保护延迟
@@ -216,7 +217,7 @@ void StoreEnergyTaskFunc(void *argument)
             // 循环到达发射位置,释放计数量/信号量/Stream流
             // 等待对方执行完任务,这可以直接读DartNum进行确定
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreBottom, 5.0f, DM_LOCATION_SPEED);
-            // DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreBottom, 5.0f, DM_LOCATION_SPEED);
+            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreBottom, 5.0f, DM_LOCATION_SPEED);
 
             bool temp = true;
 
@@ -224,12 +225,11 @@ void StoreEnergyTaskFunc(void *argument)
             {
                 DM_Motor_RefreshData(DM_3519_STRENTH_LEFT);
                 left_pos = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT); // 这里打一个断点,看一下返回数据
-                // right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
+                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
                 // 检查是否都到达目标位置（死区判定）
-                // if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
-                //     IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
-                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE))
+                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
                 {
                     temp = false; // 到达目标
                 }
@@ -249,18 +249,17 @@ void StoreEnergyTaskFunc(void *argument)
             // 发射滑台上移到达扳机位置
             // 释放一个信号量或者任务通知量进行通信
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-            // DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
+            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
 
             // 等待电机到达目标位置
             while (1)
             {
                 left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                // right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
+                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
                 // 检查是否都到达目标位置（死区判定）
-                // if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
-                //     IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
-                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE))
+                if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
                 {
                     break; // 到达目标
                 }
@@ -274,6 +273,26 @@ void StoreEnergyTaskFunc(void *argument)
 
         case 0x02:
         {
+            // 发射滑台叉上移
+            // 释放一个信号量或者任务通知量进行通信
+            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED);
+            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTop, 5.0f, DM_LOCATION_SPEED);
+
+            // 等待电机到达目标位置
+            while (1)
+            {
+                left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
+                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
+
+                // 检查是否都到达目标位置（死区判定）
+                if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
+                {
+                    break; // 到达目标
+                }
+
+                // TODO: 添加错误处理（日志、报警等）
+            }
             // 通知Shoot任务开始发射
             xSemaphoreGive(g_xStore2ShootSemHandle); // 通知Shoot开始
             // TODO: 添加错误处理（日志、报警等），完善整体流程，这个地方应该是DM电机失能之后输出数据
@@ -293,8 +312,8 @@ void StoreEnergyTaskFunc(void *argument)
         {
             // 4发打完，失能所有电机，实际上这里需要归中
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
-            // DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
-            // DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
+            DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
+            DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
 
             // 挂起任务（可恢复）
             vTaskSuspend(StoreEnergyTaskHandle);

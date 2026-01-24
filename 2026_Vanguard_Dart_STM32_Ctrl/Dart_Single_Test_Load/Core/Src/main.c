@@ -28,6 +28,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "UserTask.h"
+#include "HX06L.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,6 +61,49 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// 测试函数：使用阻塞方式直接发送舵机指令
+// 无MCU驱动板协议：0x55 0x55 | ID | Length | Cmd | Param... | CRC
+void Test_Servo_Blocking(void)
+{
+    uint8_t data[16];
+    uint8_t crc;
+    
+    // ============ 第一步：舵机上电 (Load) ============
+    // 指令：SERVO_LOAD_OR_UNLOAD_WRITE (cmd=31, length=4)
+    data[0] = 0x55;  // 帧头
+    data[1] = 0x55;  // 帧头
+    data[2] = 0x01;  // ID = 1
+    data[3] = 0x04;  // Length = 4
+    data[4] = 31;    // Cmd = SERVO_LOAD_OR_UNLOAD_WRITE
+    data[5] = 0x01;  // 参数: 1 = 上电
+    
+    // 计算 CRC (从 ID 到最后一个参数)
+    crc = data[2] + data[3] + data[4] + data[5];
+    crc = ~crc;
+    data[6] = crc;
+    
+    HAL_UART_Transmit(&huart3, data, 7, 100);
+    HAL_Delay(100);  // 等待舵机处理
+    
+    // ============ 第二步：控制舵机转动到位置500 ============
+    // 指令：SERVO_MOVE_TIME_WRITE (cmd=1, length=7)
+    data[0] = 0x55;  // 帧头
+    data[1] = 0x55;  // 帧头
+    data[2] = 0x01;  // ID = 1
+    data[3] = 0x07;  // Length = 7
+    data[4] = 1;     // Cmd = SERVO_MOVE_TIME_WRITE
+    data[5] = 0xF4;  // 角度低字节 (500 = 0x01F4)
+    data[6] = 0x01;  // 角度高字节
+    data[7] = 0xE8;  // 时间低字节 (1000ms = 0x03E8)
+    data[8] = 0x03;  // 时间高字节
+    
+    crc = data[2] + data[3] + data[4] + data[5] + data[6] + data[7] + data[8];
+    crc = ~crc;
+    data[9] = crc;
+    
+    HAL_UART_Transmit(&huart3, data, 10, 100);
+}
 
 /* USER CODE END 0 */
 
@@ -109,11 +153,11 @@ int main(void)
   /* USER CODE END 2 */
 
   /* Init scheduler */
-  osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
-  MX_FREERTOS_Init();
+  // osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
+  // MX_FREERTOS_Init();
 
   /* Start scheduler */
-  osKernelStart();
+  // osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
 
@@ -121,7 +165,55 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
+    // ====== 方式二测试：延时控制（同步运动）======
+    
+    // 动作1：三个舵机同步移动到不同位置
+    // 先设置目标位置（舵机不动）
+//    ServoMoveTimeWaitWrite(1, 500, 1000);   // 舵机1 -> 120°
+//    ServoMoveTimeWaitWrite(2, 300, 1000);   // 舵机2 -> 72°
+//    ServoMoveTimeWaitWrite(3, 700, 1000);   // 舵机3 -> 168°
+//    HAL_Delay(10);  // 短暂延时确保指令发送完成
+//    
+//    // 同时启动所有舵机
+//    ServoStart(1);
+//    ServoStart(2);
+//    ServoStart(3);
+//    HAL_Delay(1200);  // 等待运动完成
+//    
+//    // 动作2：三个舵机同步回到起始位置
+//    ServoMoveTimeWaitWrite(1, 0, 1000);     // 舵机1 -> 0°
+//    ServoMoveTimeWaitWrite(2, 0, 1000);     // 舵机2 -> 0°
+//    ServoMoveTimeWaitWrite(3, 0, 1000);     // 舵机3 -> 0°
+//    HAL_Delay(10);
+//    
+//    ServoStart(1);
+//    ServoStart(2);
+//    ServoStart(3);
+//    HAL_Delay(1200);
+//    
+//    // 动作3：三个舵机同步移动到最大位置
+//    ServoMoveTimeWaitWrite(1, 1000, 1500);  // 舵机1 -> 240°
+//    ServoMoveTimeWaitWrite(2, 1000, 1500);  // 舵机2 -> 240°
+//    ServoMoveTimeWaitWrite(3, 1000, 1500);  // 舵机3 -> 240°
+//    HAL_Delay(10);
+//    
+//    ServoStart(1);
+//    ServoStart(2);
+//    ServoStart(3);
+//    HAL_Delay(1700);
+//    
+//    // 动作4：三个舵机同步回中间位置
+//    ServoMoveTimeWaitWrite(1, 500, 1000);   // 舵机1 -> 120°
+//    ServoMoveTimeWaitWrite(2, 500, 1000);   // 舵机2 -> 120°
+//    ServoMoveTimeWaitWrite(3, 500, 1000);   // 舵机3 -> 120°
+//    HAL_Delay(10);
+//    
+//    ServoStart(1);
+//    ServoStart(2);
+//    ServoStart(3);
+//    HAL_Delay(1200);
+    ServoInit();
+		HAL_Delay(100);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

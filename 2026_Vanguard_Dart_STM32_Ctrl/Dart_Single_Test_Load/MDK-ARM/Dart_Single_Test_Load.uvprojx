@@ -7,7 +7,7 @@
 
   <Targets>
     <Target>
-      <TargetName>Dart_Ctrl</TargetName>
+      <TargetName>Dart_Single_Test_Load</TargetName>
       <ToolsetNumber>0x4</ToolsetNumber>
       <ToolsetName>ARM-ADS</ToolsetName>
       <pCCUsed>6240000::V6.24::ARMCLANG</pCCUsed>
@@ -740,7 +740,7 @@
       <component Cclass="CMSIS" Cgroup="CORE" Cvendor="ARM" Cversion="6.1.1" condition="ARMv6_7_8-M Device" ymlID="CMSIS:CORE">
         <package name="CMSIS" schemaVersion="1.7.40" url="https://www.keil.com/pack/" vendor="ARM" version="6.2.0"/>
         <targetInfos>
-          <targetInfo name="Dart_Ctrl"/>
+          <targetInfo name="Dart_Single_Test_Load"/>
         </targetInfos>
       </component>
     </components>

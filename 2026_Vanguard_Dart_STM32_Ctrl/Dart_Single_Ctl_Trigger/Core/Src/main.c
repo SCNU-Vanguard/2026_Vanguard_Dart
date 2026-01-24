@@ -94,7 +94,7 @@ int main(void)
 	HAL_TIM_Base_Start(&htim8);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
 	HAL_Delay(2000);
-  __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500); // 直接复位
+  // __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500); // 直接复位
 	HAL_Delay(1000);
   /* USER CODE END 2 */
 
@@ -111,6 +111,11 @@ int main(void)
 //		{
 //			a = 1000; // notes；新释放状态 1000，新绷紧状态2500
 //		}
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 1000);
+		HAL_Delay(1000);
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500);
+		HAL_Delay(1000);
+		
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

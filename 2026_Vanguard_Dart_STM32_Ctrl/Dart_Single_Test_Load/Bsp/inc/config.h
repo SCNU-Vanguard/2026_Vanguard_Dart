@@ -32,9 +32,9 @@
 // 换弹结构相关
 #define ConveyorBeltLength 20673
 #define SeperationAngle 375
-#define FirstServoLoc -7547
-#define SecondServoLoc -13200
-#define ThirdServoLoc -18749
+#define FirstServoLoc -3000//-7547
+#define SecondServoLoc -5000//-13200
+#define ThirdServoLoc -7000//-18749
 // 第三个舵机（距离7547）
 // 第二个舵机（距离13200）<与第三个相距5653>
 // 第一个舵机（距离18749）<与第二个相距5549>

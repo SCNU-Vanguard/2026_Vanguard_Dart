@@ -7,8 +7,8 @@
 // todo: 后续应该使用其他手段比如上电或者信号量进行初始化与上位机的通信，从而保证稳定
 
 /* 内部缓冲区定义（用户无需关心） */
-static UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
-static UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
+UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
+UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
 static uint8_t g_ibus_dma_buffer[IBUS_DMA_BUFFER_LEN];
 
 /* 内部函数声明 */
@@ -46,6 +46,10 @@ static UART_HandleTypeDef *GetUartHandle(BSP_UART_NUM_e uart_num)
         return &huart3;
     case BSP_UART6:
         return &huart6;
+    case BSP_UART7:
+        return &huart7;
+    case BSP_UART8:
+        return &huart8;
     default:
         return NULL;
     }
@@ -60,6 +64,10 @@ static BSP_UART_NUM_e GetUartNum(UART_HandleTypeDef *huart)
         return BSP_UART3;
     if (huart == &huart6)
         return BSP_UART6;
+    if (huart == &huart7)
+        return BSP_UART7;
+    if (huart == &huart8)
+        return BSP_UART8;
     return BSP_UART_MAX;
 }
 
@@ -153,7 +161,21 @@ static void StartTransmit(UartTxRingBuffer *rb)
     if (sendLen > 0)
     {
         rb->isSending = true;
-        if (HAL_UART_Transmit_IT(rb->huart, rb->temp_buffer, sendLen) != HAL_OK)
+        
+        // 根据是否配置了DMA选择发送方式
+        HAL_StatusTypeDef status;
+        if (rb->huart->hdmatx != NULL)
+        {
+            // 使用 DMA 发送（USART3 配置了 DMA）
+            status = HAL_UART_Transmit_DMA(rb->huart, rb->temp_buffer, sendLen);
+        }
+        else
+        {
+            // 使用中断发送（其他 UART 没有 DMA）
+            status = HAL_UART_Transmit_IT(rb->huart, rb->temp_buffer, sendLen);
+        }
+        
+        if (status != HAL_OK)
         {
             rb->isSending = false;
         }
@@ -247,7 +269,7 @@ void BSP_UART_Init(void)
             switch ((BSP_UART_NUM_e)i)
             {
             case BSP_UART3:
-                rb->protocol_type = PROTOCOL_SERVO_MCU; // UART3: 舵机通信（有MCU控制板，无CRC）
+                rb->protocol_type = PROTOCOL_SERVO_NO_MCU; // UART3: 舵机通信（无MCU驱动板，有CRC）
                 break;
             case BSP_UART6:
                 rb->protocol_type = PROTOCOL_IBUS; // UART6: IBUS接收
@@ -559,4 +581,3 @@ UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num)
         return NULL;
     return &g_uart_rx_buffers[uart_num];
 }
-
