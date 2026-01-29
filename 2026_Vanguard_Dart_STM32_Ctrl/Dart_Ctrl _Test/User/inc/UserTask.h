@@ -31,3 +31,5 @@ void Module_Init(void);
 void TaskInitFunc(void);
 
 #endif
+
+extern SemaphoreHandle_t g_xRmBufferMutexHandle;

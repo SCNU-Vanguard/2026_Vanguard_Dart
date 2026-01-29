@@ -93,28 +93,30 @@ int main(void)
   /* USER CODE BEGIN 2 */
 	HAL_TIM_Base_Start(&htim8);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
-	HAL_Delay(2000);
+	HAL_Delay(500);
   // __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500); // 直接复位
-	HAL_Delay(1000);
+	// HAL_Delay(1000);
+	// __HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 500);
+	// HAL_Delay(2000);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-	uint16_t a = 1000;
+	uint16_t a = 500;
   while (1)
   {
-//		a = a + 112;
-//		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, a);
-//		
-//	  HAL_Delay(500);
+		a = a + 100;
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 1100);
+		
+	  HAL_Delay(1000);
+		
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 500);
+		HAL_Delay(1000);
 //		if(a >= 2500)
 //		{
-//			a = 1000; // notes；新释放状态 1000，新绷紧状态2500
+//			a = 500; // notes；新释放状态 1000，新绷紧状态2500（待测01.29）《新的500 - 1000（激发）》
 //		}
-		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 1000);
-		HAL_Delay(1000);
-		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500);
-		HAL_Delay(1000);
+		
 		
     /* USER CODE END WHILE */
 

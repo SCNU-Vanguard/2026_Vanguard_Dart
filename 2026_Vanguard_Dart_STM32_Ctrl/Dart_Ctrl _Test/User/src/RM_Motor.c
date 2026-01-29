@@ -26,6 +26,7 @@
 
 // 直接访问电机管理器（减少函数调用开销）
 extern MotorManager_t MotorManager;
+extern SemaphoreHandle_t g_xRmBufferMutexHandle;
 
 float output = 0.0f;
 
@@ -361,7 +362,9 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
     }
 
     // 使用Fast版本发送（内联，零开销）
-    return Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer) ? 1 : 0;
+    uint8_t res = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer) ? 1 : 0;
+    xSemaphoreGive(g_xRmBufferMutexHandle);
+    return res;
 }
 
 /// @brief 兼容旧接口
@@ -640,6 +643,7 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
     output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
     // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
     RmMotorSendCfg(motor_cfg, output);
+    printf("target=%f, feedback=%f,", target, pData->solved_data[3]);
 }
 
 /*============================== PID计算内部函数(新接口) ==============================*/

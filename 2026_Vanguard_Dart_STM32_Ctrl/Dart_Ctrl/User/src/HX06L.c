@@ -12,9 +12,10 @@
 #include "HX06L.h"
 #include "bsp_dwt.h"
 #include <string.h>
-#include "FreeRTOS.h"
-#include "task.h"
 #include "UartModule.h"
+#include "FreeRTOS.h"
+#include "cmsis_os.h"
+#include "task.h"
 
 #if (other_mcu_forcing == 1)
 /*******************************************************************************
@@ -52,7 +53,7 @@ bool ServoInit(void)
         data[2] = 0x02;                    // 数据长度 = 0 + 2
         data[3] = CMD_GET_BATTERY_VOLTAGE; // 指令：获取电池电压
         UART_Send(BSP_UART3, (const uint8_t *)data, 4);
-        HAL_Delay(100); // 这里等待100ms,之后读取回调数据,确认电压是否正常
+        vTaskDelay(100); // 这里等待100ms,之后读取回调数据,确认电压是否正常
         ServoInitCount = 1;
     }
     ServoPacket_t InitData; // 这里可以不用进行初始化,函数调用时会直接memcpy数据过来,即使是没接收到数据也有HasServoPacket保障
@@ -295,31 +296,38 @@ static inline uint8_t get_servo_command_value(ServoCommandName cmd_name)
 
 /// @brief 换弹舵机初始化（无MCU协议）
 /// @param  无
-/// @retval true:初始化正常（收到返回消息）, false:初始化失败
-/// @note 直接控制舵机到角度0，通过返回消息判断通信是否正常
+/// @retval true:初始化正常, false:初始化失败
+/// @note 先让舵机上电，再控制到初始位置
 bool ServoInit(void)
 {
     static uint8_t ServoInitCount = 0;
 
     if (ServoInitCount == 0)
     {
-        // 直接控制3个舵机到角度0，时间500ms
+        // 第一步：让所有舵机上电
+        ServoSetLoad(1, 1);
+        ServoSetLoad(2, 1);
+        ServoSetLoad(3, 1);
+        vTaskDelay(50); // 等待舵机上电稳定
+
+        // 第二步：控制舵机到初始位置0
         ServoControlPos(1, 0, 500);
         ServoControlPos(2, 0, 500);
         ServoControlPos(3, 0, 500);
-        HAL_Delay(100); // 等待返回消息
+        vTaskDelay(100); // 等待返回消息
         ServoInitCount = 1;
     }
 
-    // 检查是否收到返回消息
+    // 检查是否收到返回消息（可选，用于验证通信）
     if (UartModule_HasServoPacket(BSP_UART3))
     {
         ServoPacket_t InitData;
         UartModule_GetServoPacket(BSP_UART3, &InitData);
-        // 收到返回消息即表示通信正常
         return true;
     }
-    return false;
+
+    // 即使没收到返回也认为初始化完成（舵机可能没配置返回）
+    return (ServoInitCount == 1);
 }
 
 /// @brief 总线舵机控制函数（无MCU协议）
@@ -343,6 +351,21 @@ void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
     data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_WRITE)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_WRITE) + 3);
     vTaskDelay(1); // 等待舵机处理命令
+}
+
+/// @brief 读取舵机预设角度和时间（立即控制模式）
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果，返回数据包含：角度(2字节) + 时间(2字节)
+void ServoReadMoveTime(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;                                                            // 帧头
+    data[1] = 0x55;                                                            // 帧头
+    data[2] = ID;                                                              // ID号
+    data[3] = get_servo_data_length(SERVO_MOVE_TIME_READ);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_MOVE_TIME_READ);                   // 指令
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_READ)); // CRC校验
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_READ) + 3);
 }
 
 /// @brief 控制多个舵机同时转动（无MCU协议）
@@ -423,12 +446,12 @@ void ServoGetBatteryVoltage(void)
     // 使用广播ID 0xFE 读取电压（所有舵机都会返回）
     // 或者指定某个舵机ID
     uint8_t data[16] = {0x00};
-    data[0] = 0x55;                                                         // 帧头
-    data[1] = 0x55;                                                         // 帧头
-    data[2] = 1;                                                            // ID号（使用舵机1）
-    data[3] = get_servo_data_length(SERVO_VIN_READ);                        // 数据长度
-    data[4] = get_servo_command_value(SERVO_VIN_READ);                      // 指令
-    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_READ));    // CRC校验
+    data[0] = 0x55;                                                      // 帧头
+    data[1] = 0x55;                                                      // 帧头
+    data[2] = 1;                                                         // ID号（使用舵机1）
+    data[3] = get_servo_data_length(SERVO_VIN_READ);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_VIN_READ);                   // 指令
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_READ)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_VIN_READ) + 3);
 }
 
@@ -438,12 +461,12 @@ void ServoGetBatteryVoltage(void)
 void ServoReadPosition(uint8_t ID)
 {
     uint8_t data[16] = {0x00};
-    data[0] = 0x55;                                                         // 帧头
-    data[1] = 0x55;                                                         // 帧头
-    data[2] = ID;                                                           // ID号
-    data[3] = get_servo_data_length(SERVO_POS_READ);                        // 数据长度
-    data[4] = get_servo_command_value(SERVO_POS_READ);                      // 指令
-    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_POS_READ));    // CRC校验
+    data[0] = 0x55;                                                      // 帧头
+    data[1] = 0x55;                                                      // 帧头
+    data[2] = ID;                                                        // ID号
+    data[3] = get_servo_data_length(SERVO_POS_READ);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_POS_READ);                   // 指令
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_POS_READ)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_POS_READ) + 3);
 }
 
@@ -462,6 +485,457 @@ void ServoSetLoad(uint8_t ID, uint8_t load)
     data[6] = CRC_GNERATOR(data, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_WRITE) + 3);
     vTaskDelay(1);
+}
+
+/// @brief 读取舵机上电/卸力状态
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadLoadStatus(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ);
+    data[4] = get_servo_command_value(SERVO_LOAD_OR_UNLOAD_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_LOAD_OR_UNLOAD_READ) + 3);
+}
+
+/*****************************延时控制函数***********************************/
+
+/// @brief 设置舵机延时转动参数（需配合ServoStart使用）
+/// @param ID 舵机ID
+/// @param Angle 目标角度（0-1000对应0-240°）
+/// @param Time 转动时间（0-30000ms）
+void ServoMoveTimeWaitWrite(uint8_t ID, uint16_t Angle, uint16_t Time)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_MOVE_TIME_WAIT_WRITE);
+    data[4] = get_servo_command_value(SERVO_MOVE_TIME_WAIT_WRITE);
+    data[5] = (uint8_t)(Angle & 0xFF);
+    data[6] = (uint8_t)(Angle >> 8);
+    data[7] = (uint8_t)(Time & 0xFF);
+    data[8] = (uint8_t)(Time >> 8);
+    data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_WAIT_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_WAIT_WRITE) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 启动舵机转动（配合ServoMoveTimeWaitWrite使用）
+/// @param ID 舵机ID
+void ServoStart(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_MOVE_START);
+    data[4] = get_servo_command_value(SERVO_MOVE_START);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_START));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_START) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 立即停止舵机转动并保持当前位置
+/// @param ID 舵机ID
+void ServoStop(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_MOVE_STOP);
+    data[4] = get_servo_command_value(SERVO_MOVE_STOP);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_STOP));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_STOP) + 3);
+    vTaskDelay(1);
+}
+
+/*****************************ID设置函数***********************************/
+
+/// @brief 设置舵机ID（支持掉电保存）
+/// @param ID 当前舵机ID
+/// @param newID 新舵机ID（0-253）
+/// @return SERVO_SUCCESS或SERVO_FAIL
+ServoResult_t ServoSetID(uint8_t ID, uint8_t newID)
+{
+    if (newID > 253)
+    {
+        return SERVO_FAIL;
+    }
+
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ID_WRITE);
+    data[4] = get_servo_command_value(SERVO_ID_WRITE);
+    data[5] = newID;
+    data[6] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ID_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ID_WRITE) + 3);
+    vTaskDelay(1);
+    return SERVO_SUCCESS;
+}
+
+/// @brief 读取舵机ID
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadID(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ID_READ);
+    data[4] = get_servo_command_value(SERVO_ID_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ID_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ID_READ) + 3);
+}
+
+/*****************************角度偏差设置***********************************/
+
+/// @brief 设置舵机角度偏差（不保存到内存）
+/// @param ID 舵机ID
+/// @param offset 偏差值（-125~125，对应-30°~30°）
+void ServoSetAngleOffset(uint8_t ID, int8_t offset)
+{
+    // 限制范围
+    if (offset < -125)
+        offset = -125;
+    if (offset > 125)
+        offset = 125;
+
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST);
+    data[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_ADJUST);
+    data[5] = (uint8_t)offset; // 有符号转无符号
+    data[6] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ANGLE_OFFSET_ADJUST) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 保存角度偏差到内存（掉电保存）
+/// @param ID 舵机ID
+void ServoSaveAngleOffset(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE);
+    data[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_WRITE);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ANGLE_OFFSET_WRITE) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 读取舵机角度偏差
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadAngleOffset(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ANGLE_OFFSET_READ);
+    data[4] = get_servo_command_value(SERVO_ANGLE_OFFSET_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ANGLE_OFFSET_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ANGLE_OFFSET_READ) + 3);
+}
+
+/*****************************角度限制设置***********************************/
+
+/// @brief 设置舵机角度限制（支持掉电保存）
+/// @param ID 舵机ID
+/// @param minAngle 最小角度（0-1000）
+/// @param maxAngle 最大角度（0-1000）
+/// @return SERVO_SUCCESS或SERVO_FAIL
+ServoResult_t ServoSetAngleLimit(uint8_t ID, uint16_t minAngle, uint16_t maxAngle)
+{
+    if (minAngle > 1000 || maxAngle > 1000 || minAngle >= maxAngle)
+    {
+        return SERVO_FAIL;
+    }
+
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE);
+    data[4] = get_servo_command_value(SERVO_ANGLE_LIMIT_WRITE);
+    data[5] = (uint8_t)(minAngle & 0xFF);
+    data[6] = (uint8_t)(minAngle >> 8);
+    data[7] = (uint8_t)(maxAngle & 0xFF);
+    data[8] = (uint8_t)(maxAngle >> 8);
+    data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ANGLE_LIMIT_WRITE) + 3);
+    vTaskDelay(1);
+    return SERVO_SUCCESS;
+}
+
+/// @brief 读取舵机角度限制
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadAngleLimit(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_ANGLE_LIMIT_READ);
+    data[4] = get_servo_command_value(SERVO_ANGLE_LIMIT_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_ANGLE_LIMIT_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_ANGLE_LIMIT_READ) + 3);
+}
+
+/*****************************电压限制设置***********************************/
+
+/// @brief 设置舵机输入电压限制（支持掉电保存）
+/// @param ID 舵机ID
+/// @param minVin 最小电压（单位mV，4500-14000）
+/// @param maxVin 最大电压（单位mV，4500-14000）
+/// @return SERVO_SUCCESS或SERVO_FAIL
+ServoResult_t ServoSetVinLimit(uint8_t ID, uint16_t minVin, uint16_t maxVin)
+{
+    if (minVin < 4500 || minVin > 14000 || maxVin < 4500 || maxVin > 14000 || minVin >= maxVin)
+    {
+        return SERVO_FAIL;
+    }
+
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_VIN_LIMIT_WRITE);
+    data[4] = get_servo_command_value(SERVO_VIN_LIMIT_WRITE);
+    data[5] = (uint8_t)(minVin & 0xFF);
+    data[6] = (uint8_t)(minVin >> 8);
+    data[7] = (uint8_t)(maxVin & 0xFF);
+    data[8] = (uint8_t)(maxVin >> 8);
+    data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_LIMIT_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_VIN_LIMIT_WRITE) + 3);
+    vTaskDelay(1);
+    return SERVO_SUCCESS;
+}
+
+/// @brief 读取舵机电压限制
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadVinLimit(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_VIN_LIMIT_READ);
+    data[4] = get_servo_command_value(SERVO_VIN_LIMIT_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_LIMIT_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_VIN_LIMIT_READ) + 3);
+}
+
+/*****************************温度限制设置***********************************/
+
+/// @brief 设置舵机最高温度限制（支持掉电保存）
+/// @param ID 舵机ID
+/// @param maxTemp 最高温度（50-100℃）
+/// @return SERVO_SUCCESS或SERVO_FAIL
+ServoResult_t ServoSetTempLimit(uint8_t ID, uint8_t maxTemp)
+{
+    if (maxTemp < 50 || maxTemp > 100)
+    {
+        return SERVO_FAIL;
+    }
+
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE);
+    data[4] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_WRITE);
+    data[5] = maxTemp;
+    data[6] = CRC_GNERATOR(data, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_WRITE) + 3);
+    vTaskDelay(1);
+    return SERVO_SUCCESS;
+}
+
+/// @brief 读取舵机温度限制
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadTempLimit(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ);
+    data[4] = get_servo_command_value(SERVO_TEMP_MAX_LIMIT_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_TEMP_MAX_LIMIT_READ) + 3);
+}
+
+/*****************************状态读取函数***********************************/
+
+/// @brief 读取舵机实时温度
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadTemp(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_TEMP_READ);
+    data[4] = get_servo_command_value(SERVO_TEMP_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_TEMP_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_TEMP_READ) + 3);
+}
+
+/// @brief 读取舵机输入电压
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadVin(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_VIN_READ);
+    data[4] = get_servo_command_value(SERVO_VIN_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_VIN_READ) + 3);
+}
+
+/*****************************工作模式设置***********************************/
+
+/// @brief 设置舵机工作模式和速度
+/// @param ID 舵机ID
+/// @param servoMode 舵机模式（0=位置控制，1=电机控制）
+/// @param rotateMode 转动模式（0=固定占空比，1=固定转速）
+/// @param speed 转动速度（占空比模式-1000~1000，转速模式-50~50）
+void ServoSetModeAndSpeed(uint8_t ID, uint8_t servoMode, uint8_t rotateMode, int16_t speed)
+{
+    // 速度范围限制
+    if (rotateMode == 0) // 固定占空比模式
+    {
+        if (speed < -1000)
+            speed = -1000;
+        if (speed > 1000)
+            speed = 1000;
+    }
+    else // 固定转速模式
+    {
+        if (speed < -50)
+            speed = -50;
+        if (speed > 50)
+            speed = 50;
+    }
+
+    // 将有符号数转换为无符号数（补码形式）
+    uint16_t speedUnsigned = (uint16_t)speed;
+
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_OR_MOTOR_MODE_WRITE);
+    data[4] = get_servo_command_value(SERVO_OR_MOTOR_MODE_WRITE);
+    data[5] = servoMode;
+    data[6] = rotateMode;
+    data[7] = (uint8_t)(speedUnsigned & 0xFF);
+    data[8] = (uint8_t)(speedUnsigned >> 8);
+    data[9] = CRC_GNERATOR(data, get_servo_data_length(SERVO_OR_MOTOR_MODE_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_OR_MOTOR_MODE_WRITE) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 读取舵机工作模式和速度
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadModeAndSpeed(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_OR_MOTOR_MODE_READ);
+    data[4] = get_servo_command_value(SERVO_OR_MOTOR_MODE_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_OR_MOTOR_MODE_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_OR_MOTOR_MODE_READ) + 3);
+}
+
+/*****************************LED控制函数***********************************/
+
+/// @brief 设置舵机LED灯状态（支持掉电保存）
+/// @param ID 舵机ID
+/// @param ledOn 0=常亮，1=常灭
+void ServoSetLED(uint8_t ID, uint8_t ledOn)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_LED_CTRL_WRITE);
+    data[4] = get_servo_command_value(SERVO_LED_CTRL_WRITE);
+    data[5] = ledOn ? 1 : 0;
+    data[6] = CRC_GNERATOR(data, get_servo_data_length(SERVO_LED_CTRL_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_LED_CTRL_WRITE) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 读取舵机LED状态
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadLED(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_LED_CTRL_READ);
+    data[4] = get_servo_command_value(SERVO_LED_CTRL_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_LED_CTRL_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_LED_CTRL_READ) + 3);
+}
+
+/// @brief 设置LED报警故障类型
+/// @param ID 舵机ID
+/// @param alarmCode 报警代码（使用ServoAlarmCode_t枚举）
+void ServoSetLEDAlarm(uint8_t ID, ServoAlarmCode_t alarmCode)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_LED_ERROR_WRITE);
+    data[4] = get_servo_command_value(SERVO_LED_ERROR_WRITE);
+    data[5] = (uint8_t)alarmCode;
+    data[6] = CRC_GNERATOR(data, get_servo_data_length(SERVO_LED_ERROR_WRITE));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_LED_ERROR_WRITE) + 3);
+    vTaskDelay(1);
+}
+
+/// @brief 读取LED报警状态
+/// @param ID 舵机ID
+/// @note 需要通过接收回调获取结果
+void ServoReadLEDAlarm(uint8_t ID)
+{
+    uint8_t data[16] = {0x00};
+    data[0] = 0x55;
+    data[1] = 0x55;
+    data[2] = ID;
+    data[3] = get_servo_data_length(SERVO_LED_ERROR_READ);
+    data[4] = get_servo_command_value(SERVO_LED_ERROR_READ);
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_LED_ERROR_READ));
+    UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_LED_ERROR_READ) + 3);
 }
 
 #endif /* other_mcu_forcing */

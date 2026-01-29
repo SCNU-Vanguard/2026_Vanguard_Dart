@@ -76,27 +76,38 @@ void IA6B_HandleData2Channel(uint8_t *data)
     }
 
     // 对应SWB,1为默认状态为真,2为手动调节为0
-    if (RawChannel[4] == 1000)
+    // 使用范围判断，避免信号波动导致检测不灵敏
+    // 同时检查数据有效性（RawChannel应在1000-2000范围内）
+    if (RawChannel[4] >= 900 && RawChannel[4] <= 2100)
     {
-        Channel[4] = 1;
+        if (RawChannel[4] < 1500)
+        {
+            Channel[4] = 1;  // SWB位置1（默认）
+        }
+        else
+        {
+            Channel[4] = 0;  // SWB位置2（手动调节）
+        }
     }
-    else
-    {
-        Channel[4] = 0;
-    }
+    // 如果数据无效则保持之前的值
 
-    if (RawChannel[5] == 1000)
+    // SWC三段开关：使用范围判断
+    if (RawChannel[5] >= 900 && RawChannel[5] <= 2100)
     {
-        Channel[5] = 1;
+        if (RawChannel[5] < 1250)
+        {
+            Channel[5] = 1;   // SWC位置1
+        }
+        else if (RawChannel[5] < 1750)
+        {
+            Channel[5] = 0;   // SWC位置2（中间）
+        }
+        else
+        {
+            Channel[5] = -1;  // SWC位置3
+        }
     }
-    else if (RawChannel[5] == 1500)
-    {
-        Channel[5] = 0;
-    }
-    else
-    {
-        Channel[5] = -1;
-    }
+    // 如果数据无效则保持之前的值
 }
 
 // 初始化队列接受任务,同时使用DMA加缓冲区接收,但是这个固定很麻烦

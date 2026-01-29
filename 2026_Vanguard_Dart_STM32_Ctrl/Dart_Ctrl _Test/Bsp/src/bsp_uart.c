@@ -7,8 +7,8 @@
 // todo: 后续应该使用其他手段比如上电或者信号量进行初始化与上位机的通信，从而保证稳定
 
 /* 内部缓冲区定义（用户无需关心） */
-static UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
-static UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
+UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
+UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
 static uint8_t g_ibus_dma_buffer[IBUS_DMA_BUFFER_LEN];
 
 /* 内部函数声明 */
@@ -46,6 +46,10 @@ static UART_HandleTypeDef *GetUartHandle(BSP_UART_NUM_e uart_num)
         return &huart3;
     case BSP_UART6:
         return &huart6;
+    case BSP_UART7:
+        return &huart7;
+    case BSP_UART8:
+        return &huart8;
     default:
         return NULL;
     }
@@ -60,6 +64,10 @@ static BSP_UART_NUM_e GetUartNum(UART_HandleTypeDef *huart)
         return BSP_UART3;
     if (huart == &huart6)
         return BSP_UART6;
+    if (huart == &huart7)
+        return BSP_UART7;
+    if (huart == &huart8)
+        return BSP_UART8;
     return BSP_UART_MAX;
 }
 
@@ -153,7 +161,21 @@ static void StartTransmit(UartTxRingBuffer *rb)
     if (sendLen > 0)
     {
         rb->isSending = true;
-        if (HAL_UART_Transmit_IT(rb->huart, rb->temp_buffer, sendLen) != HAL_OK)
+        
+        // 根据是否配置了DMA选择发送方式
+        HAL_StatusTypeDef status;
+        if (rb->huart->hdmatx != NULL)
+        {
+            // 使用 DMA 发送（USART3 配置了 DMA）
+            status = HAL_UART_Transmit_DMA(rb->huart, rb->temp_buffer, sendLen);
+        }
+        else
+        {
+            // 使用中断发送（其他 UART 没有 DMA）
+            status = HAL_UART_Transmit_IT(rb->huart, rb->temp_buffer, sendLen);
+        }
+        
+        if (status != HAL_OK)
         {
             rb->isSending = false;
         }
@@ -169,15 +191,23 @@ static void StartIbusDma(UartRxRingBuffer *rb)
         return;
 
     rb->isReceiving = true;
-    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN) != HAL_OK)
+    HAL_StatusTypeDef status = HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN);
+
+    if (status != HAL_OK)
     {
         rb->isReceiving = false;
+        // 闪烁LED1指示DMA启动失败
+        HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
         return;
     }
+
     if (rb->huart->hdmarx != NULL)
     {
         __HAL_DMA_DISABLE_IT(rb->huart->hdmarx, DMA_IT_HT);
     }
+
+    // DMA启动成功，点亮LED1
+    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
 }
 
 /**
@@ -534,6 +564,15 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     UartRxRingBuffer *rb = &g_uart_rx_buffers[BSP_UART6];
     if (rb->protocol_type != PROTOCOL_IBUS)
         return;
+
+    // LED2闪烁指示DMA接收事件触发
+    static uint8_t rx_event_count = 0;
+    rx_event_count++;
+    if (rx_event_count >= 10)
+    {
+        HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+        rx_event_count = 0;
+    }
 
     if (Size > 0 && Size <= IBUS_DMA_BUFFER_LEN)
     {

@@ -325,11 +325,6 @@ uint8_t DM_Motor_Enable(MotorTypeDef *motor);
 /// @return 1：发送成功，0：发送失败
 uint8_t DM_Motor_Disable(MotorTypeDef *motor);
 
-/// @brief 用于控制达妙电机
-/// @param st 要控制的达妙电机的结构体
-/// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorSendControl(MotorTypeDef *st);
-
 /// @brief 设置达妙电机发送的数据
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 数据所在数组的指针

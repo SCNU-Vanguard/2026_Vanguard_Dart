@@ -132,7 +132,7 @@ void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
+  huart3.Init.BaudRate = 9600;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
@@ -508,7 +508,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 int fputc(int ch, FILE *f)
 {
   // 使用轮询方式发送单个字符（适用于低频调试）
-  HAL_UART_Transmit(&huart6, (uint8_t *)&ch, 1, 1); // 短超时避免死锁
+  HAL_UART_Transmit(&huart8, (uint8_t *)&ch, 1, 1); // 短超时避免死锁
   return ch;
 }
 /* USER CODE END 1 */

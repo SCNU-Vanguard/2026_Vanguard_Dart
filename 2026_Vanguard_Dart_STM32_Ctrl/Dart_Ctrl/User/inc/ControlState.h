@@ -25,7 +25,6 @@
 #include "task.h"
 #include "cmsis_os.h"
 #include <stdbool.h>
-#include "semphr.h"
 
 /*============================== 模式定义 ==============================*/
 
@@ -36,7 +35,7 @@ typedef enum
 {
     CTRL_MODE_NORMAL_SINGLE = 0, // 正常单发模式：任务流程接管，忽略摇杆
     CTRL_MODE_MANUAL_DEBUG,      // 手动调试模式：遥控器直接控制电机
-    CTRL_MODE_DEBUG_TIMER,       // 调试计时模式：单发结束后90s调试窗口
+    CTRL_MODE_DEBUG_TIMER,       // 调试计时模式：单发结束后20s调试窗口
 } CtrlMode_e;
 
 /*============================== 参数配置 ==============================*/
@@ -49,17 +48,17 @@ typedef enum
 // 摇杆死区与归一化
 #define STICK_CENTER 1500    // 摇杆中心值
 #define STICK_RANGE 500      // 摇杆范围（±500）
-#define STICK_DEADZONE 0.15f // 回中摇杆死区（±15%）
+#define STICK_DEADZONE 0.05f // 回中摇杆死区（±5%）
 
 // 非回中摇杆三段判定阈值
 #define NON_CENTER_HIGH 1700 // 高位阈值（>1700 -> +1）
 #define NON_CENTER_LOW 1300  // 低位阈值（<1300 -> -1）
 
 // 电机控制权重（单位：目标增量/秒）
-#define WEIGHT_YAW 3.0f      // YAW旋转速度（rad）
-#define WEIGHT_TRIGGER 50.0f // 扳机移动速度（rad）
-#define WEIGHT_ENERGY 10.0f  // 储能电机移动速度（rad）
-#define WEIGHT_LOAD3508 1.0f // 3508位置调整速度（rad）
+#define WEIGHT_YAW 3.0f       // YAW旋转速度（rad）
+#define WEIGHT_TRIGGER 50.0f  // 扳机移动速度（rad）
+#define WEIGHT_ENERGY 10.0f   // 储能电机移动速度（rad）
+#define WEIGHT_LOAD3508 20.0f // 3508位置调整速度（rad）
 
 // 电机目标限幅
 #define YAW_MIN -160.0f // YAW最小角度
@@ -83,12 +82,11 @@ typedef struct
 {
     // 回中摇杆归一化值（-1.0 ~ +1.0，死区内为0）
     float yaw_norm;      // YAW方向（右摇杆左右）
-    float load3508_norm; // 3508方向（左摇杆左右，回中时使用）
+    float load3508_norm; // 3508方向（左摇杆左右）
     float energy_norm;   // 储能方向（右摇杆上下，回中摇杆）
 
     // 非回中摇杆方向（-1/0/+1）
-    int8_t trigger_dir;  // 扳机方向（左摇杆上下）
-    int8_t load3508_dir; // 3508/舵机切换（左摇杆左右非回中时：-1=左，+1=右，0=回中）
+    int8_t trigger_dir; // 扳机方向（左摇杆上下）
 
     // 开关状态
     int8_t swb; // SWB状态（1=默认，0=手动）
@@ -130,11 +128,6 @@ typedef struct
 
 extern ControlInput_t g_ControlInput; // 遥控器输入（IbusTask更新）
 extern ControlState_t g_ControlState; // 控制状态（ControlTask更新）
-
-// 电机控制权互斥信号量（调试任务和自动任务互斥使用）
-extern SemaphoreHandle_t g_xMotorCtrlSemHandle;
-extern SemaphoreHandle_t g_xAutoAllowDebugSemHandle;
-extern SemaphoreHandle_t g_xDebugFinishedSemHandle;
 
 /*============================== 任务句柄声明 ==============================*/
 

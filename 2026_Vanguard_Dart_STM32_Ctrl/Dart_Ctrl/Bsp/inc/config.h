@@ -40,13 +40,11 @@
 // 第一个舵机（距离18749）<与第二个相距5549>
 
 // 储能电机相关
-#define LeftStoreTrigger -800.0f // 靠近扳机位置-左边3519电机
-#define RightStoreTrigger 800.0f // 靠近扳机位置-右边3519电机
-#define LeftStoreBottom -900.0f  // 左侧电机下底（原0x10=16）
-#define RightStoreBottom 900.0f  // 右侧电机下底（原0x11=17）
-#define LeftStoreTop 50.0f       // 左侧滑台叉上滑顶部
-#define RightStoreTop -50.0f     // 右侧滑台叉上滑顶部
-#define LimitStore 910.0f        // 电机的位置限制
+#define LeftStoreLoad -750.0f // 换弹位置
+#define RightStoreLoad 750.0f // 换弹位置
+#define LeftStoreTop 0.0f     // 左侧滑台叉上滑顶部
+#define RightStoreTop 0.0f    // 右侧滑台叉上滑顶部
+#define LimitStore 910.0f     // 电机的位置限制
 
 // 扳机射程相关
 #define MG996R_store 2500   // 发射扳机待机状态。
@@ -67,5 +65,19 @@
 #define IBUS_FRAME_LEN 32                           // IBUS固定帧长度（字节）
 #define IBUS_DMA_BUFFER_LEN (IBUS_FRAME_LEN * 2)    // DMA接收缓冲区长度
 #define IBUS_STREAM_BUFFER_LEN (IBUS_FRAME_LEN * 2) // IBUS流解析缓存长度
+
+/*============================== 遥控器总开关控制 ==============================*/
+/**
+ * @brief 启用遥控器总开关功能
+ * @note  设为1启用，设为0禁用（禁用时代码行为与原来一致）
+ *
+ * 功能说明：
+ * - SWB=1（默认状态）：调试模式，只允许电机调试，不执行发射和换弹流程
+ * - SWB=0（手动切换）：正常模式，执行正常的发射和换弹流程
+ */
+#define ENABLE_RC_MASTER_SWITCH 1
+
+// 遥控器监控任务周期（毫秒）
+#define RC_MONITOR_TASK_PERIOD_MS 10
 
 #endif

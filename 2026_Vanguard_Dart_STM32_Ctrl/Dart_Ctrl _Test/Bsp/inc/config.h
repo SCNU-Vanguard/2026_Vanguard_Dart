@@ -13,7 +13,7 @@
 
 // 通用系统参数
 #define MOTOR_TIMEOUT_MS 5000  // 电机运动超时时间（毫秒）
-#define MOTOR_DEAD_ZONE 1.0f   // 电机死区（用于位置判定）
+#define MOTOR_DEAD_ZONE 3.0f   // 电机死区（用于位置判定）
 #define TRIGGER_DEAD_ZONE 5.0f // 扳机电机死区
 #define SERVO_MOVE_TIME_MS 310 // 舵机转动时间（毫秒）
 #define POWER_ON_DELAY_MS 100  // 上电延迟时间（毫秒）
@@ -40,23 +40,15 @@
 // 第一个舵机（距离18749）<与第二个相距5549>
 
 // 储能电机相关
-#define LeftStoreTrigger -400.0f // 靠近扳机位置-左边3519电机
-#define RightStoreTrigger 400.0f // 靠近扳机位置-右边3519电机
-#define LeftStoreBottom -400.0f  // 左侧电机下底
-#define RightStoreBottom 400.0f  // 右侧电机下底
-#define LeftStoreTop 0.0f        // 左侧滑台叉上滑顶部
-#define RightStoreTop 0.0f       // 右侧滑台叉上滑顶部
+#define LeftStoreTrigger -850.0f // 靠近扳机位置-左边3519电机
+#define RightStoreTrigger 850.0f // 靠近扳机位置-右边3519电机
+#define LeftStoreTop 0.0f        // 左侧滑台叉上滑顶部,正常为0
+#define RightStoreTop 0.0f       // 右侧滑台叉上滑顶部,正常为0
 #define LimitStore 910.0f        // 电机的位置限制
 
 // 扳机射程相关
-#define MG996R_store 2500   // 发射扳机待机状态。
-#define MG996R_shoot 1000   // 发射扳机发射状态
-#define MG996R_initial 2500 // 飞镖支架初始状态，向前摆，方便安装飞镖体
-#define MG996R_extend 1750  // 飞镖支架伸出状态
-#define MG996R_shrink 900   // 飞镖支架收回状态，向后摆，让SG90的线距离C板短点
-#define MG995_initial 2500  // 飞镖支架初始状态，向前摆，方便安装飞镖体
-#define MG995_extend 2000   // 飞镖支架伸出状态
-#define MG995_shrink 1500   // 飞镖支架收回状态，向后摆，让SG90的线距离C板短点
+#define MG996R_store 500  // 发射扳机待机状态。
+#define MG996R_shoot 1100 // 发射扳机发射状态
 
 // 云台转轴相关
 

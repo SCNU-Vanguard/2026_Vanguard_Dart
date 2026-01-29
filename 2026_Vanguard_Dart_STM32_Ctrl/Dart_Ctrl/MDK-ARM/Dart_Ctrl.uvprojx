@@ -725,6 +725,11 @@
               <FileType>1</FileType>
               <FilePath>..\User\src\IA6B.c</FilePath>
             </File>
+            <File>
+              <FileName>ControlState.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\ControlState.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

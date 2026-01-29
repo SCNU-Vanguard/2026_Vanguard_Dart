@@ -10,6 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
 #define TestUse 0U
@@ -210,6 +213,7 @@ typedef struct
 #pragma pack(pop)
 
 extern MotorManager_t MotorManager;
+
 
 /*********************************************************函数声明***************************************************************/
 

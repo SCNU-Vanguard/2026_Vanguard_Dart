@@ -13,8 +13,6 @@
 #include "RM_Motor.h"
 #include "DM_Motor.h"
 #include <stdbool.h>
-#include "FreeRTOS.h"
-#include "task.h"
 
 // 电机管理表
 MotorManager_t MotorManager = {0};

@@ -37,9 +37,19 @@
  * 上电、初始化后根据预设方案调节扳机位置和Yaw角度,让储能电机开始工作,拉到指定位置之后电机停止,之后等待换弹
  * 第一发可以不用换弹,直接拉到舵机位置,之后扳机处于位置之后电机不用动,扳机释放飞镖(电机处于失能状态),这里还
  * 要等待测试达妙电机的具体逻辑
+ * // TODO: 测试PID算法响应时长和输出波形
+ * // TODO: 测试整体储能任务和换弹任务时长和频率，要有输出波形
+ * // TODO：测试遥控器的数据刷新
+ * // TODO: 测试全流程整体时长
+ * // TODO: 留下实物照片
+ * // TODO: 根据中期文档更新进度以及问题
+ * // TODO: 提出解决方案
+ * // TODO: 更新安排
+ * // TODO: 同步之前的时间结点
  ***********************************************************************************************************************/
 #include "UserTask.h"
 #include "PID.h"
+#include "IA6B.h"
 
 // 19271（上限）<长度>
 // 第三个（距离7547）
@@ -54,11 +64,43 @@
 // yaw调整任务
 
 /************************全局或静态作用域*********************/
-static ServoPacket_t g_xServoData;
-static IbusPacket_t g_xIbusData;
 extern MotorManager_t MotorManager;
 static float MotorData = 0.0f;
 static __IO float GripperTarget = 0.0f; // 位置不动
+
+/*============================== 遥控器总开关控制 ==============================*/
+#if ENABLE_RC_MASTER_SWITCH
+/**
+ * @brief 遥控器总开关状态
+ * @note  true = 允许执行正常流程（SWB=0）
+ *        false = 只允许调试，不执行流程（SWB=1，默认）
+ */
+static volatile bool g_bRcFlowEnabled = false;
+
+/**
+ * @brief 遥控器数据有效标志
+ */
+static volatile bool g_bRcDataValid = false;
+
+/**
+ * @brief 获取遥控器流程使能状态
+ * @return true-允许执行流程，false-只允许调试
+ */
+bool RC_IsFlowEnabled(void)
+{
+    return g_bRcFlowEnabled;
+}
+
+/**
+ * @brief 获取遥控器数据有效状态
+ * @return true-数据有效，false-数据无效
+ */
+bool RC_IsDataValid(void)
+{
+    return g_bRcDataValid;
+}
+#endif /* ENABLE_RC_MASTER_SWITCH */
+
 // Store <-> Load 双向同步信号量
 static StaticSemaphore_t g_xStore2LoadSemBuffer;
 static SemaphoreHandle_t g_xStore2LoadSemHandle; // Store通知Load开始
@@ -146,14 +188,6 @@ const osThreadAttr_t LoadTask_attributes = {
     .priority = (osPriority_t)osPriorityBelowNormal7,
 };
 
-// 扳机调节与发射任务(等待任务通知)
-osThreadId_t ShootTaskHandle;
-const osThreadAttr_t ShootTask_attributes = {
-    .name = "ShootTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityNormal,
-};
-
 // 飞镖状态设置(设置Yaw和射程)
 osThreadId_t StateSetTaskHandle;
 const osThreadAttr_t StateSetTask_attributes = {
@@ -161,6 +195,17 @@ const osThreadAttr_t StateSetTask_attributes = {
     .stack_size = 512 * 4,
     .priority = (osPriority_t)osPriorityNormal,
 };
+
+#if ENABLE_RC_MASTER_SWITCH
+// 遥控器监控任务（高优先级，作为总开关）
+osThreadId_t RcMonitorTaskHandle;
+const osThreadAttr_t RcMonitorTask_attributes = {
+    .name = "RcMonitorTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t)osPriorityHigh, // 高优先级确保及时响应
+};
+void RcMonitorTaskFunc(void *argument);
+#endif /* ENABLE_RC_MASTER_SWITCH */
 
 void StoreEnergyTaskFunc(void *argument);
 void LoadTaskFunc(void *argument);
@@ -177,10 +222,14 @@ void TaskInitFunc(void)
 {
     RTOS_ModuleInit();
 
+#if ENABLE_RC_MASTER_SWITCH
+    // 遥控器监控任务（最先创建，确保总开关优先运行）
+    RcMonitorTaskHandle = osThreadNew(RcMonitorTaskFunc, NULL, &RcMonitorTask_attributes);
+#endif
+
     // 任务初始化
-    StoreEnergyTaskHandle = osThreadNew(StoreEnergyTaskFunc, NULL, &StoreEnergyTask_attributes);
     LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
-    ShootTaskHandle = osThreadNew(ShootTaskFunc, NULL, &ShootTask_attributes);
+    StoreEnergyTaskHandle = osThreadNew(StoreEnergyTaskFunc, NULL, &StoreEnergyTask_attributes);
     StateSetTaskHandle = osThreadNew(StateSetTaskFunc, NULL, &StateSetTask_attributes);
 }
 
@@ -194,6 +243,18 @@ void StoreEnergyTaskFunc(void *argument)
     // 等待事件组：云台和扳机都就绪后才开始
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
     HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+
+#if ENABLE_RC_MASTER_SWITCH
+    // 等待遥控器数据有效且流程使能（SWB=0）
+    while (!g_bRcDataValid || !g_bRcFlowEnabled)
+    {
+        // LED指示：等待遥控器切换到正常模式
+        HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET); // 常亮表示进入正常流程
+#endif
+
     // 接收计数型信号量之后才可以正常,这里更新第一次目标值（下拉至换弹位置 -> 上拉至扳机位置 -> 释放（同时回到零点）-> 下一次循环）
 
     DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
@@ -213,11 +274,9 @@ void StoreEnergyTaskFunc(void *argument)
         {
         case 0x00:
         {
-            // 发射滑台下移到达换弹位置(即为底部位置)
-            // 循环到达发射位置,释放计数量/信号量/Stream流
-            // 等待对方执行完任务,这可以直接读DartNum进行确定
-            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreBottom, 5.0f, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreBottom, 5.0f, DM_LOCATION_SPEED);
+            // 发射滑台下移到达换弹位置
+            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreLoad, 5.0f, DM_LOCATION_SPEED);
+            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreLoad, 5.0f, DM_LOCATION_SPEED);
 
             bool temp = true;
 
@@ -228,8 +287,8 @@ void StoreEnergyTaskFunc(void *argument)
                 right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
                 // 检查是否都到达目标位置（死区判定）
-                if (IS_IN_DEADZONE(left_pos, LeftStoreBottom, MOTOR_DEAD_ZONE) &&
-                    IS_IN_DEADZONE(right_pos, RightStoreBottom, MOTOR_DEAD_ZONE))
+                if (IS_IN_DEADZONE(left_pos, LeftStoreLoad, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreLoad, MOTOR_DEAD_ZONE))
                 {
                     temp = false; // 到达目标
                 }
@@ -246,33 +305,6 @@ void StoreEnergyTaskFunc(void *argument)
 
         case 0x01:
         {
-            // 发射滑台上移到达扳机位置
-            // 释放一个信号量或者任务通知量进行通信
-            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-
-            // 等待电机到达目标位置
-            while (1)
-            {
-                left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
-                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
-
-                // 检查是否都到达目标位置（死区判定）
-                if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
-                    IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
-                {
-                    break; // 到达目标
-                }
-
-                // TODO: 添加错误处理（日志、报警等）
-            }
-
-            StoreState++;
-            break;
-        }
-
-        case 0x02:
-        {
             // 发射滑台叉上移
             // 释放一个信号量或者任务通知量进行通信
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED);
@@ -285,8 +317,8 @@ void StoreEnergyTaskFunc(void *argument)
                 right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
                 // 检查是否都到达目标位置（死区判定）
-                if (IS_IN_DEADZONE(left_pos, LeftStoreTrigger, MOTOR_DEAD_ZONE) &&
-                    IS_IN_DEADZONE(right_pos, RightStoreTrigger, MOTOR_DEAD_ZONE))
+                if (IS_IN_DEADZONE(left_pos, LeftStoreTop, MOTOR_DEAD_ZONE) &&
+                    IS_IN_DEADZONE(right_pos, RightStoreTop, MOTOR_DEAD_ZONE))
                 {
                     break; // 到达目标
                 }
@@ -294,14 +326,13 @@ void StoreEnergyTaskFunc(void *argument)
                 // TODO: 添加错误处理（日志、报警等）
             }
             // 通知Shoot任务开始发射
-            xSemaphoreGive(g_xStore2ShootSemHandle); // 通知Shoot开始
-            // TODO: 添加错误处理（日志、报警等），完善整体流程，这个地方应该是DM电机失能之后输出数据
-            DM_MotorDisable(DM_3519_STRENTH_LEFT);
-            DM_MotorDisable(DM_3519_STRENTH_RIGHT);
-            xSemaphoreTake(g_xShoot2StoreSemHandle, portMAX_DELAY); // 等待Shoot完成
+            HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
+            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
+            vTaskDelay(2000);
+            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store);
+            vTaskDelay(2000);
             StoreState = 0x00;
             Dart--;
-            StoreState = 0;
             break;
         }
         default:
@@ -311,20 +342,13 @@ void StoreEnergyTaskFunc(void *argument)
         if (Dart == 0)
         {
             // 4发打完，失能所有电机，实际上这里需要归中
+            DmMotorSendCfg(DM_4310_YAW, 0.0f, 0.0f, DM_MIT);
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
             DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
-
-            // 挂起任务（可恢复）
             vTaskSuspend(StoreEnergyTaskHandle);
         }
-
-        // 根据反馈数据进行确定是否放飞镖
-        // xSemaphoreCreateCounting
-        // xSemaphoreGive
-        // xSemaphoreTake
     }
-    // J3519电机底部等待换弹
 }
 
 /***********************************
@@ -523,15 +547,6 @@ void ShootTaskFunc(void *argument)
     vTaskDelay(10);
     while (1)
     {
-        // 等待Store通知开始发射
-        xSemaphoreTake(g_xStore2ShootSemHandle, portMAX_DELAY);
-        HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
-        __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
-        // delay一会再次释放
-        vTaskDelay(2000);
-        __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store); // 这个地方设置为未释放状态
-        vTaskDelay(2000);
-        xSemaphoreGive(g_xShoot2StoreSemHandle); // 通知Store完成
     }
 }
 
@@ -576,3 +591,62 @@ void StateSetTaskFunc(void *argument)
         vTaskSuspend(NULL);
     }
 }
+
+#if ENABLE_RC_MASTER_SWITCH
+/************************************
+ * 函数名：RcMonitorTaskFunc
+ * 作用：  遥控器总开关监控任务
+ * 参数：  无
+ *
+ * 说明：
+ * - 高优先级周期性任务，监控遥控器SWB开关状态
+ * - SWB=1（默认）：调试模式，只允许电机调试，不执行发射和换弹流程
+ * - SWB=0：正常模式，执行正常的发射和换弹流程
+ * - 通过g_bRcFlowEnabled标志控制其他任务的执行
+ ***********************************/
+void RcMonitorTaskFunc(void *argument)
+{
+    uint32_t last_valid_time = 0;
+    const uint32_t DATA_TIMEOUT_MS = 500; // 数据超时时间（毫秒）
+
+    vTaskDelay(pdMS_TO_TICKS(100)); // 等待系统稳定
+
+    while (1)
+    {
+        // 解析IBUS数据包
+        if (IA6B_ProcessIbusPacket(BSP_UART6))
+        {
+            // 数据有效
+            last_valid_time = HAL_GetTick();
+            g_bRcDataValid = true;
+
+            // 根据SWB状态更新流程使能标志
+            // Channel[4] = 1 表示SWB位置1（默认，调试模式）
+            // Channel[4] = 0 表示SWB位置2（手动切换，正常模式）
+            int8_t swb_state = IA6B_ReadChannel(5); // Channel索引从1开始，所以Channel[4]用5
+
+            if (swb_state == 0)
+            {
+                // SWB=0: 正常模式，允许执行流程
+                g_bRcFlowEnabled = true;
+            }
+            else
+            {
+                // SWB=1: 调试模式，禁止执行流程
+                g_bRcFlowEnabled = false;
+            }
+        }
+        else
+        {
+            // 检查数据是否超时
+            if (g_bRcDataValid && (HAL_GetTick() - last_valid_time > DATA_TIMEOUT_MS))
+            {
+                g_bRcDataValid = false;
+                g_bRcFlowEnabled = false; // 数据超时，禁止执行流程（安全保护）
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(RC_MONITOR_TASK_PERIOD_MS));
+    }
+}
+#endif /* ENABLE_RC_MASTER_SWITCH */

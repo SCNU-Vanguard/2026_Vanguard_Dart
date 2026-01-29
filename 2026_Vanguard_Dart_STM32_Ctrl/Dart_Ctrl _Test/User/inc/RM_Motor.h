@@ -5,6 +5,9 @@
 #include "bsp_can.h"
 #include <stdlib.h>
 #include <string.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
 /*============================== RM电机CAN地址定义 ==============================*/
 
