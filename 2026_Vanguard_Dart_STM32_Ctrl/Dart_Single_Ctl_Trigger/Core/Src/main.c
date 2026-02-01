@@ -106,7 +106,7 @@ int main(void)
   while (1)
   {
 		a = a + 100;
-		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 1100);
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500);
 		
 	  HAL_Delay(1000);
 		

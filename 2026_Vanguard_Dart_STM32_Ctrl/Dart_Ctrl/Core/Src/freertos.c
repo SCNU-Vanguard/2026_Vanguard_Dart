@@ -48,45 +48,48 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-float Target = 12960.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
-static uint32_t lastServoTime = 0;
-static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
+// float Target = 12960.0f; // 360° * 19.2 (度数 * 减速比)| 360 * 36.0(度数 * 减速比)
+// static uint32_t lastServoTime = 0;
+// static uint16_t g_rxDataCnt = 0; // 接收到的数据数量
 
-static StackType_t g_pxChangeTarget[32];
-static StaticTask_t g_TCBChangeTarget;
-static TaskHandle_t g_HandleChangeTarget;
+// static StackType_t g_pxChangeTarget[32];
+// static StaticTask_t g_TCBChangeTarget;
+// static TaskHandle_t g_HandleChangeTarget;
+
+static StaticSemaphore_t g_xRmBufferMutexBuffer;
+SemaphoreHandle_t g_xRmBufferMutexHandle;
 
 /// @brief 改变电机目标数值
 /// @param arg 任务参数（未使用）
 /// @return 无
-void pxChangeTarget(void *arg)
-{
-  (void)arg; // 消除未使用参数警告
+// void pxChangeTarget(void *arg)
+// {
+//   (void)arg; // 消除未使用参数警告
 
-  while (1)
-  {
-    vTaskDelay(4000);
-    if (Target < 25000.0f)
-    {
-      Target += 5000.0f;
-    }
-    else
-    {
-      Target = 0.0f;
-      vTaskDelay(8000);
-    }
+//   while (1)
+//   {
+//     vTaskDelay(4000);
+//     if (Target < 25000.0f)
+//     {
+//       Target += 5000.0f;
+//     }
+//     else
+//     {
+//       Target = 0.0f;
+//       vTaskDelay(8000);
+//     }
 
-    // RmMotorRemoveBias(RM_3508_GRIPPER, Target);
-  }
-}
+//     RmMotorRemoveBias(RM_3508_GRIPPER, Target);
+// }
+// }
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name = "defaultTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t)osPriorityNormal,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,17 +102,19 @@ void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
-void MX_FREERTOS_Init(void) {
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
+void MX_FREERTOS_Init(void)
+{
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+  g_xRmBufferMutexHandle = xSemaphoreCreateMutexStatic(&g_xRmBufferMutexBuffer);
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -142,7 +147,6 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
-
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -208,4 +212,3 @@ void StartDefaultTask(void *argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

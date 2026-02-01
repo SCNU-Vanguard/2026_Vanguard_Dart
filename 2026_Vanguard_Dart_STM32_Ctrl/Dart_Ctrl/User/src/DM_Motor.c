@@ -114,10 +114,10 @@ const DM_MotorClass_t DM_J4310_Class = {
     .kp_min = 0.0f,
     .kd_max = 5.0f,
     .kd_min = 0.0f,
-    .pos_max = 12.5f,
-    .pos_min = -12.5f,
-    .vel_max = 30.0f,  // 修正：J4310 MIT模式速度范围为 ±30 rad/s
-    .vel_min = -30.0f, // 修正：符合手册规格
+    .pos_max = 160.0f,
+    .pos_min = -160.0f,
+    .vel_max = 30.0f,
+    .vel_min = -30.0f,
     .torque_max = 10.0f,
     .torque_min = -10.0f,
     // 默认控制参数
@@ -640,7 +640,7 @@ uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
     return 0;
 }
 
-static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
@@ -796,6 +796,7 @@ static void DM_J3519_CalculateInternal(MotorTypeDef *motor)
     // 温度
     pData->solved_data[3] = (float)rx[6];
     pData->solved_data[4] = (float)rx[7];
+
     pData->solved_data[5] = pData->solved_data[0] / 19.2f; // 转过的角度
     pData->solved_data[6] = pData->solved_data[1] / 19.2f; // 转过的速度
 }

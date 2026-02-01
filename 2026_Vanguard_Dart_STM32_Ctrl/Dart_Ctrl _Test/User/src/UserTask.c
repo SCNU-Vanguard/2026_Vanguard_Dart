@@ -170,8 +170,8 @@ void StoreEnergyTaskFunc(void *argument)
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
     HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
     vTaskDelay(1);
-    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
-    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
+    DM_MotorEnable(DM_3519_STRENTH_LEFT);
+    DM_MotorEnable(DM_3519_STRENTH_RIGHT);
 
     uint8_t StoreState = 0x00;
     uint8_t Dart = 4; // 飞镖数量，对应舵机ID（4无舵机，3/2/1对应舵机ID）
@@ -225,13 +225,14 @@ void StoreEnergyTaskFunc(void *argument)
             // 释放信号量，允许调试任务控制（换弹期间可以手动调整）
             xSemaphoreGive(g_xMotorCtrlSemHandle);
 
-            // 等待用户确认换弹
+            // 等待确认换弹
             while (!reload_confirmed)
             {
                 if (g_ControlInput.swc == -1 && g_ControlInput.swb == 0)
                 {
 #if SERVO_AUTO_RELOAD
-                    uint8_t servo_id = Dart;
+                    // uint8_t servo_id = Dart;
+                    uint8_t servo_id = 2; // 这里固定为2
                     ServoControlPos(servo_id, SeperationAngle, SERVO_MOVE_TIME_MS);
                     vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 50));
                     ServoControlPos(servo_id, 0x0000, SERVO_MOVE_TIME_MS);
@@ -256,9 +257,10 @@ void StoreEnergyTaskFunc(void *argument)
         case 0x01:
         {
             // ========== 移到扳机位置 ==========
+            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
+            vTaskDelay(500);
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
             DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
             while (1)
             {
                 // 检查调试模式，如果激活则释放信号量等待
@@ -301,9 +303,10 @@ void StoreEnergyTaskFunc(void *argument)
         case 0x02:
         {
             // ========== 滑台叉上移 + 发射 ==========
+            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store);
+            vTaskDelay(1307);
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED);
             DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTop, 5.0f, DM_LOCATION_SPEED);
-
             while (1)
             {
                 // 检查调试模式
@@ -341,8 +344,7 @@ void StoreEnergyTaskFunc(void *argument)
             // 发射
             HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
             __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
-            vTaskDelay(1500);
-            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store);
+            vTaskDelay(1307);
 
             Dart--;
             ControlState_StartDebugWindow(DEBUG_WINDOW_MS);
@@ -366,7 +368,7 @@ void StoreEnergyTaskFunc(void *argument)
             Dart = 4;
         }
 
-        vTaskDelay(1); // 短暂让出CPU
+        vTaskDelay(7); // 短暂让出CPU
     }
 }
 

@@ -57,8 +57,8 @@ typedef enum
 
 // 电机控制权重（单位：目标增量/秒）
 #define WEIGHT_YAW 3.0f      // YAW旋转速度（rad）
-#define WEIGHT_TRIGGER 50.0f // 扳机移动速度（rad）
-#define WEIGHT_ENERGY 10.0f  // 储能电机移动速度（rad）
+#define WEIGHT_TRIGGER 5.0f  // 扳机移动速度（rad）
+#define WEIGHT_ENERGY 5.0f   // 储能电机移动速度（rad）
 #define WEIGHT_LOAD3508 1.0f // 3508位置调整速度（rad）
 
 // 电机目标限幅
@@ -66,8 +66,8 @@ typedef enum
 #define YAW_MAX 160.0f  // YAW最大角度
 #define TRIGGER_MIN -10000.0f
 #define TRIGGER_MAX 0.0f
-#define ENERGY_LEFT_MIN -800.0f
-#define ENERGY_LEFT_MAX 20.0f
+#define ENERGY_LEFT_MIN -950.0f
+#define ENERGY_LEFT_MAX 950.0f
 #define ENERGY_RIGHT_MIN -20.0f
 #define ENERGY_RIGHT_MAX 800.0f
 #define LOAD3508_MIN -10000.0f

@@ -71,9 +71,6 @@ typedef struct _RM_MotorClass
     /// @brief 发送电机控制数据
     uint8_t (*send_control)(struct _MotorTypeDef *self);
 
-    /// @brief PID计算
-    float (*pid_calc)(struct _MotorTypeDef *self, float target);
-
 } RM_MotorClass_t;
 #pragma pack(pop)
 /*============================== 预定义的电机类实例（类似C++静态类） ==============================*/
@@ -174,11 +171,6 @@ void RM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
 
 /*============================== 原有函数声明（保留兼容） ==============================*/
 
-/// @brief 大疆电机发送控制函数(RM电机使用电流控制)
-/// @param st 电机结构体指针
-/// @return 1->发送成功 | 0->发送失败
-uint8_t RM_MotorSendControl(MotorTypeDef *st);
-
 /// @brief 设置对应RM电机的发送数据
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 发送数据指针（必须8字节）
@@ -192,18 +184,6 @@ void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data);
 /// @note motor->motor_data.solved_data[3]: 累计角度(°) - 用于位置闭环
 /// @note motor->motor_data.solved_data[4]: 速度(rad/s) - 弧度制速度
 void RM_MOTOR_CALCU(MotorTypeDef *motor);
-
-/// @brief M2006电机专用解算函数
-/// @param motor 电机结构体指针
-void RM_M2006_Calculate(MotorTypeDef *motor);
-
-/// @brief M3508电机专用解算函数
-/// @param motor 电机结构体指针
-void RM_M3508_Calculate(MotorTypeDef *motor);
-
-/// @brief GM6020电机专用解算函数
-/// @param motor 电机结构体指针
-void RM_GM6020_Calculate(MotorTypeDef *motor);
 
 /// @brief 重置电机零点（当前位置设为零点）
 /// @param motor 电机结构体指针
@@ -224,12 +204,6 @@ void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent);
 /// @return 修正后的电机目标数值（绝对位置）
 /// @note 只有到达上次目标位置后才允许更新新目标
 float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel);
-
-/// @brief 测试单个RM电机注册函数
-/// @param 无
-/// @note 仅供测试使用
-/// @return 无
-void RmTestMotorSingleRegister(void);
 
 /// @brief RM电机PID计算并发送
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)

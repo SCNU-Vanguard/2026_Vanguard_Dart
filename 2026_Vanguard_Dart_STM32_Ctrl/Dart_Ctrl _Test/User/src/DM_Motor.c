@@ -4,7 +4,7 @@
  * --------------------------------------------------
  * DM电机说明：
  * 支持MIT模式、位置速度模式、速度模式、PVT模式
- * 目前主要使用MIT模式进行控制
+ * 目前主要使用MIT模式和位置速度模式进行控制
  * --------------------------------------------------
  * 面向对象设计说明：
  * 使用 DM_MotorClass_t 作为电机"类"，包含：
@@ -640,7 +640,7 @@ uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
     return 0;
 }
 
-static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)

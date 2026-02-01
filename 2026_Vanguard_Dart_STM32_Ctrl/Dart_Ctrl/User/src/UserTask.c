@@ -37,15 +37,6 @@
  * 上电、初始化后根据预设方案调节扳机位置和Yaw角度,让储能电机开始工作,拉到指定位置之后电机停止,之后等待换弹
  * 第一发可以不用换弹,直接拉到舵机位置,之后扳机处于位置之后电机不用动,扳机释放飞镖(电机处于失能状态),这里还
  * 要等待测试达妙电机的具体逻辑
- * // TODO: 测试PID算法响应时长和输出波形
- * // TODO: 测试整体储能任务和换弹任务时长和频率，要有输出波形
- * // TODO：测试遥控器的数据刷新
- * // TODO: 测试全流程整体时长
- * // TODO: 留下实物照片
- * // TODO: 根据中期文档更新进度以及问题
- * // TODO: 提出解决方案
- * // TODO: 更新安排
- * // TODO: 同步之前的时间结点
  ***********************************************************************************************************************/
 #include "UserTask.h"
 #include "PID.h"
@@ -257,19 +248,14 @@ void StoreEnergyTaskFunc(void *argument)
 
     // 接收计数型信号量之后才可以正常,这里更新第一次目标值（下拉至换弹位置 -> 上拉至扳机位置 -> 释放（同时回到零点）-> 下一次循环）
 
-    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
-    vTaskDelay(2);
-    DM_Motor_Enable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
+    DM_MotorEnable(DM_3519_STRENTH_LEFT);
+    DM_MotorEnable(DM_3519_STRENTH_RIGHT);
     uint8_t StoreState = 0x00;
-    int8_t Dart = 4;
+    uint8_t Dart = 4;
     vTaskDelay(POWER_ON_DELAY_MS); // 上电保护延迟
     float left_pos = 0.0f, right_pos = 0.0f;
-
-    // J3519电机运动从顶部到底部
-    // TODO:当前运动的死区检测有些问题
     while (1)
     {
-        // 由StoreState决定循环
         switch (StoreState)
         {
         case 0x00:
@@ -277,28 +263,29 @@ void StoreEnergyTaskFunc(void *argument)
             // 发射滑台下移到达换弹位置
             DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreLoad, 5.0f, DM_LOCATION_SPEED);
             DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreLoad, 5.0f, DM_LOCATION_SPEED);
-
             bool temp = true;
 
             while (temp)
             {
                 DM_Motor_RefreshData(DM_3519_STRENTH_LEFT);
-                left_pos = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT); // 这里打一个断点,看一下返回数据
-                right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
-
+                DM_Motor_RefreshData(DM_3519_STRENTH_RIGHT);
+                left_pos = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT);
+                right_pos = Motor_GetTotalAngle(DM_3519_STRENTH_RIGHT);
                 // 检查是否都到达目标位置（死区判定）
                 if (IS_IN_DEADZONE(left_pos, LeftStoreLoad, MOTOR_DEAD_ZONE) &&
                     IS_IN_DEADZONE(right_pos, RightStoreLoad, MOTOR_DEAD_ZONE))
                 {
                     temp = false; // 到达目标
                 }
-                // TODO: 添加错误处理（日志、报警等）
             }
 
             // 这里通信,改变飞镖数值之后通知Load任务开始工作
             xStreamBufferSend(xLoadStreamBuf, (const uint8_t *)(&Dart), 1, 0);
             xSemaphoreGive(g_xStore2LoadSemHandle);                // 通知Load开始
             xSemaphoreTake(g_xLoad2StoreSemHandle, portMAX_DELAY); // 等待Load完成
+            // TODO:在打25米靶子的时候还需要将滑台和扳机移动到最底端，或者说扳机直接在最底端
+            // TODO:到了之后还要等待一下扳机升起才可以发射
+            // TODO:这个时候vTaskDelay(1500);
             StoreState++;
             break;
         }
@@ -325,12 +312,9 @@ void StoreEnergyTaskFunc(void *argument)
 
                 // TODO: 添加错误处理（日志、报警等）
             }
-            // 通知Shoot任务开始发射
+            // 发射
             HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
             __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
-            vTaskDelay(2000);
-            __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store);
-            vTaskDelay(2000);
             StoreState = 0x00;
             Dart--;
             break;
@@ -446,7 +430,7 @@ void LoadTaskFunc(void *argument)
             }
 
             if (IS_IN_DEADZONE(MotorData, SecondServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 2)) // 负向转动,距离为-5653
+                (dart_num == 2)) // 负向转动,相对距离距离为-5653
             {
                 xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
                 vTaskDelay(SERVO_MOVE_TIME_MS);
@@ -570,7 +554,7 @@ void StateSetTaskFunc(void *argument)
     {
         // 调节位置,并等待位置调节成功,确保所有的任务处于阻塞态,防止其他任务有所影响,但是要确保所有电机停转并且失能
 
-        while (!IS_IN_DEADZONE(Motor_GetTotalAngle(RM_2006_TRIGGER), temp, 2.0f))
+        while (!IS_IN_DEADZONE(Motor_GetTotalAngle(RM_2006_TRIGGER), temp, MOTOR_DEAD_ZONE))
         {
             RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance);
             vTaskDelay(1);
@@ -606,6 +590,7 @@ void StateSetTaskFunc(void *argument)
  ***********************************/
 void RcMonitorTaskFunc(void *argument)
 {
+    // TODO:其实应该是上电前2一会进行检验的，否则就直接不管了，但是这个还是有点怪异
     uint32_t last_valid_time = 0;
     const uint32_t DATA_TIMEOUT_MS = 500; // 数据超时时间（毫秒）
 
@@ -634,6 +619,8 @@ void RcMonitorTaskFunc(void *argument)
             {
                 // SWB=1: 调试模式，禁止执行流程
                 g_bRcFlowEnabled = false;
+                // 这个模式下将进行云台和储能电机展示，3508和2006不展示
+                // TODO:要保证每一发中间可以调整目标靶子
             }
         }
         else

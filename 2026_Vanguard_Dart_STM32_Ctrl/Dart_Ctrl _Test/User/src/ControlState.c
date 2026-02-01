@@ -96,8 +96,6 @@ void ControlState_Init(void)
     g_xMotorCtrlSemHandle = xSemaphoreCreateBinaryStatic(&g_xMotorCtrlSemBuffer);
     g_xAutoAllowDebugSemHandle = xSemaphoreCreateBinaryStatic(&g_xAutoAllowDebugSemBuffer);
     g_xDebugFinishedSemHandle = xSemaphoreCreateBinaryStatic(&g_xDebugFinishedSemBuffer);
-    g_xAutoAllowDebugSemHandle = xSemaphoreCreateBinary();
-    g_xDebugFinishedSemHandle = xSemaphoreCreateBinary();
     if (g_xMotorCtrlSemHandle != NULL)
     {
         xSemaphoreGive(g_xMotorCtrlSemHandle);
@@ -450,18 +448,19 @@ static void UpdateControlTargets(float dt)
  */
 static void SendMotorCommands(void)
 {
+    // TODO:输出全部给0不动，全部提升为全局变量，看看整体数值变化如何
     // YAW电机（DM4310 MIT模式）
     DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT);
 
     // 扳机电机（RM2006 PID控制）
-    RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target);
+    // RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target);
 
     // 储能电机（DM3519 位置速度模式）
     DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED);
     DmMotorSendCfg(DM_3519_STRENTH_RIGHT, g_ControlState.energy_right_target, 5.0f, DM_LOCATION_SPEED);
 
     // 3508电机（RM3508 PID控制）
-    RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target);
+    // RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target);
 }
 
 /*============================== API函数实现 ==============================*/
@@ -490,7 +489,6 @@ void ControlState_StartDebugWindow(uint32_t duration_ms)
     (void)duration_ms; // 使用默认值 DEBUG_WINDOW_MS
     // 同步目标值与当前电机反馈，避免进入手动模式时突跳
     SyncTargetsWithMotorFeedback();
-
     g_ControlState.debug_timer_start = HAL_GetTick();
     g_ControlState.debug_window_active = true;
     g_ControlState.single_shot_done = true;

@@ -310,6 +310,11 @@ float DM_Motor_GetTorqueFF(MotorTypeDef *motor);
 
 /*============================== 原有函数声明 ==============================*/
 
+/// @brief 用于使能达妙电机
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
+/// @return 1：发送成功，0：发送失败
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg);
+
 /// @brief 用于失能达妙电机
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
