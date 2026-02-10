@@ -100,7 +100,7 @@ void MX_FREERTOS_Init(void) {
   /* add threads, ... */
 
   // 飞镖任务初始化
-  TaskInitFunc();
+  // TaskInitFunc();
 
   /* USER CODE END RTOS_THREADS */
 
