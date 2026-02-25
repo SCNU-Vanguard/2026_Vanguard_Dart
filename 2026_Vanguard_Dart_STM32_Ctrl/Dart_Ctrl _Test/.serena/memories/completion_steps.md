@@ -1,1 +1,0 @@
-No automated lint/format/test commands were found in the repo. Typical completion step is to build (and flash) via Keil uVision using `MDK-ARM/Dart_Ctrl.uvprojx` if validation is needed.
