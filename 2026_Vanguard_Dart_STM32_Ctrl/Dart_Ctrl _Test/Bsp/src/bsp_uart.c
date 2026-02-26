@@ -2,9 +2,9 @@
 #include "UartProtocol.h"
 #include <string.h>
 #include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
-// todo：解算舵机格式需要加上一个长度传输函数，这样才可以保证这个长度是正确的，方便解算
-// todo: 后续应该使用其他手段比如上电或者信号量进行初始化与上位机的通信，从而保证稳定
 
 /* 内部缓冲区定义（用户无需关心） */
 UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
@@ -98,7 +98,9 @@ static void RxRingBuffer_Init(UartRxRingBuffer *rb, UART_HandleTypeDef *huart)
     rb->rxByte = 0;
     rb->huart = huart;
     rb->protocol_type = PROTOCOL_SERVO; // 默认舵机协议
-    rb->packet_ready = false;
+    rb->servo_pkt_head = 0;
+    rb->servo_pkt_tail = 0;
+    rb->servo_pkt_count = 0;
     rb->ibus_ready = false;
     rb->ibus_error_count = 0;
     Protocol_ResetParser(rb);
@@ -191,23 +193,15 @@ static void StartIbusDma(UartRxRingBuffer *rb)
         return;
 
     rb->isReceiving = true;
-    HAL_StatusTypeDef status = HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN);
-
-    if (status != HAL_OK)
+    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN) != HAL_OK)
     {
         rb->isReceiving = false;
-        // 闪烁LED1指示DMA启动失败
-        HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
         return;
     }
-
     if (rb->huart->hdmarx != NULL)
     {
         __HAL_DMA_DISABLE_IT(rb->huart->hdmarx, DMA_IT_HT);
     }
-
-    // DMA启动成功，点亮LED1
-    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
 }
 
 /**
@@ -354,12 +348,14 @@ uint16_t UART_Send(BSP_UART_NUM_e uart_num, const uint8_t *data, uint16_t len)
         return 0;
 
     UartTxRingBuffer *rb = &g_uart_tx_buffers[uart_num];
-    uint16_t written = TxRingBuffer_Write(rb, data, len);
 
+    taskENTER_CRITICAL();
+    uint16_t written = TxRingBuffer_Write(rb, data, len);
     if (!rb->isSending)
     {
         StartTransmit(rb);
     }
+    taskEXIT_CRITICAL();
 
     return written;
 }
@@ -406,7 +402,11 @@ uint16_t UART_Read(BSP_UART_NUM_e uart_num, uint8_t *data, uint16_t len)
     if (uart_num >= BSP_UART_MAX || data == NULL || len == 0)
         return 0;
 
-    return RxRingBuffer_Read(&g_uart_rx_buffers[uart_num], data, len);
+    taskENTER_CRITICAL();
+    uint16_t result = RxRingBuffer_Read(&g_uart_rx_buffers[uart_num], data, len);
+    taskEXIT_CRITICAL();
+
+    return result;
 }
 
 /**
@@ -417,7 +417,11 @@ uint16_t UART_GetRxCount(BSP_UART_NUM_e uart_num)
     if (uart_num >= BSP_UART_MAX)
         return 0;
 
-    return g_uart_rx_buffers[uart_num].count;
+    taskENTER_CRITICAL();
+    uint16_t cnt = g_uart_rx_buffers[uart_num].count;
+    taskEXIT_CRITICAL();
+
+    return cnt;
 }
 
 /**
@@ -428,7 +432,11 @@ bool UART_HasData(BSP_UART_NUM_e uart_num)
     if (uart_num >= BSP_UART_MAX)
         return false;
 
-    return (g_uart_rx_buffers[uart_num].count > 0);
+    taskENTER_CRITICAL();
+    bool has = (g_uart_rx_buffers[uart_num].count > 0);
+    taskEXIT_CRITICAL();
+
+    return has;
 }
 
 /**
@@ -445,6 +453,9 @@ void UART_ClearRx(BSP_UART_NUM_e uart_num)
     rb->count = 0;
     rb->overflowFlag = false;
     rb->ibus_error_count = 0;
+    rb->servo_pkt_head = 0;
+    rb->servo_pkt_tail = 0;
+    rb->servo_pkt_count = 0;
     Protocol_ResetParser(rb);
 }
 
@@ -564,15 +575,6 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     UartRxRingBuffer *rb = &g_uart_rx_buffers[BSP_UART6];
     if (rb->protocol_type != PROTOCOL_IBUS)
         return;
-
-    // LED2闪烁指示DMA接收事件触发
-    static uint8_t rx_event_count = 0;
-    rx_event_count++;
-    if (rx_event_count >= 10)
-    {
-        HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
-        rx_event_count = 0;
-    }
 
     if (Size > 0 && Size <= IBUS_DMA_BUFFER_LEN)
     {

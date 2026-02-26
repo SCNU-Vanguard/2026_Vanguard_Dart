@@ -53,8 +53,11 @@ void Protocol_ResetParser(UartRxRingBuffer *rb)
 
     rb->parse_state = PARSE_HEADER;
     rb->parse_index = 0;
-    rb->packet_ready = false;
-    memset(&rb->servo_packet, 0, sizeof(ServoPacket_t));
+    memset(&rb->servo_packet_temp, 0, sizeof(ServoPacket_t));
+    memset(rb->servo_packet_queue, 0, sizeof(rb->servo_packet_queue));
+    rb->servo_pkt_head = 0;
+    rb->servo_pkt_tail = 0;
+    rb->servo_pkt_count = 0;
     rb->ibus_packet.is_valid = false;
     rb->ibus_ready = false;
     rb->ibus_error_count = 0;
@@ -72,9 +75,6 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
     if (rb == NULL || rb->protocol_type == PROTOCOL_IBUS)
         return;
 
-    // 确保上下文切换
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
     if (rb->protocol_type == PROTOCOL_SERVO_MCU)
     {
         // 有MCU控制板协议解析：0x55 0x55 | Length | Cmd | Params（无CRC）
@@ -85,7 +85,7 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
             {
                 if (byte == 0x55)
                 {
-                    rb->servo_packet.header[0] = byte;
+                    rb->servo_packet_temp.header[0] = byte;
                     rb->parse_index = 1;
                 }
             }
@@ -93,64 +93,74 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
             {
                 if (byte == 0x55)
                 {
-                    rb->servo_packet.header[1] = byte;
+                    rb->servo_packet_temp.header[1] = byte;
                     rb->parse_state = PARSE_SERVO_LENGTH;
                     rb->parse_index = 0;
                 }
                 else
                 {
-                    Protocol_ResetParser(rb);
+                    Protocol_ResetParserState(rb);
                 }
             }
             break;
 
         case PARSE_SERVO_LENGTH:
-            rb->servo_packet.length = byte;
+            rb->servo_packet_temp.length = byte;
             if (byte >= 2 && byte <= 64)
             {
                 rb->parse_state = PARSE_SERVO_CMD;
             }
             else
             {
-                Protocol_ResetParser(rb);
+                Protocol_ResetParserState(rb);
             }
             break;
 
         case PARSE_SERVO_CMD:
-            rb->servo_packet.cmd = byte;
-            rb->servo_packet.param_len = rb->servo_packet.length - 2;
-            if (rb->servo_packet.param_len > 0)
+            rb->servo_packet_temp.cmd = byte;
+            rb->servo_packet_temp.param_len = rb->servo_packet_temp.length - 2;
+            if (rb->servo_packet_temp.param_len > 0)
             {
                 rb->parse_state = PARSE_SERVO_PARAMS;
                 rb->parse_index = 0;
             }
             else
             {
-                rb->servo_packet.is_valid = true;
-                rb->packet_ready = true;
+                rb->servo_packet_temp.is_valid = true;
+                if (rb->servo_pkt_count < SERVO_PACKET_QUEUE_SIZE)
+                {
+                    rb->servo_packet_queue[rb->servo_pkt_head] = rb->servo_packet_temp;
+                    rb->servo_pkt_head = (rb->servo_pkt_head + 1) % SERVO_PACKET_QUEUE_SIZE;
+                    rb->servo_pkt_count++;
+                }
                 Protocol_ResetParserState(rb);
             }
             break;
 
         case PARSE_SERVO_PARAMS:
-            if (rb->parse_index < rb->servo_packet.param_len && rb->parse_index < 8)
+            if (rb->parse_index < rb->servo_packet_temp.param_len && rb->parse_index < 8)
             {
-                rb->servo_packet.params[rb->parse_index++] = byte;
-                if (rb->parse_index >= rb->servo_packet.param_len)
+                rb->servo_packet_temp.params[rb->parse_index++] = byte;
+                if (rb->parse_index >= rb->servo_packet_temp.param_len)
                 {
-                    rb->servo_packet.is_valid = true;
-                    rb->packet_ready = true;
+                    rb->servo_packet_temp.is_valid = true;
+                    if (rb->servo_pkt_count < SERVO_PACKET_QUEUE_SIZE)
+                    {
+                        rb->servo_packet_queue[rb->servo_pkt_head] = rb->servo_packet_temp;
+                        rb->servo_pkt_head = (rb->servo_pkt_head + 1) % SERVO_PACKET_QUEUE_SIZE;
+                        rb->servo_pkt_count++;
+                    }
                     Protocol_ResetParserState(rb);
                 }
             }
             else
             {
-                Protocol_ResetParser(rb);
+                Protocol_ResetParserState(rb);
             }
             break;
 
         default:
-            Protocol_ResetParser(rb);
+            Protocol_ResetParserState(rb);
             break;
         }
     }
@@ -164,7 +174,7 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
             {
                 if (byte == 0x55)
                 {
-                    rb->servo_packet.header[0] = byte;
+                    rb->servo_packet_temp.header[0] = byte;
                     rb->parse_index = 1;
                 }
             }
@@ -172,38 +182,38 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
             {
                 if (byte == 0x55)
                 {
-                    rb->servo_packet.header[1] = byte;
+                    rb->servo_packet_temp.header[1] = byte;
                     rb->parse_state = PARSE_SERVO_ID;
                     rb->parse_index = 0;
                 }
                 else
                 {
-                    Protocol_ResetParser(rb);
+                    Protocol_ResetParserState(rb);
                 }
             }
             break;
 
         case PARSE_SERVO_ID:
-            rb->servo_packet.id = byte;
+            rb->servo_packet_temp.id = byte;
             rb->parse_state = PARSE_SERVO_LENGTH;
             break;
 
         case PARSE_SERVO_LENGTH:
-            rb->servo_packet.length = byte;
+            rb->servo_packet_temp.length = byte;
             if (byte >= 3 && byte <= 11)
             {
                 rb->parse_state = PARSE_SERVO_CMD;
             }
             else
             {
-                Protocol_ResetParser(rb);
+                Protocol_ResetParserState(rb);
             }
             break;
 
         case PARSE_SERVO_CMD:
-            rb->servo_packet.cmd = byte;
-            rb->servo_packet.param_len = rb->servo_packet.length - 3;
-            if (rb->servo_packet.param_len > 0)
+            rb->servo_packet_temp.cmd = byte;
+            rb->servo_packet_temp.param_len = rb->servo_packet_temp.length - 3;
+            if (rb->servo_packet_temp.param_len > 0)
             {
                 rb->parse_state = PARSE_SERVO_PARAMS;
                 rb->parse_index = 0;
@@ -215,58 +225,60 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
             break;
 
         case PARSE_SERVO_PARAMS:
-            if (rb->parse_index < rb->servo_packet.param_len && rb->parse_index < 8)
+            if (rb->parse_index < rb->servo_packet_temp.param_len && rb->parse_index < 8)
             {
-                rb->servo_packet.params[rb->parse_index++] = byte;
-                if (rb->parse_index >= rb->servo_packet.param_len)
+                rb->servo_packet_temp.params[rb->parse_index++] = byte;
+                if (rb->parse_index >= rb->servo_packet_temp.param_len)
                 {
                     rb->parse_state = PARSE_SERVO_CRC;
                 }
             }
             else
             {
-                Protocol_ResetParser(rb);
+                Protocol_ResetParserState(rb);
             }
             break;
 
         case PARSE_SERVO_CRC:
         {
-            rb->servo_packet.checksum = byte;
+            rb->servo_packet_temp.checksum = byte;
             uint8_t temp_buf[16];
-            temp_buf[0] = rb->servo_packet.id;
-            temp_buf[1] = rb->servo_packet.length;
-            temp_buf[2] = rb->servo_packet.cmd;
-            for (uint8_t i = 0; i < rb->servo_packet.param_len; i++)
+            temp_buf[0] = rb->servo_packet_temp.id;
+            temp_buf[1] = rb->servo_packet_temp.length;
+            temp_buf[2] = rb->servo_packet_temp.cmd;
+            for (uint8_t i = 0; i < rb->servo_packet_temp.param_len; i++)
             {
-                temp_buf[3 + i] = rb->servo_packet.params[i];
+                temp_buf[3 + i] = rb->servo_packet_temp.params[i];
             }
-            uint8_t calc_crc = Protocol_Calculate_CRC(temp_buf, 3 + rb->servo_packet.param_len);
+            uint8_t calc_crc = Protocol_Calculate_CRC(temp_buf, 3 + rb->servo_packet_temp.param_len);
 
             if (calc_crc == byte)
             {
-                rb->servo_packet.is_valid = true;
-                rb->packet_ready = true;
+                rb->servo_packet_temp.is_valid = true;
+                if (rb->servo_pkt_count < SERVO_PACKET_QUEUE_SIZE)
+                {
+                    rb->servo_packet_queue[rb->servo_pkt_head] = rb->servo_packet_temp;
+                    rb->servo_pkt_head = (rb->servo_pkt_head + 1) % SERVO_PACKET_QUEUE_SIZE;
+                    rb->servo_pkt_count++;
+                }
                 Protocol_ResetParserState(rb);
             }
             else
             {
-                Protocol_ResetParser(rb);
+                Protocol_ResetParserState(rb);
             }
             break;
         }
 
         default:
-            Protocol_ResetParser(rb);
+            Protocol_ResetParserState(rb);
             break;
         }
     }
     else
     {
-        Protocol_ResetParser(rb);
+        Protocol_ResetParserState(rb);
     }
-
-    // 如果有更高优先级任务被唤醒，请求上下文切换
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 /**
@@ -330,6 +342,20 @@ void Protocol_ParseIbusStream(UartRxRingBuffer *rb, const uint8_t *data, uint16_
     if (rb == NULL || data == NULL || len == 0)
         return;
 
+    // 快速路径：DMA 收到的刚好是完整帧，跳过 stream append 和 memmove
+    if (len == IBUS_FRAME_LEN && rb->ibus_stream_len == 0 &&
+        data[0] == IBUS_LENGTH && data[1] == IBUS_COMMAND)
+    {
+        if (Protocol_IbusValidate(data, IBUS_FRAME_LEN))
+        {
+            memcpy(rb->ibus_packet.data, data, IBUS_FRAME_LEN);
+            rb->ibus_packet.is_valid = true;
+            rb->ibus_ready = true;
+            return;
+        }
+    }
+
+    // 慢速路径：流式解析
     Protocol_IbusStreamAppend(rb, data, len);
 
     uint16_t offset = 0;
@@ -383,7 +409,7 @@ bool Protocol_HasPacket(BSP_UART_NUM_e uart_num)
         return false;
 
     UartRxRingBuffer *rb = BSP_UART_GetRxBuffer(uart_num);
-    return (rb != NULL) ? rb->packet_ready : false;
+    return (rb != NULL) ? (rb->servo_pkt_count > 0) : false;
 }
 
 /**
@@ -401,9 +427,13 @@ bool Protocol_GetServoPacket(BSP_UART_NUM_e uart_num, ServoPacket_t *packet)
     bool is_servo_protocol = (rb->protocol_type == PROTOCOL_SERVO_MCU ||
                               rb->protocol_type == PROTOCOL_SERVO_NO_MCU);
 
-    if (rb->packet_ready && is_servo_protocol && rb->servo_packet.is_valid)
+    if (is_servo_protocol && rb->servo_pkt_count > 0)
     {
-        memcpy(packet, &rb->servo_packet, sizeof(ServoPacket_t));
+        taskENTER_CRITICAL();
+        memcpy(packet, &rb->servo_packet_queue[rb->servo_pkt_tail], sizeof(ServoPacket_t));
+        rb->servo_pkt_tail = (rb->servo_pkt_tail + 1) % SERVO_PACKET_QUEUE_SIZE;
+        rb->servo_pkt_count--;
+        taskEXIT_CRITICAL();
         return true;
     }
 
@@ -421,8 +451,11 @@ void Protocol_ClearPacket(BSP_UART_NUM_e uart_num)
     UartRxRingBuffer *rb = BSP_UART_GetRxBuffer(uart_num);
     if (rb != NULL)
     {
-        rb->packet_ready = false;
-        rb->servo_packet.is_valid = false;
+        taskENTER_CRITICAL();
+        rb->servo_pkt_head = 0;
+        rb->servo_pkt_tail = 0;
+        rb->servo_pkt_count = 0;
+        taskEXIT_CRITICAL();
     }
 }
 
@@ -455,10 +488,10 @@ bool Protocol_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet)
 
     if (rb->protocol_type == PROTOCOL_IBUS && rb->ibus_ready && rb->ibus_packet.is_valid)
     {
-        __disable_irq();
+        taskENTER_CRITICAL();
         memcpy(packet, &rb->ibus_packet, sizeof(IbusPacket_t));
         rb->ibus_ready = false;
-        __enable_irq();
+        taskEXIT_CRITICAL();
         return true;
     }
 
@@ -495,7 +528,7 @@ uint8_t Protocol_GetFrameCount(BSP_UART_NUM_e uart_num)
 
     if (rb->protocol_type == PROTOCOL_SERVO_MCU || rb->protocol_type == PROTOCOL_SERVO_NO_MCU)
     {
-        return rb->packet_ready ? 1 : 0;
+        return rb->servo_pkt_count;
     }
     return 0;
 }

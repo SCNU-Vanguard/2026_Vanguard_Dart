@@ -29,7 +29,7 @@
 extern MotorManager_t MotorManager;
 extern SemaphoreHandle_t g_xRmBufferMutexHandle;
 
-float output = 0.0f;
+static float output = 0.0f;
 
 #define CtrlMotorLen 8     // 电机控制报文长度默认给8
 #define RM_MOTOR_MAX_NUM 2 // 最大电机数量

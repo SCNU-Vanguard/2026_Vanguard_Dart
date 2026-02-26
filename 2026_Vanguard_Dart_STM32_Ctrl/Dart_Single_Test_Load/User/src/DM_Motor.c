@@ -17,6 +17,8 @@
 #include "CanMotor.h"
 #include "bsp_dwt.h"
 #include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 // 直接访问电机管理器（减少函数调用开销）
 extern MotorManager_t MotorManager;
@@ -83,10 +85,10 @@ const DM_MotorClass_t DM_J3519_Class = {
     .kp_min = 0.0f,
     .kd_max = 5.0f,
     .kd_min = 0.0f,
-    .pos_max = 12.5f,
-    .pos_min = -12.5f,
-    .vel_max = 200.0f,
-    .vel_min = -200.0f,
+    .pos_max = 1000.0f,
+    .pos_min = -1000.0f,
+    .vel_max = 40.0f,
+    .vel_min = -40.0f,
     .torque_max = 10.0f,
     .torque_min = -10.0f,
     // 默认控制参数
@@ -112,10 +114,10 @@ const DM_MotorClass_t DM_J4310_Class = {
     .kp_min = 0.0f,
     .kd_max = 5.0f,
     .kd_min = 0.0f,
-    .pos_max = 12.5f,
-    .pos_min = -12.5f,
-    .vel_max = 30.0f,  // 修正：J4310 MIT模式速度范围为 ±30 rad/s
-    .vel_min = -30.0f, // 修正：符合手册规格
+    .pos_max = 160.0f,
+    .pos_min = -160.0f,
+    .vel_max = 30.0f,
+    .vel_min = -30.0f,
     .torque_max = 10.0f,
     .torque_min = -10.0f,
     // 默认控制参数
@@ -132,7 +134,7 @@ const DM_MotorClass_t DM_J4310_Class = {
 
 /*============================== 数据转换函数 ==============================*/
 
-static inline float uint_to_float_generic(int16_t x_int, float x_min, float x_max, int8_t bits)
+static inline float uint_to_float_generic(uint16_t x_int, float x_min, float x_max, int8_t bits)
 {
     float span = x_max - x_min;
     return ((float)x_int) * span / ((float)((1 << bits) - 1)) + x_min;
@@ -638,23 +640,39 @@ uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
     return 0;
 }
 
-static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
-    if (hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
+
+    while (1)
     {
-        if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+        // 发送使能命令
+        if (!hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
         {
-            DM_ENABLE_ARR[motor->MotorID - 1] = true;
+            // CAN发送失败，继续重试
+            vTaskDelay(3);
+            continue;
         }
-        hal->delay_ms(1);
-        return 1;
+
+        vTaskDelay(3);
+
+        // 检查反馈帧的使能状态（byte0高4位为状态：0=失能，1=使能）
+        uint8_t state = (motor->ReceiveMotorData[0] >> 4) & 0x0F;
+        if (state == 0x01)
+        {
+            // 使能成功
+            if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+            {
+                DM_ENABLE_ARR[motor->MotorID - 1] = true;
+            }
+            return 1;
+        }
+        // 未使能，继续循环重试
     }
-    return 0;
 }
 
 /*============================== 刷新数据函数 ==============================*/
@@ -679,10 +697,20 @@ void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
 
 /*============================== 发送控制函数 ==============================*/
 
+// 记录上次发送结束时间，防止连续调用导致CAN帧丢失
+static uint32_t s_DM_LastSendTick = 0;
+
 static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
 {
     if (st == NULL)
         return 0;
+
+    // 检查距离上次发送是否有至少1tick间隔，防止连续调用丢帧
+    uint32_t current_tick = HAL_GetTick();
+    if (current_tick - s_DM_LastSendTick < 1)
+    {
+        vTaskDelay(1);
+    }
 
     // 自动使能（合并条件判断）
     if (st->MotorID > 0 && st->MotorID <= 4 && !DM_ENABLE_ARR[st->MotorID - 1])
@@ -691,7 +719,12 @@ static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
     }
 
     // 使用Fast版本（内联，零开销）
-    return Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, st->SendMotorData) ? 1 : 0;
+    uint8_t result = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, st->SendMotorData) ? 1 : 0;
+
+    // 更新上次发送结束时间
+    s_DM_LastSendTick = HAL_GetTick();
+
+    return result;
 }
 
 /***********************************
@@ -733,9 +766,6 @@ static void DM_J3519_CalculateInternal(MotorTypeDef *motor)
     if (cls == NULL)
         cls = &DM_J3519_Class;
 
-    // 获取配置（使用Fast版本，内联无开销）
-    DM_MotorConfig_t *cfg = DM_Motor_GetConfigFast(motor->MotorID);
-
     MotorSolvedData_t *pData = &motor->motor_data;
     uint8_t *rx = motor->ReceiveMotorData;
 
@@ -744,11 +774,11 @@ static void DM_J3519_CalculateInternal(MotorTypeDef *motor)
     uint16_t vel_raw = ((uint16_t)rx[3] << 4) | (rx[4] >> 4);
     uint16_t tor_raw = ((rx[4] & 0x0F) << 8) | rx[5];
 
-    // J3519: 使用MIT协议范围转换
-    pData->solved_data[0] = uint_to_float_generic(pos_raw, cfg->pos_min, cfg->pos_max, 16);
+    // J3519: 使用电机类的固定范围进行解算（不受SetPosLimits/SetVelLimits影响）
+    pData->solved_data[0] = uint_to_float_generic(pos_raw, cls->pos_min, cls->pos_max, 16);
 
     // 速度滤波
-    float vel_new = uint_to_float_generic(vel_raw, cfg->vel_min, cfg->vel_max, 12);
+    float vel_new = uint_to_float_generic(vel_raw, cls->vel_min, cls->vel_max, 12);
     if (!pData->filter_init)
     {
         pData->solved_data[1] = vel_new;
@@ -766,6 +796,7 @@ static void DM_J3519_CalculateInternal(MotorTypeDef *motor)
     // 温度
     pData->solved_data[3] = (float)rx[6];
     pData->solved_data[4] = (float)rx[7];
+
     pData->solved_data[5] = pData->solved_data[0] / 19.2f; // 转过的角度
     pData->solved_data[6] = pData->solved_data[1] / 19.2f; // 转过的速度
 }
@@ -780,9 +811,6 @@ static void DM_J4310_CalculateInternal(MotorTypeDef *motor)
     if (cls == NULL)
         cls = &DM_J4310_Class;
 
-    // 获取配置（使用Fast版本，内联无开销）
-    DM_MotorConfig_t *cfg = DM_Motor_GetConfigFast(motor->MotorID);
-
     MotorSolvedData_t *pData = &motor->motor_data;
     uint8_t *rx = motor->ReceiveMotorData;
 
@@ -791,11 +819,11 @@ static void DM_J4310_CalculateInternal(MotorTypeDef *motor)
     uint16_t vel_raw = ((uint16_t)rx[3] << 4) | (rx[4] >> 4);
     uint16_t tor_raw = ((rx[4] & 0x0F) << 8) | rx[5];
 
-    // J4310: 使用MIT协议范围转换
-    pData->solved_data[0] = uint_to_float_generic(pos_raw, cfg->pos_min, cfg->pos_max, 16);
+    // J4310: 使用电机类的固定范围进行解算（不受SetPosLimits/SetVelLimits影响）
+    pData->solved_data[0] = uint_to_float_generic(pos_raw, cls->pos_min, cls->pos_max, 16);
 
     // 速度滤波
-    float vel_new = uint_to_float_generic(vel_raw, cfg->vel_min, cfg->vel_max, 12);
+    float vel_new = uint_to_float_generic(vel_raw, cls->vel_min, cls->vel_max, 12);
     if (!pData->filter_init)
     {
         pData->solved_data[1] = vel_new;
@@ -856,7 +884,7 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
     if (cfg == NULL)
         return;
 
-    static uint8_t data[8] = {0x00};
+    uint8_t data[8] = {0x00};
     if (workmode == DM_MIT)
     {
         // 使用用户配置的参数进行转换（修复：使用cfg而非cls->default）

@@ -28,6 +28,9 @@
 #include "UserTask.h"
 #include <stdio.h>
 #include <string.h>
+#include "semphr.h"
+#include <arm_math.h>
+#include "PID.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,14 +50,21 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+static StaticSemaphore_t g_xRmBufferMutexBuffer;
+SemaphoreHandle_t g_xRmBufferMutexHandle;
+extern float sine_output;
+extern float trap_output;
+float RmMotorAngleData = 0.0f;
+float RmMotorSpeedData = 0.0f;
+float TestTargetSpeed = 3400.0f;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name = "defaultTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t)osPriorityNormal,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,17 +77,19 @@ void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
-void MX_FREERTOS_Init(void) {
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
+void MX_FREERTOS_Init(void)
+{
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+  g_xRmBufferMutexHandle = xSemaphoreCreateMutexStatic(&g_xRmBufferMutexBuffer);
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -95,7 +107,10 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
+  TaskHandle_t SineWaveTaskHandle = NULL;
+  xTaskCreate(SineWaveTask, "SinWaveOut", 64 * 4, NULL, osPriorityBelowNormal7, &SineWaveTaskHandle);
+  // TaskHandle_t TrapWaveTaskHandle = NULL;
+  // xTaskCreate(TrapWaveTask, "TrapWaveOut", 64 * 4, NULL, osPriorityBelowNormal7, &TrapWaveTaskHandle);
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
 
@@ -107,7 +122,6 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
-
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -121,21 +135,30 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
 
-  // 定义数据包接收变量（无需手动初始化，UART_GetServoPacket会完全覆盖）
-  //  ServoPacket_t HxFb;
-  //  DartPacket_t UpcFb;
-
   // 舵机初始化（只调用一次，在循环外）
-  //  ServoInit();
-  //  vTaskDelay(100); // 等待初始化完成
-  //  uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-  //  uint16_t angles[3] = {0, 0, 0};
+  // ServoInit();
+  // vTaskDelay(1000); // 等待初始化完成
+  // uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
+  // uint16_t angles[3] = {0, 0, 0};
+  // uint16_t data[3] = {375, 375, 375};
+  // ServoControlPos(3, 400, 1000);
+  // vTaskDelay(2000);
+  // ServoControlPos(2, 400, 1000);
+  // vTaskDelay(2000);
+  //  ServoControlPos(1, 400, 1000);
+  //  vTaskDelay(2000);
+  // ServoControlMulti(3, servo_ids, angles, 1000);
 
   /* Infinite loop */
   for (;;)
   {
-    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
-    vTaskDelay(250);
+    // HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
+    // vTaskDelay(250);
+    RmMotorPID_Calc(RM_3508_GRIPPER, sine_output);
+    RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+    RmMotorSpeedData = Motor_GetSpeedRPM(RM_3508_GRIPPER);
+    // RmMotorSendCfg(RM_3508_GRIPPER, 670);
+    vTaskDelay(1);
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -144,4 +167,3 @@ void StartDefaultTask(void *argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

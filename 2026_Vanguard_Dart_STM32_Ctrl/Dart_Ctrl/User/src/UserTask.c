@@ -200,7 +200,6 @@ void RcMonitorTaskFunc(void *argument);
 
 void StoreEnergyTaskFunc(void *argument);
 void LoadTaskFunc(void *argument);
-void ShootTaskFunc(void *argument);
 void LoadMotorTaskFunc(void *argument);
 void StateSetTaskFunc(void *argument);
 
@@ -232,7 +231,7 @@ void TaskInitFunc(void)
 void StoreEnergyTaskFunc(void *argument)
 {
     // 等待事件组：云台和扳机都就绪后才开始
-    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdFALSE, pdTRUE, portMAX_DELAY);
     HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
 
 #if ENABLE_RC_MASTER_SWITCH
@@ -335,6 +334,41 @@ void StoreEnergyTaskFunc(void *argument)
     }
 }
 
+/**
+ * @brief 换弹到位后的通用处理：通知舵机、清积分、回零、通知储能
+ * @param dart_num 当前飞镖编号
+ * @param offset_angle 电机偏移角度
+ */
+static inline void LoadDart_ReturnToZero(uint8_t dart_num, float offset_angle)
+{
+    xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
+    vTaskDelay(SERVO_MOVE_TIME_MS);
+    CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
+    GripperTarget = offset_angle;
+    while (!IS_IN_DEADZONE(Motor_GetTotalAngle(RM_3508_GRIPPER), 0.0f, MOTOR_DEAD_ZONE))
+    {
+        RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
+        osDelay(2);
+    }
+    switch (dart_num)
+    {
+    case 3:
+        HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
+        break;
+    case 2:
+        HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
+        break;
+    case 1:
+        HAL_GPIO_TogglePin(LED5_GPIO_Port, LED5_Pin);
+        break;
+    default:
+        break;
+    }
+    xSemaphoreGive(g_xLoad2StoreSemHandle);
+    if (dart_num == 1)
+        vTaskDelay(200);
+}
+
 /***********************************
  * 函数名: LoadTaskFunc
  * 作用:   换弹任务（传送带电机控制以及电机目标设定）
@@ -342,7 +376,7 @@ void StoreEnergyTaskFunc(void *argument)
  **********************************/
 void LoadTaskFunc(void *argument)
 {
-    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdFALSE, pdTRUE, portMAX_DELAY);
 
     uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
     uint16_t servo_angles[3] = {0x0000};
@@ -407,72 +441,19 @@ void LoadTaskFunc(void *argument)
             MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
             RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
 
-            // 使用死区判断：MotorData 在 [GripperTarget-MOTOR_DEAD_ZONE, GripperTarget+MOTOR_DEAD_ZONE] 范围内视为到达
-            if (IS_IN_DEADZONE(MotorData, FirstServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 3)) // 首次上电电机的零点为offest_ecd,负向转动,距离为-7547
-            {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
-                vTaskDelay(SERVO_MOVE_TIME_MS);
-                // 等待电机到达过渡位置
-                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
-                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                GripperTarget = offset_angle;
-                // 回到上电零点位置：当前累计角度的负值
-                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
-                {
-                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                    osDelay(2);
-                }
-                MutexTake = false;
-                HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
-                xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
-            }
+            // 到位判断：根据 dart_num 匹配目标位置
+            float target_loc = 0.0f;
+            if (dart_num == 3)
+                target_loc = FirstServoLoc;
+            else if (dart_num == 2)
+                target_loc = SecondServoLoc;
+            else if (dart_num == 1)
+                target_loc = ThirdServoLoc;
 
-            if (IS_IN_DEADZONE(MotorData, SecondServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 2)) // 负向转动,相对距离距离为-5653
+            if (IS_IN_DEADZONE(MotorData, target_loc, MOTOR_DEAD_ZONE))
             {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
-                vTaskDelay(SERVO_MOVE_TIME_MS);
-                // 等待电机到达过渡位置
-                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
-                GripperTarget = offset_angle;
-                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
-                {
-                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                    osDelay(2);
-                }
                 MutexTake = false;
-                HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
-                xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
-            }
-
-            if (IS_IN_DEADZONE(MotorData, ThirdServoLoc, MOTOR_DEAD_ZONE) &&
-                (dart_num == 1)) // 负向转动,距离为-5549
-            {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
-                vTaskDelay(SERVO_MOVE_TIME_MS);
-                // 等待电机到达过渡位置
-                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                // 回到上电零点位置：当前累计角度的负值，带超时保护
-                {
-                    CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
-                    GripperTarget = offset_angle;
-                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                    while (!IS_IN_DEADZONE(MotorData, 0, MOTOR_DEAD_ZONE))
-                    {
-                        RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                        osDelay(2);
-                    }
-                }
-
-                MutexTake = false;
-                HAL_GPIO_TogglePin(LED5_GPIO_Port, LED5_Pin);
-                xSemaphoreGive(g_xLoad2StoreSemHandle); // 通知Store完成
-                vTaskDelay(200);
+                LoadDart_ReturnToZero(dart_num, offset_angle);
             }
         }
     }
@@ -485,52 +466,21 @@ void LoadTaskFunc(void *argument)
  **********************************/
 void LoadMotorTaskFunc(void *argument)
 {
-    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdFALSE, pdTRUE, portMAX_DELAY);
 
     uint8_t fQueueDartNum = 0; // 目标为0最初
     vTaskDelay(1);             // 最开始放一个Tick
     // 在这里驱动换弹的3508电机运动
     while (1)
     {
-        xQueueReceive(g_xLoad3508QueueHandler, &fQueueDartNum, portMAX_DELAY); // 读取队列得到对应的数据, 不等待数据更新
-        // 获取信号量之后进行判断
-        if (fQueueDartNum == 3)
+        xQueueReceive(g_xLoad3508QueueHandler, &fQueueDartNum, portMAX_DELAY);
+        if (fQueueDartNum >= 1 && fQueueDartNum <= 3)
         {
-            ServoControlPos(0x03, SeperationAngle, SERVO_MOVE_TIME_MS); // 转90°分离
+            ServoControlPos(fQueueDartNum, SeperationAngle, SERVO_MOVE_TIME_MS);
             vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-            ServoControlPos(0x03, 0x0000, SERVO_MOVE_TIME_MS);
+            ServoControlPos(fQueueDartNum, 0x0000, SERVO_MOVE_TIME_MS);
             vTaskDelay(SERVO_MOVE_TIME_MS + 5);
         }
-        else if (fQueueDartNum == 2)
-        {
-            ServoControlPos(0x02, SeperationAngle, SERVO_MOVE_TIME_MS); // 转90°分离
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-            ServoControlPos(0x02, 0x0000, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-        }
-        else if (fQueueDartNum == 1)
-        {
-            ServoControlPos(0x01, SeperationAngle, SERVO_MOVE_TIME_MS); // 转90°分离
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-            ServoControlPos(0x01, 0x0000, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-        }
-    }
-}
-
-/***********************************
- * 函数名: ShootTaskFunc
- * 作用:   发射任务（舵机释放以及电机目标设定）
- * 参数:   无
- * // TODO:   增加code注释,为之后的更新作准备
- * 备注:   MG996R舵机直接转动的范围是( 500 ~ 2500 )
- **********************************/
-void ShootTaskFunc(void *argument)
-{
-    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
-    vTaskDelay(10);
-    while (1)
-    {
     }
 }
 

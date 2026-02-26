@@ -245,7 +245,7 @@ void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
 
 /// @brief 获取电机管理器指针
 /// @return 电机管理器结构体
-MotorManager_t GetPtrMotorManager(void);
+MotorManager_t *GetPtrMotorManager(void);
 
 /// @brief 获取电机句柄（内联版本，零开销）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）

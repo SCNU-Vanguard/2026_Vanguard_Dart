@@ -169,18 +169,18 @@ void StartDefaultTask(void *argument)
   //  DartPacket_t UpcFb;
 
   // 舵机初始化（只调用一次，在循环外）
-  // ServoInit();
-  // vTaskDelay(100); // 等待初始化完成
-  // uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-  // uint16_t angles[3] = {0, 0, 0};
-  // uint16_t data[3] = {375, 375, 375};
-  // ServoControlPos(3, 375, 1000);
-  // vTaskDelay(1);
-  // ServoControlPos(2, 375, 1000);
-  // vTaskDelay(1);
-  // ServoControlPos(1, 375, 1000);
-  // vTaskDelay(2000);
-  // ServoControlMulti(3, servo_ids, angles, 1000);
+  //  ServoInit();
+  //  vTaskDelay(100); // 等待初始化完成
+  //  uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
+  //  uint16_t angles[3] = {0, 0, 0};
+  //  uint16_t data[3] = {375, 375, 375};
+  //  ServoControlPos(3, 375, 1000);
+  //  vTaskDelay(1);
+  //  ServoControlPos(2, 375, 1000);
+  //  vTaskDelay(1);
+  //  ServoControlPos(1, 375, 1000);
+  //  vTaskDelay(2000);
+  //  ServoControlMulti(3, servo_ids, angles, 1000);
   // uint32_t last_cnt = 0x0000;
   // float dt = 0.0f;
   // uint8_t test = 0;

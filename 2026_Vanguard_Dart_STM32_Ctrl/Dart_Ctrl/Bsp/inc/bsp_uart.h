@@ -8,9 +8,12 @@
 #include <stdint.h>
 
 /* 循环缓冲区大小定义 */
-#define UART_TX_BUFFER_SIZE 64
+#define UART_TX_BUFFER_SIZE 128
 #define UART_RX_BUFFER_SIZE 64
 #define UART_TX_CHUNK_SIZE 32
+
+/* 舵机包队列深度 */
+#define SERVO_PACKET_QUEUE_SIZE 2
 
 /* UART编号枚举 */
 typedef enum
@@ -97,8 +100,13 @@ typedef struct
     PROTOCOL_TYPE_e protocol_type; // 协议类型（由SERVO_COM决定）
     ParseState_e parse_state;      // 解析状态
     uint16_t parse_index;          // 解析索引
-    ServoPacket_t servo_packet;    // 舵机协议数据包
-    bool packet_ready;             // 是否有完整数据包
+    ServoPacket_t servo_packet_temp;  // 解析临时包（状态机逐字节填充）
+
+    // 舵机包队列（ISR写入，任务读取）
+    ServoPacket_t servo_packet_queue[SERVO_PACKET_QUEUE_SIZE];
+    uint8_t servo_pkt_head;   // ISR 写入位置
+    uint8_t servo_pkt_tail;   // 任务读取位置
+    uint8_t servo_pkt_count;  // 队列中包数量
 
     // IBUS协议数据包
     IbusPacket_t ibus_packet;

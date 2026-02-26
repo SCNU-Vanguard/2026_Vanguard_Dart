@@ -12,8 +12,9 @@
 #include "HX06L.h"
 #include "bsp_dwt.h"
 #include <string.h>
-#include "UartModule.h"
+#include "UartProtocol.h"
 #include "FreeRTOS.h"
+#include "cmsis_os.h"
 #include "task.h"
 
 #if (other_mcu_forcing == 1)
@@ -52,14 +53,14 @@ bool ServoInit(void)
         data[2] = 0x02;                    // 数据长度 = 0 + 2
         data[3] = CMD_GET_BATTERY_VOLTAGE; // 指令：获取电池电压
         UART_Send(BSP_UART3, (const uint8_t *)data, 4);
-        HAL_Delay(100); // 这里等待100ms,之后读取回调数据,确认电压是否正常
+        vTaskDelay(100); // 这里等待100ms,之后读取回调数据,确认电压是否正常
         ServoInitCount = 1;
     }
     ServoPacket_t InitData; // 这里可以不用进行初始化,函数调用时会直接memcpy数据过来,即使是没接收到数据也有HasServoPacket保障
     uint16_t servo_voltage = 0;
-    if (UartModule_HasServoPacket(BSP_UART3))
+    if (Protocol_HasPacket(BSP_UART3))
     {
-        UartModule_GetServoPacket(BSP_UART3, &InitData);
+        Protocol_GetServoPacket(BSP_UART3, &InitData);
         // 回读之后解算电压的正常数据,不正常就返回一个false,之后使用一些东西提示总线舵机初始化失败
         servo_voltage = InitData.params[0] | (((uint16_t)InitData.params[1]) << 8); // 单位mv
         if ((servo_voltage > 8800) || (servo_voltage < 6000))
@@ -308,7 +309,7 @@ bool ServoInit(void)
         ServoSetLoad(2, 1);
         ServoSetLoad(3, 1);
         vTaskDelay(50); // 等待舵机上电稳定
-        
+
         // 第二步：控制舵机到初始位置0
         ServoControlPos(1, 0, 500);
         ServoControlPos(2, 0, 500);
@@ -318,13 +319,13 @@ bool ServoInit(void)
     }
 
     // 检查是否收到返回消息（可选，用于验证通信）
-    if (UartModule_HasServoPacket(BSP_UART3))
+    if (Protocol_HasPacket(BSP_UART3))
     {
         ServoPacket_t InitData;
-        UartModule_GetServoPacket(BSP_UART3, &InitData);
+        Protocol_GetServoPacket(BSP_UART3, &InitData);
         return true;
     }
-    
+
     // 即使没收到返回也认为初始化完成（舵机可能没配置返回）
     return (ServoInitCount == 1);
 }
@@ -358,12 +359,12 @@ void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time)
 void ServoReadMoveTime(uint8_t ID)
 {
     uint8_t data[16] = {0x00};
-    data[0] = 0x55;                                                              // 帧头
-    data[1] = 0x55;                                                              // 帧头
-    data[2] = ID;                                                                // ID号
-    data[3] = get_servo_data_length(SERVO_MOVE_TIME_READ);                       // 数据长度
-    data[4] = get_servo_command_value(SERVO_MOVE_TIME_READ);                     // 指令
-    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_READ));   // CRC校验
+    data[0] = 0x55;                                                            // 帧头
+    data[1] = 0x55;                                                            // 帧头
+    data[2] = ID;                                                              // ID号
+    data[3] = get_servo_data_length(SERVO_MOVE_TIME_READ);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_MOVE_TIME_READ);                   // 指令
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_MOVE_TIME_READ)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_MOVE_TIME_READ) + 3);
 }
 
@@ -445,12 +446,12 @@ void ServoGetBatteryVoltage(void)
     // 使用广播ID 0xFE 读取电压（所有舵机都会返回）
     // 或者指定某个舵机ID
     uint8_t data[16] = {0x00};
-    data[0] = 0x55;                                                         // 帧头
-    data[1] = 0x55;                                                         // 帧头
-    data[2] = 1;                                                            // ID号（使用舵机1）
-    data[3] = get_servo_data_length(SERVO_VIN_READ);                        // 数据长度
-    data[4] = get_servo_command_value(SERVO_VIN_READ);                      // 指令
-    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_READ));    // CRC校验
+    data[0] = 0x55;                                                      // 帧头
+    data[1] = 0x55;                                                      // 帧头
+    data[2] = 1;                                                         // ID号（使用舵机1）
+    data[3] = get_servo_data_length(SERVO_VIN_READ);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_VIN_READ);                   // 指令
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_VIN_READ)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_VIN_READ) + 3);
 }
 
@@ -460,12 +461,12 @@ void ServoGetBatteryVoltage(void)
 void ServoReadPosition(uint8_t ID)
 {
     uint8_t data[16] = {0x00};
-    data[0] = 0x55;                                                         // 帧头
-    data[1] = 0x55;                                                         // 帧头
-    data[2] = ID;                                                           // ID号
-    data[3] = get_servo_data_length(SERVO_POS_READ);                        // 数据长度
-    data[4] = get_servo_command_value(SERVO_POS_READ);                      // 指令
-    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_POS_READ));    // CRC校验
+    data[0] = 0x55;                                                      // 帧头
+    data[1] = 0x55;                                                      // 帧头
+    data[2] = ID;                                                        // ID号
+    data[3] = get_servo_data_length(SERVO_POS_READ);                     // 数据长度
+    data[4] = get_servo_command_value(SERVO_POS_READ);                   // 指令
+    data[5] = CRC_GNERATOR(data, get_servo_data_length(SERVO_POS_READ)); // CRC校验
     UART_Send(BSP_UART3, (const uint8_t *)data, get_servo_data_length(SERVO_POS_READ) + 3);
 }
 
@@ -566,7 +567,7 @@ ServoResult_t ServoSetID(uint8_t ID, uint8_t newID)
     {
         return SERVO_FAIL;
     }
-    
+
     uint8_t data[16] = {0x00};
     data[0] = 0x55;
     data[1] = 0x55;
@@ -603,9 +604,11 @@ void ServoReadID(uint8_t ID)
 void ServoSetAngleOffset(uint8_t ID, int8_t offset)
 {
     // 限制范围
-    if (offset < -125) offset = -125;
-    if (offset > 125) offset = 125;
-    
+    if (offset < -125)
+        offset = -125;
+    if (offset > 125)
+        offset = 125;
+
     uint8_t data[16] = {0x00};
     data[0] = 0x55;
     data[1] = 0x55;
@@ -661,7 +664,7 @@ ServoResult_t ServoSetAngleLimit(uint8_t ID, uint16_t minAngle, uint16_t maxAngl
     {
         return SERVO_FAIL;
     }
-    
+
     uint8_t data[16] = {0x00};
     data[0] = 0x55;
     data[1] = 0x55;
@@ -706,7 +709,7 @@ ServoResult_t ServoSetVinLimit(uint8_t ID, uint16_t minVin, uint16_t maxVin)
     {
         return SERVO_FAIL;
     }
-    
+
     uint8_t data[16] = {0x00};
     data[0] = 0x55;
     data[1] = 0x55;
@@ -750,7 +753,7 @@ ServoResult_t ServoSetTempLimit(uint8_t ID, uint8_t maxTemp)
     {
         return SERVO_FAIL;
     }
-    
+
     uint8_t data[16] = {0x00};
     data[0] = 0x55;
     data[1] = 0x55;
@@ -823,18 +826,22 @@ void ServoSetModeAndSpeed(uint8_t ID, uint8_t servoMode, uint8_t rotateMode, int
     // 速度范围限制
     if (rotateMode == 0) // 固定占空比模式
     {
-        if (speed < -1000) speed = -1000;
-        if (speed > 1000) speed = 1000;
+        if (speed < -1000)
+            speed = -1000;
+        if (speed > 1000)
+            speed = 1000;
     }
     else // 固定转速模式
     {
-        if (speed < -50) speed = -50;
-        if (speed > 50) speed = 50;
+        if (speed < -50)
+            speed = -50;
+        if (speed > 50)
+            speed = 50;
     }
-    
+
     // 将有符号数转换为无符号数（补码形式）
     uint16_t speedUnsigned = (uint16_t)speed;
-    
+
     uint8_t data[16] = {0x00};
     data[0] = 0x55;
     data[1] = 0x55;

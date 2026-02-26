@@ -13,8 +13,6 @@
 #include "RM_Motor.h"
 #include "DM_Motor.h"
 #include <stdbool.h>
-#include "FreeRTOS.h"
-#include "task.h"
 
 // 电机管理表
 MotorManager_t MotorManager = {0};
@@ -139,10 +137,10 @@ void MotorRegister(void)
     // 夹爪传动带结构 - M3508电机
     RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
-                           0.06591f, 0.1f, 0.0f, 0.0001f,
-                           178.91f, 0.40f, 0.0f, 7.95f,
+                           0.3f, 0.2f, 0.0f, 0.0f,
+                           0.091f, 1.0f, 0.0f, 93.0f,
                            20673.0f, 0.0f, 2.0f,
-                           1691.0f, 0.0f, 300.0f);
+                           2000.0f, 0.0f, 600.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机
@@ -194,9 +192,9 @@ void MotorRegister(void)
  * 作用：获取电机管理器指针
  * 返回值：电机管理器结构体
  ****************************************************/
-MotorManager_t GetPtrMotorManager(void)
+MotorManager_t *GetPtrMotorManager(void)
 {
-    return MotorManager;
+    return &MotorManager;
 }
 
 /****************************************************

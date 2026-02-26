@@ -4,7 +4,7 @@
  * --------------------------------------------------
  * DM电机说明：
  * 支持MIT模式、位置速度模式、速度模式、PVT模式
- * 目前主要使用MIT模式和位置速度模式进行控制
+ * 目前主要使用MIT模式进行控制
  * --------------------------------------------------
  * 面向对象设计说明：
  * 使用 DM_MotorClass_t 作为电机"类"，包含：
@@ -884,7 +884,7 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
     if (cfg == NULL)
         return;
 
-    static uint8_t data[8] = {0x00};
+    uint8_t data[8] = {0x00};
     if (workmode == DM_MIT)
     {
         // 使用用户配置的参数进行转换（修复：使用cfg而非cls->default）

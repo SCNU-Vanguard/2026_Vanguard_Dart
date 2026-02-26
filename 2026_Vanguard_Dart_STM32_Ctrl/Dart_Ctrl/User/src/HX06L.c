@@ -12,7 +12,7 @@
 #include "HX06L.h"
 #include "bsp_dwt.h"
 #include <string.h>
-#include "UartModule.h"
+#include "UartProtocol.h"
 #include "FreeRTOS.h"
 #include "cmsis_os.h"
 #include "task.h"
@@ -58,9 +58,9 @@ bool ServoInit(void)
     }
     ServoPacket_t InitData; // 这里可以不用进行初始化,函数调用时会直接memcpy数据过来,即使是没接收到数据也有HasServoPacket保障
     uint16_t servo_voltage = 0;
-    if (UartModule_HasServoPacket(BSP_UART3))
+    if (Protocol_HasPacket(BSP_UART3))
     {
-        UartModule_GetServoPacket(BSP_UART3, &InitData);
+        Protocol_GetServoPacket(BSP_UART3, &InitData);
         // 回读之后解算电压的正常数据,不正常就返回一个false,之后使用一些东西提示总线舵机初始化失败
         servo_voltage = InitData.params[0] | (((uint16_t)InitData.params[1]) << 8); // 单位mv
         if ((servo_voltage > 8800) || (servo_voltage < 6000))
@@ -319,10 +319,10 @@ bool ServoInit(void)
     }
 
     // 检查是否收到返回消息（可选，用于验证通信）
-    if (UartModule_HasServoPacket(BSP_UART3))
+    if (Protocol_HasPacket(BSP_UART3))
     {
         ServoPacket_t InitData;
-        UartModule_GetServoPacket(BSP_UART3, &InitData);
+        Protocol_GetServoPacket(BSP_UART3, &InitData);
         return true;
     }
 

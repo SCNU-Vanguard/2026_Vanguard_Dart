@@ -884,7 +884,7 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
     if (cfg == NULL)
         return;
 
-    static uint8_t data[8] = {0x00};
+    uint8_t data[8] = {0x00};
     if (workmode == DM_MIT)
     {
         // 使用用户配置的参数进行转换（修复：使用cfg而非cls->default）

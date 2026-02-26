@@ -194,9 +194,9 @@ void MotorRegister(void)
  * 作用：获取电机管理器指针
  * 返回值：电机管理器结构体
  ****************************************************/
-MotorManager_t GetPtrMotorManager(void)
+MotorManager_t *GetPtrMotorManager(void)
 {
-    return MotorManager;
+    return &MotorManager;
 }
 
 /****************************************************

@@ -30,14 +30,15 @@
 #define EVENT_ALL_READY 0x4C             // 0x4C - 全部就绪
 
 // 换弹结构相关
-#define ConveyorBeltLength 20673
+#define ConveyorBeltLength 15000
 #define SeperationAngle 375
-#define FirstServoLoc -7547
-#define SecondServoLoc -13200
-#define ThirdServoLoc -18749
-// 第三个舵机（距离7547）
-// 第二个舵机（距离13200）<与第三个相距5653>
-// 第一个舵机（距离18749）<与第二个相距5549>
+#define MoveStartPoint 3304
+#define FirstServoLoc -940
+#define SecondServoLoc -4101
+#define ThirdServoLoc -7388
+// 第三个舵机（距离940）
+// 第二个舵机（距离4101）
+// 第一个舵机（距离7388）
 
 // @note 直接滑至最底部这样非常ok，这样只需要判断这个Trigger与Load的关系
 // 储能电机相关

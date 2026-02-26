@@ -6,7 +6,7 @@
  * 协议选择说明：
  * other_mcu_forcing = 0: 使用无MCU驱动板协议（115200波特率，有CRC校验）
  * other_mcu_forcing = 1: 使用有MCU控制板协议（9600波特率，无CRC校验）
- *
+ * 
  * 参考：Arduino/MicroPython 版本舵机驱动
  ****************************************************************/
 
@@ -25,24 +25,24 @@
  */
 typedef enum
 {
-    SERVO_SUCCESS = 1, // 操作成功
-    SERVO_FAIL = 0,    // 操作失败
-    SERVO_WAIT = 2,    // 等待中
-    SERVO_TIMEOUT = 3  // 超时
+    SERVO_SUCCESS = 1,    // 操作成功
+    SERVO_FAIL = 0,       // 操作失败
+    SERVO_WAIT = 2,       // 等待中
+    SERVO_TIMEOUT = 3     // 超时
 } ServoResult_t;
 
 /*****************************LED报警故障类型***********************************/
 
 typedef enum
 {
-    SERVO_ERROR_NO_ALARM = 0,            // 无报警
-    SERVO_ERROR_OVER_TEMP = 1,           // 过温报警
-    SERVO_ERROR_OVER_VOLT = 2,           // 过压报警
-    SERVO_ERROR_OVER_TEMP_AND_VOLT = 3,  // 过温和过压报警
-    SERVO_ERROR_STALL = 4,               // 堵转报警
-    SERVO_ERROR_OVER_TEMP_AND_STALL = 5, // 过温和堵转报警
-    SERVO_ERROR_OVER_VOLT_AND_STALL = 6, // 过压和堵转报警
-    SERVO_ERROR_ALL = 7                  // 过温、过压和堵转报警
+    SERVO_ERROR_NO_ALARM = 0,           // 无报警
+    SERVO_ERROR_OVER_TEMP = 1,          // 过温报警
+    SERVO_ERROR_OVER_VOLT = 2,          // 过压报警
+    SERVO_ERROR_OVER_TEMP_AND_VOLT = 3, // 过温和过压报警
+    SERVO_ERROR_STALL = 4,              // 堵转报警
+    SERVO_ERROR_OVER_TEMP_AND_STALL = 5,// 过温和堵转报警
+    SERVO_ERROR_OVER_VOLT_AND_STALL = 6,// 过压和堵转报警
+    SERVO_ERROR_ALL = 7                 // 过温、过压和堵转报警
 } ServoAlarmCode_t;
 
 /*****************************协议选择宏***********************************/
@@ -391,10 +391,8 @@ void ServoReadLEDAlarm(uint8_t ID);
 /// @return 原始值（0-1000）
 static inline uint16_t ServoAngleToRaw(float angleDeg)
 {
-    if (angleDeg < 0)
-        angleDeg = 0;
-    if (angleDeg > 240)
-        angleDeg = 240;
+    if (angleDeg < 0) angleDeg = 0;
+    if (angleDeg > 240) angleDeg = 240;
     return (uint16_t)(angleDeg / 0.24f);
 }
 

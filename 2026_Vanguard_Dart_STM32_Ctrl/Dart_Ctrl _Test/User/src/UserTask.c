@@ -162,7 +162,7 @@ void TaskInitFunc(void)
  * SERVO_AUTO_RELOAD = 1: 舵机自动换弹（确认后舵机自动分离）
  * SERVO_AUTO_RELOAD = 0: 手动换弹（只等待确认，不驱动舵机）
  **********************************/
-#define SERVO_AUTO_RELOAD 1 // 1=舵机自动换弹, 0=手动换弹
+#define SERVO_AUTO_RELOAD 0 // 1=舵机自动换弹, 0=手动换弹
 
 void StoreEnergyTaskFunc(void *argument)
 {

@@ -11,7 +11,18 @@
 
 #include <math.h>
 
-// 通用系统参数
+/* ==================== BSP层：协议常量 ==================== */
+
+// IBUS 协议参数
+#define IA6B_CHANNEL 10                             // FS-I6通道数
+#define IBUS_LENGTH 0x20                            // 协议头
+#define IBUS_COMMAND 0x40                           // 协议头
+#define IBUS_FRAME_LEN 32                           // IBUS固定帧长度（字节）
+#define IBUS_DMA_BUFFER_LEN (IBUS_FRAME_LEN * 2)    // DMA接收缓冲区长度
+#define IBUS_STREAM_BUFFER_LEN (IBUS_FRAME_LEN * 2) // IBUS流解析缓存长度
+
+/* ==================== 控制层：通用系统参数 ==================== */
+
 #define MOTOR_TIMEOUT_MS 5000  // 电机运动超时时间（毫秒）
 #define MOTOR_DEAD_ZONE 1.0f   // 电机死区（用于位置判定）
 #define TRIGGER_DEAD_ZONE 5.0f // 扳机电机死区
@@ -23,11 +34,30 @@
 #define IS_IN_DEADZONE(value, target, zone) \
     (((value) >= ((target) - (zone))) && ((value) <= ((target) + (zone))))
 
-// 事件组位定义
+/* ==================== 控制层：遥控器配置 ==================== */
+
+/*============================== 遥控器总开关控制 ==============================*/
+/**
+ * @brief 启用遥控器总开关功能
+ * @note  设为1启用，设为0禁用（禁用时代码行为与原来一致）
+ *
+ * 功能说明：
+ * - SWB=1（默认状态）：调试模式，只允许电机调试，不执行发射和换弹流程
+ * - SWB=0（手动切换）：正常模式，执行正常的发射和换弹流程
+ */
+#define ENABLE_RC_MASTER_SWITCH 1
+
+// 遥控器监控任务周期（毫秒）
+#define RC_MONITOR_TASK_PERIOD_MS 10
+
+/* ==================== 任务层：事件组位定义 ==================== */
+
 #define EVENT_GIMBAL_READY (1 << 6)      // 0x40 - 云台就绪
 #define EVENT_TRIGGER_READY (1 << 2)     // 0x04 - 扳机就绪
 #define EVENT_TRIGGER_LOC_READY (1 << 3) // 0x08 - 扳机位置就绪
 #define EVENT_ALL_READY 0x4C             // 0x4C - 全部就绪
+
+/* ==================== 业务层：机械结构参数 ==================== */
 
 // 换弹结构相关
 #define ConveyorBeltLength 20673
@@ -57,27 +87,5 @@
 #define MG995_shrink 1500   // 飞镖支架收回状态，向后摆，让SG90的线距离C板短点
 
 // 云台转轴相关
-
-// 遥控器相关
-#define IA6B_CHANNEL 10                             // FS-I6通道数
-#define IBUS_LENGTH 0x20                            // 协议头
-#define IBUS_COMMAND 0x40                           // 协议头
-#define IBUS_FRAME_LEN 32                           // IBUS固定帧长度（字节）
-#define IBUS_DMA_BUFFER_LEN (IBUS_FRAME_LEN * 2)    // DMA接收缓冲区长度
-#define IBUS_STREAM_BUFFER_LEN (IBUS_FRAME_LEN * 2) // IBUS流解析缓存长度
-
-/*============================== 遥控器总开关控制 ==============================*/
-/**
- * @brief 启用遥控器总开关功能
- * @note  设为1启用，设为0禁用（禁用时代码行为与原来一致）
- *
- * 功能说明：
- * - SWB=1（默认状态）：调试模式，只允许电机调试，不执行发射和换弹流程
- * - SWB=0（手动切换）：正常模式，执行正常的发射和换弹流程
- */
-#define ENABLE_RC_MASTER_SWITCH 1
-
-// 遥控器监控任务周期（毫秒）
-#define RC_MONITOR_TASK_PERIOD_MS 10
 
 #endif

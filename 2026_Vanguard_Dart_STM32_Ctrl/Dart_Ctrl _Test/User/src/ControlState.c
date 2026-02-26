@@ -348,9 +348,21 @@ static void ControlTaskFunc(void *argument)
                 xSemaphoreGive(g_xMotorCtrlSemHandle);
                 xSemaphoreGive(g_xDebugFinishedSemHandle);
                 holding_motor_ctrl = false;
+                g_ControlState.debug_window_active = false; // 防止超时逻辑重复give
             }
             // 熄灭调试LED
             HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+        }
+
+        // 调试窗口超时自动放行（用户未切手动模式时，超时后自动give让StoreEnergyTask继续）
+        if (g_ControlState.debug_window_active && !holding_motor_ctrl)
+        {
+            uint32_t elapsed = HAL_GetTick() - g_ControlState.debug_timer_start;
+            if (elapsed >= DEBUG_WINDOW_MS)
+            {
+                g_ControlState.debug_window_active = false;
+                xSemaphoreGive(g_xDebugFinishedSemHandle);
+            }
         }
 
         // 只有在手动模式且持有控制权时才更新目标并下发

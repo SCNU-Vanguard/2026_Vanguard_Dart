@@ -96,8 +96,6 @@ void ControlState_Init(void)
     g_xMotorCtrlSemHandle = xSemaphoreCreateBinaryStatic(&g_xMotorCtrlSemBuffer);
     g_xAutoAllowDebugSemHandle = xSemaphoreCreateBinaryStatic(&g_xAutoAllowDebugSemBuffer);
     g_xDebugFinishedSemHandle = xSemaphoreCreateBinaryStatic(&g_xDebugFinishedSemBuffer);
-    g_xAutoAllowDebugSemHandle = xSemaphoreCreateBinary();
-    g_xDebugFinishedSemHandle = xSemaphoreCreateBinary();
     if (g_xMotorCtrlSemHandle != NULL)
     {
         xSemaphoreGive(g_xMotorCtrlSemHandle);
