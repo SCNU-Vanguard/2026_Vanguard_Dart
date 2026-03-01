@@ -157,7 +157,7 @@ void StartDefaultTask(void *argument)
     RmMotorPID_Calc(RM_3508_GRIPPER, sine_output);
     RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
     RmMotorSpeedData = Motor_GetSpeedRPM(RM_3508_GRIPPER);
-    // RmMotorSendCfg(RM_3508_GRIPPER, 670);
+    // RmMotorSendCfg(RM_3508_GRIPPER, 1000); // 14500
     vTaskDelay(1);
   }
   /* USER CODE END StartDefaultTask */

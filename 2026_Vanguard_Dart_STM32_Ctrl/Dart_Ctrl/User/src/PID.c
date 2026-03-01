@@ -1,8 +1,8 @@
 #include "PID.h"
 #include "CanMotor.h"
 #include <string.h>
-
-// 速度环：期望为正(负)数,不允许输出负(正)数
+#include <arm_math.h>
+#include "cmsis_os.h"
 
 /**
  * @brief PID初始化函数
@@ -13,7 +13,7 @@
  * @param kd 微分系数
  * @param kf 前馈系数
  * @param max_out 输出上限（实际输出范围为 [-max_out, +max_out]）
- * @param min_out 输出下限（防止输出与目标方向相反：target>0时output>=min_out）
+ * @param min_out 最小输出幅值（按误差方向生效，用于克服静摩擦/死区）
  * @param max_iout 积分限幅
  */
 void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float kf, float max_out, float min_out, float max_iout)
@@ -50,10 +50,10 @@ void PID_Init(PID_t *pid, PID_MODE_e mode, float kp, float ki, float kd, float k
  * @param inner_kd 内环微分系数
  * @param inner_kf 内环前馈系数
  * @param outer_max_out 外环输出上限
- * @param outer_min_out 外环输出下限（防止输出与目标方向相反）
+ * @param outer_min_out 外环最小输出幅值（按误差方向生效）
  * @param outer_max_iout 外环积分限幅
  * @param inner_max_out 内环输出上限
- * @param inner_min_out 内环输出下限（防止输出与目标方向相反）
+ * @param inner_min_out 内环最小输出幅值（按误差方向生效）
  * @param inner_max_iout 内环积分限幅
  */
 void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
@@ -81,7 +81,7 @@ void CASCADE_PID_Init(CASCADE_PID_t *cascade_pid,
  * @param max 最大值
  * @return 限幅后的值
  */
-static float float_constrain(float value, float min, float max)
+static inline float float_constrain(float value, float min, float max)
 {
     if (value < min)
         return min;
@@ -89,6 +89,33 @@ static float float_constrain(float value, float min, float max)
         return max;
     else
         return value;
+}
+
+/**
+ * @brief 最小输出保护（按误差方向）
+ * @param output 当前输出
+ * @param min_output 最小输出幅值
+ * @param error 当前误差
+ * @return 处理后的输出
+ * @note 仅当输出方向与纠偏方向一致时，才抬升到最小输出；不会强行翻转输出方向
+ */
+static inline float apply_min_output_by_error(float output, float min_output, float error)
+{
+    if (min_output <= 0.0f)
+        return output;
+
+    if (error > 0.0f)
+    {
+        if (output > 0.0f && output < min_output)
+            return min_output;
+    }
+    else if (error < 0.0f)
+    {
+        if (output < 0.0f && output > -min_output)
+            return -min_output;
+    }
+
+    return output;
 }
 
 /**
@@ -171,20 +198,8 @@ float PID_Position_Calc(PID_t *pid, float target, float measure)
     // 输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 输出方向保护：防止输出与目标方向相反
-    // target > 0 时，output 不能小于 min_output
-    // target < 0 时，output 不能大于 -min_output
-    if (pid->min_output > 0.0f)
-    {
-        if (target > 0.0f && pid->output < pid->min_output)
-        {
-            pid->output = pid->min_output;
-        }
-        else if (target < 0.0f && pid->output > -pid->min_output)
-        {
-            pid->output = -pid->min_output;
-        }
-    }
+    // 最小输出保护：按误差方向生效，避免阻止反向纠偏
+    pid->output = apply_min_output_by_error(pid->output, pid->min_output, pid->error);
 
     // 更新上次误差、测量值
     pid->last_error = pid->error;
@@ -250,10 +265,9 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
 
 #if PID_DERIVATIVE_ON_MEASUREMENT
     // 微分先行：对测量值变化进行微分（避免目标突变产生尖峰）
-    // 增量式微分先行：Δd = Kd × (prev_measure - 2×last_measure + measure)
-    float d_out = pid->KD * (pid->prev_measure - 2.0f * pid->last_measure + measure);
+    // 增量式微分先行：Δd = Kd × (2×last_measure - measure - prev_measure)
+    float d_out = pid->KD * (2.0f * pid->last_measure - measure - pid->prev_measure);
 #else
-    // 普通微分：对误差变化进行微分
     float d_out = pid->KD * (pid->error - 2.0f * pid->last_error + pid->prev_error);
 #endif
 
@@ -271,20 +285,8 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
     // 总输出限幅（正负对称限幅）
     pid->output = float_constrain(pid->output, -pid->max_output, pid->max_output);
 
-    // 输出方向保护：防止输出与目标方向相反
-    // target > 0 时，output 不能小于 min_output
-    // target < 0 时，output 不能大于 -min_output
-    if (pid->min_output >= 0.0f)
-    {
-        if (target > 0.0f && pid->output < pid->min_output)
-        {
-            pid->output = pid->min_output;
-        }
-        else if (target < 0.0f && pid->output > -pid->min_output)
-        {
-            pid->output = -pid->min_output;
-        }
-    }
+    // 最小输出保护：按误差方向生效，避免阻止反向纠偏
+    pid->output = apply_min_output_by_error(pid->output, pid->min_output, pid->error);
 
     // 更新历史误差、测量值
     pid->prev_error = pid->last_error;
@@ -300,7 +302,6 @@ float PID_Incremental_Calc(PID_t *pid, float target, float measure)
  * @param pid PID结构体指针
  * @param target 目标值
  * @param measure 测量值
- * @param feedforward 前馈值
  * @return PID输出值
  */
 float PID_Calculate(PID_t *pid, float target, float measure)
@@ -326,8 +327,6 @@ float PID_Calculate(PID_t *pid, float target, float measure)
  * @param outer_target 外环目标值（位置）
  * @param outer_measure 外环测量值（位置）
  * @param inner_measure 内环测量值（速度）
- * @param outer_feedforward 外环前馈值
- * @param inner_feedforward 内环前馈值
  * @return 内环PID输出值
  */
 float CASCADE_PID_Calculate(CASCADE_PID_t *cascade_pid,
@@ -432,7 +431,7 @@ void PID_Set_Coefficient(PID_t *pid, float kp, float ki, float kd, float kf)
  * @brief PID输出限幅设置函数
  * @param pid PID结构体指针
  * @param max_output 输出上限（实际输出范围为 [-max_output, +max_output]）
- * @param min_output 输出下限（防止输出与目标方向相反：target>0时output>=min_output）
+ * @param min_output 最小输出幅值（按误差方向生效）
  * @param max_iout 积分限幅
  */
 void PID_Set_OutputLimit(PID_t *pid, float max_output, float min_output, float max_iout)
@@ -456,4 +455,108 @@ uint8_t PID_Is_Initialized(PID_t *pid)
         return 0;
 
     return pid->initialized;
+}
+
+/* ============================================================
+ *  波形发生器
+ * ============================================================ */
+
+void SineWave_Init(SineWaveGen_t *wave, float amplitude, float period, float dt)
+{
+    if (wave == NULL)
+        return;
+    wave->amplitude = amplitude;
+    wave->period = period;
+    wave->dt = dt;
+    wave->angle_deg = 0.0f;
+    wave->output = 0.0f;
+}
+
+float SineWave_Calc(SineWaveGen_t *wave)
+{
+    if (wave == NULL)
+        return 0.0f;
+    float radians = wave->angle_deg * (PI / 180.0f);
+    wave->output = wave->amplitude * arm_sin_f32(radians);
+    wave->angle_deg += (360.0f / wave->period) * wave->dt;
+    if (wave->angle_deg >= 360.0f)
+        wave->angle_deg -= 360.0f;
+    return wave->output;
+}
+
+void SineWave_Set(SineWaveGen_t *wave, float amplitude, float period)
+{
+    if (wave == NULL)
+        return;
+    wave->amplitude = amplitude;
+    wave->period = period;
+}
+
+void TrapWave_Init(TrapWaveGen_t *trap, float amplitude, float gradient)
+{
+    if (trap == NULL)
+        return;
+    trap->amplitude = amplitude;
+    trap->gradient = gradient;
+    trap->direction = 1;
+    trap->output = -amplitude;
+}
+
+float TrapWave_Calc(TrapWaveGen_t *trap)
+{
+    if (trap == NULL)
+        return 0.0f;
+
+    trap->output += trap->direction * trap->gradient;
+
+    if (trap->output >= trap->amplitude)
+    {
+        trap->output = trap->amplitude;
+        trap->direction = -1;
+    }
+    else if (trap->output <= -trap->amplitude)
+    {
+        trap->output = -trap->amplitude;
+        trap->direction = 1;
+    }
+
+    return trap->output;
+}
+
+void TrapWave_Set(TrapWaveGen_t *trap, float amplitude, float gradient)
+{
+    if (trap == NULL)
+        return;
+    trap->amplitude = amplitude;
+    trap->gradient = gradient;
+}
+
+/* ============================================================
+ *  波形发生器 FreeRTOS 任务
+ * ============================================================ */
+
+float sine_output = 0.0f;
+float trap_output = 0.0f;
+
+SineWaveGen_t g_SineWave;
+TrapWaveGen_t g_TrapWave;
+
+void SineWaveTask(void *argument)
+{
+    SineWave_Init(&g_SineWave, 13824.0f, 5.5f, 0.001f);
+    while (1)
+    {
+        sine_output = SineWave_Calc(&g_SineWave);
+        osDelay(1);
+    }
+}
+
+void TrapWaveTask(void *argument)
+{
+    TrapWave_Init(&g_TrapWave, 8800.0f, 1.6f);
+    while (1)
+    {
+        trap_output = TrapWave_Calc(&g_TrapWave);
+        osDelay(1);
+    }
 }

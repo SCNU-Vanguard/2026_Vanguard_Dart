@@ -137,19 +137,19 @@ void MotorRegister(void)
     // 夹爪传动带结构 - M3508电机
     RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
-                           0.3f, 0.2f, 0.0f, 0.0f,
+                           0.5f, 0.2f, 0.0f, 40.0f,
                            0.091f, 1.0f, 0.0f, 93.0f,
-                           20673.0f, 0.0f, 2.0f,
-                           2000.0f, 0.0f, 600.0f);
+                           20000.0f, 0.0f, 2.0f,
+                           3500.0f, 0.0f, 600.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机
     RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
-                           0.1058f, 0.0f, 0.0f, 0.002f,
-                           27.91f, 0.08f, 0.0f, 1.0f,
-                           1300.0f, 0.0f, 5000.0f,
-                           5000.0f, 0.0f, 1000.0f);
+                           10.0f, 0.0f, 0.0f, 0.000f,
+                           0.0785f, 0.0f, 0.0f, 40.0f,
+                           9000.0f, 0.0f, 0.0f,
+                           5000.0f, 0.0f, 0.0f);
     MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = RM_2006_TRIGGER + g_RM_MOTOR_BIAS_ADDR_2006 + 0x004;
 
     // ==================== DM电机注册 ====================

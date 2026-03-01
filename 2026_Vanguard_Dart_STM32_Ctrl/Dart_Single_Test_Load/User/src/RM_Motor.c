@@ -623,5 +623,4 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
     output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
     // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
     RmMotorSendCfg(motor_cfg, output);
-    // printf("target=%f, feedback=%f,", target, pData->solved_data[3]);
 }

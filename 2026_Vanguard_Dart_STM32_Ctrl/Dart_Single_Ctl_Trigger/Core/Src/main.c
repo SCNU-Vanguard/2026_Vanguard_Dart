@@ -103,18 +103,20 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	uint16_t a = 500;
+	uint16_t b = 1700;
+	uint16_t c = 1200;
   while (1)
   {
 		a = a + 100;
-		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 2500);
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, b);
 		
 	  HAL_Delay(1000);
 		
-		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, 500);
+		__HAL_TIM_SetCompare(&htim8, TIM_CHANNEL_4, c);
 		HAL_Delay(1000);
 //		if(a >= 2500)
 //		{
-//			a = 500; // notes；新释放状态 1000，新绷紧状态2500（待测01.29）《新的500 - 1000（激发）》
+//			a = 500; // notes；新释放状态 1500，新绷紧状态2500（待测01.29）《新的500 - 1000（激发）》
 //		}
 		
 		

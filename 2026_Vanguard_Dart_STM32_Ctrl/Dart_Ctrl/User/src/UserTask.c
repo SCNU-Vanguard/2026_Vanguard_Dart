@@ -143,7 +143,7 @@ void Module_Init(void)
 void RTOS_ModuleInit(void)
 {
     // QUEUE（队列）：1.融合到云台调节当中，保证云台调节正常<队列集>; 2.融入到换弹结构当中,确保换弹结构正常
-    g_xLoad3508QueueHandler = xQueueCreateStatic(4, sizeof(uint8_t), g_ucReloadQueueStorage, &g_xReloadQueue); // 这个队列用于换弹结构当中
+    g_xLoad3508QueueHandler = xQueueCreateStatic(4, sizeof(uint8_t), g_ucReloadQueueStorage, &g_xReloadQueue);
 
     // SEMAPHORE（信号量）：信号量与dart_num共同决定飞镖换弹的状态
     g_xStoreSemaphoreHandle = xSemaphoreCreateCountingStatic(5, sizeof(uint8_t), &g_xStoreSemaphore);
@@ -282,7 +282,6 @@ void StoreEnergyTaskFunc(void *argument)
             xStreamBufferSend(xLoadStreamBuf, (const uint8_t *)(&Dart), 1, 0);
             xSemaphoreGive(g_xStore2LoadSemHandle);                // 通知Load开始
             xSemaphoreTake(g_xLoad2StoreSemHandle, portMAX_DELAY); // 等待Load完成
-            // TODO:在打25米靶子的时候还需要将滑台和扳机移动到最底端，或者说扳机直接在最底端
             // TODO:到了之后还要等待一下扳机升起才可以发射
             // TODO:这个时候vTaskDelay(1500);
             StoreState++;
@@ -325,6 +324,7 @@ void StoreEnergyTaskFunc(void *argument)
         if (Dart == 0)
         {
             // 4发打完，失能所有电机，实际上这里需要归中
+            // TODO：保证可以直接继续打4发，考核视频必须保证可以打8发，这是个loop，启停指令看遥控器
             DmMotorSendCfg(DM_4310_YAW, 0.0f, 0.0f, DM_MIT);
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1]);
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
