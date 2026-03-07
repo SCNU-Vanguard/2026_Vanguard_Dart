@@ -30,12 +30,11 @@
 #include <string.h>
 #include "semphr.h"
 #include <arm_math.h>
-#include "PID.h"
+#include "ia6b_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -54,9 +53,6 @@ static StaticSemaphore_t g_xRmBufferMutexBuffer;
 SemaphoreHandle_t g_xRmBufferMutexHandle;
 extern float sine_output;
 extern float trap_output;
-float RmMotorAngleData = 0.0f;
-float RmMotorSpeedData = 0.0f;
-float TestTargetSpeed = 3400.0f;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -107,15 +103,19 @@ void MX_FREERTOS_Init(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-  TaskHandle_t SineWaveTaskHandle = NULL;
-  xTaskCreate(SineWaveTask, "SinWaveOut", 64 * 4, NULL, osPriorityBelowNormal7, &SineWaveTaskHandle);
-  // TaskHandle_t TrapWaveTaskHandle = NULL;
-  // xTaskCreate(TrapWaveTask, "TrapWaveOut", 64 * 4, NULL, osPriorityBelowNormal7, &TrapWaveTaskHandle);
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
 
   // 飞镖任务初始化
-  // TaskInitFunc();
+  TaskInitFunc();
+
+  /* 正弦波生成 */
+  // TaskHandle_t SineWaveTaskHandle = NULL;
+  // xTaskCreate(SineWaveTask, "SinWaveOut", 64 * 4, NULL, osPriorityBelowNormal7, &SineWaveTaskHandle);
+
+  /* 阶跃波生成 */
+  // TaskHandle_t TrapWaveTaskHandle = NULL;
+  // xTaskCreate(TrapWaveTask, "TrapWaveOut", 64 * 4, NULL, osPriorityBelowNormal7, &TrapWaveTaskHandle);
 
   /* USER CODE END RTOS_THREADS */
 
@@ -134,30 +134,20 @@ void MX_FREERTOS_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-
-  // 舵机初始化（只调用一次，在循环外）
-  // ServoInit();
-  // vTaskDelay(1000); // 等待初始化完成
-  // uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-  // uint16_t angles[3] = {0, 0, 0};
-  // uint16_t data[3] = {375, 375, 375};
-  // ServoControlPos(3, 400, 1000);
-  // vTaskDelay(2000);
-  // ServoControlPos(2, 400, 1000);
-  // vTaskDelay(2000);
-  //  ServoControlPos(1, 400, 1000);
-  //  vTaskDelay(2000);
-  // ServoControlMulti(3, servo_ids, angles, 1000);
+#if ENABLE_DEFAULTTASK_RC_3508_DEBUG
+  vTaskDelay(2000);
+  IA6BTask_Init();
+#endif
 
   /* Infinite loop */
   for (;;)
   {
-    // HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
-    // vTaskDelay(250);
-    RmMotorPID_Calc(RM_3508_GRIPPER, sine_output);
-    RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-    RmMotorSpeedData = Motor_GetSpeedRPM(RM_3508_GRIPPER);
-    // RmMotorSendCfg(RM_3508_GRIPPER, 1000); // 14500
+#if ENABLE_DEFAULTTASK_RC_3508_DEBUG
+    IA6BTask_ProcessAndControl();
+#else
+    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
+    vTaskDelay(250);
+#endif
     vTaskDelay(1);
   }
   /* USER CODE END StartDefaultTask */

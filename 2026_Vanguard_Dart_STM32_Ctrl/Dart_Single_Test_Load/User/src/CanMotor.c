@@ -137,10 +137,11 @@ void MotorRegister(void)
     // 夹爪传动带结构 - M3508电机
     RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
-                           0.5f, 0.2f, 0.0f, 40.0f,
-                           0.091f, 1.0f, 0.0f, 93.0f,
-                           20000.0f, 0.0f, 2.0f,
-                           3500.0f, 0.0f, 600.0f);
+                           14.00f, 0.1f, 0.05f, 10.0f,
+                           0.225f, 1.00f, 0.05f, 93.0f,
+                           20000.0f, 0.0f, 500.0f,
+                           8000.0f, 0.0f, 1500.0f);
+    // RM_Motor_SetSpeedPID(&MotorManager.MotorList[RM_3508_GRIPPER - 1], PID_POSITION, 0.225f, 2.50f, 0.0f, 93.0f, 8000.0f, 0.0f, 1500.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机

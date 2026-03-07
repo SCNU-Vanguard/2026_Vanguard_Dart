@@ -60,6 +60,8 @@ static void RM_GM6020_CalculateInternal(MotorTypeDef *motor);
 // 通用发送控制和PID计算
 static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor);
 static float RM_Motor_PIDCalcInternal(MotorTypeDef *motor, float target);
+static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output);
+static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle);
 
 /*============================== 电机类静态实例定义 ==============================*/
 
@@ -612,6 +614,45 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel)
     }
 }
 
+static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output)
+{
+    (void)motor_cfg;
+    (void)motor;
+
+    return (int16_t)pid_output;
+}
+
+static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle)
+{
+#if RM_3508_CLEAR_ANGLE_I_ON_DIR_CHANGE
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    PID_t *outer_pid = &motor->cascade_pid.outer;
+    if (!outer_pid->initialized || outer_pid->calc_count == 0U)
+    {
+        return;
+    }
+
+    const float angle_error = target_angle - current_angle;
+    const float current_target_delta = target_angle - outer_pid->target;
+
+    const bool target_direction_reversed = (current_target_delta * outer_pid->feedforward) < 0.0f;
+    const bool error_direction_reversed = (angle_error * outer_pid->last_error) < 0.0f;
+
+    if (target_direction_reversed || error_direction_reversed)
+    {
+        PID_Clear_Integral(outer_pid);
+    }
+#else
+    (void)motor;
+    (void)target_angle;
+    (void)current_angle;
+#endif
+}
+
 void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
@@ -619,8 +660,24 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
         return;
 
     MotorSolvedData_t *pData = &motor->motor_data;
+    RM_Motor_HandleAngleLoopDirectionChange(motor, target, pData->solved_data[3]);
 
     output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
     // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
+    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, output));
+}
+
+void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
+{
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+
+    output = PID_Calculate(&motor->inner_pid, target_speed_rpm, pData->solved_data[1]);
+    output = RM_Motor_ApplyOutputLimit(motor_cfg, motor, output);
     RmMotorSendCfg(motor_cfg, output);
 }

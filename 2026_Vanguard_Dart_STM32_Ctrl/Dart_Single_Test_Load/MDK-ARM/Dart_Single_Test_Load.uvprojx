@@ -691,6 +691,11 @@
               <FilePath>..\User\src\CanMotor.c</FilePath>
             </File>
             <File>
+              <FileName>motor_algrothim.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\motor_algrothim.c</FilePath>
+            </File>
+            <File>
               <FileName>DM_Motor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\src\DM_Motor.c</FilePath>
@@ -724,6 +729,11 @@
               <FileName>IA6B.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\src\IA6B.c</FilePath>
+            </File>
+            <File>
+              <FileName>ia6b_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\ia6b_task.c</FilePath>
             </File>
           </Files>
         </Group>

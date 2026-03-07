@@ -6,7 +6,10 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "cmsis_os.h"
+#include "event_groups.h" // ARM.FreeRTOS::RTOS:Event Groups
+#include "semphr.h"       // ARM.FreeRTOS::RTOS:Core
 #include "queue.h"
+#include "stream_buffer.h"
 
 #include "config.h"
 #include "bsp_dwt.h"
@@ -16,6 +19,7 @@
 
 #include "HX06L.h"
 #include "CanMotor.h"
+#include "DM_Motor.h"
 #include "RM_Motor.h"
 
 // 模块驱动初始化

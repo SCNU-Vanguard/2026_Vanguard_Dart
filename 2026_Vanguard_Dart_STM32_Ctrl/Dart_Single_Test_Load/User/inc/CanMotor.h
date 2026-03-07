@@ -13,6 +13,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "motor_algrothim.h"
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
 #define TestUse 0U
