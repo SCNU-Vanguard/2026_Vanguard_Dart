@@ -103,8 +103,8 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	uint16_t a = 500;
-	uint16_t b = 1700;
-	uint16_t c = 1200;
+	uint16_t b = 1290;
+	uint16_t c = 1290;
   while (1)
   {
 		a = a + 100;
@@ -116,7 +116,7 @@ int main(void)
 		HAL_Delay(1000);
 //		if(a >= 2500)
 //		{
-//			a = 500; // notes；新释放状态 1500，新绷紧状态2500（待测01.29）《新的500 - 1000（激发）》
+//			a = 500; // notes；新释放状态 1500，新绷紧状态2500
 //		}
 		
 		
