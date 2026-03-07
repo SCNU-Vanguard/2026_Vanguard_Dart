@@ -31,7 +31,8 @@
 
 // 换弹结构相关
 #define ConveyorBeltLength 15000
-#define SeperationAngle 375
+#define ServoAngleMin 0
+#define ServoAngleMax 1000
 #define MoveStartPoint 3304
 #define FirstServoLoc -940
 #define SecondServoLoc -4101
@@ -51,8 +52,8 @@
 #define LimitStore 950.0f        // 电机的位置限制
 
 // 扳机射程相关
-#define MG996R_store 500  // 发射扳机待机状态
-#define MG996R_shoot 1100 // 发射扳机发射状态
+#define MG996R_store 2500 // 发射扳机待机状态
+#define MG996R_shoot 1290 // 发射扳机发射状态
 
 // 云台转轴相关
 

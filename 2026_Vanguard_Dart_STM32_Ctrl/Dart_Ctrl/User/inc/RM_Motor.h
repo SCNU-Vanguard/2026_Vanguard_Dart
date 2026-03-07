@@ -34,6 +34,7 @@
 #define RM_M3508_GEAR_RATIO 19.2f                 // 减速比
 #define RM_M3508_MAX_CURRENT 16384                // 最大电流
 #define RM_M3508_CURRENT_RATIO (16384.0f / 20.0f) // 16384对应20A
+#define RM_3508_CLEAR_ANGLE_I_ON_DIR_CHANGE 1U    // 角度环换向时是否清积分: 1-启用, 0-禁用
 
 // GM6020电机参数
 #define RM_GM6020_GEAR_RATIO 1.0f                 // 减速比
@@ -211,10 +212,9 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel);
 /// @retval 无
 void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
-/// @brief RM电机PID计算（使用电机结构体）
-/// @param motor 电机结构体指针
-/// @param target 目标值
-/// @return PID输出值
-float RM_Motor_PID_Calc(can_motor_cfg motor_cfg, float target);
+/// @brief RM电机速度环PID计算并发送（目标单位：rpm）
+/// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
+/// @param target_speed_rpm 目标速度（rpm）
+void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm);
 
 #endif

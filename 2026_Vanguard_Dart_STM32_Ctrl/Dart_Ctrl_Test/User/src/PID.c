@@ -543,7 +543,7 @@ TrapWaveGen_t g_TrapWave;
 
 void SineWaveTask(void *argument)
 {
-    SineWave_Init(&g_SineWave, 13824.0f, 5.5f, 0.001f);
+    SineWave_Init(&g_SineWave, 24569.0f, 5.5f, 0.001f);
     while (1)
     {
         sine_output = SineWave_Calc(&g_SineWave);
