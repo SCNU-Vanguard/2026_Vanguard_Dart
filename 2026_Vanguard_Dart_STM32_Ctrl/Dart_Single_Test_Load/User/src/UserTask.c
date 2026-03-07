@@ -1,26 +1,83 @@
-/************************************************************************************************************************
- * 文件：UserTask.c
- * 用途：换弹结构测试工程 - 独立测试换弹机构
- * 创建者：邓金水
- * 修改：重构为独立测试工程，简化目标位置控制逻辑
- *
- * 换弹结构说明：
- * - 3508电机控制传送带移动
- * - 3个舵机（0x01, 0x02, 0x03）控制飞镖分离
- *
- * 位置参数（累计角度，上电位置为0）：
- * - 第三个舵机位置：-7547
- * - 第二个舵机位置：-13200（与第三个相距5653）
- * - 第一个舵机位置：-18749（与第二个相距5549）
- ***********************************************************************************************************************/
+// /************************************************************************************************************************
+//  * 文件：UserTask.c
+//  * 用途：换弹结构测试工程 - 独立测试换弹机构
+//  * 创建者：邓金水
+//  * 修改：重构为独立测试工程，简化目标位置控制逻辑
+//  *
+//  * 换弹结构说明：
+//  * - 3508电机控制传送带移动
+//  * - 3个舵机（0x01, 0x02, 0x03）控制飞镖分离
+//  *
+//  * 位置参数（累计角度，上电位置为0）：
+//  * - 第三个舵机位置：-7547
+//  * - 第二个舵机位置：-13200（与第三个相距5653）
+//  * - 第一个舵机位置：-18749（与第二个相距5549）
+//  ***********************************************************************************************************************/
 #include "UserTask.h"
 #include "PID.h"
+#include <math.h>
 
 /************************全局或静态作用域*********************/
-static float MotorData = 0.0f;
-static float GripperTarget = 0.0f;
+static bool des_yes = false;
+// #if TestUse
+float RmMotorAngleData = 0.0f;
+float RmMotorSpeedData = 0.0f;
+float target_loc = 0.0f;
+static float offset_angle;
+// #endif
 
-// 换弹结构电机队列
+#define LOAD_TASK_TRAP_VMAX_DEG_S 10000.0f
+#define LOAD_TASK_TRAP_AMAX_DEG_S2 100000.0f
+#define LOAD_TASK_TRAP_JERK_FACTOR 30.0f
+#define LOAD_TASK_TRAP_DISABLE_JERK 1
+#define LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE 0
+
+static MotorTrapPosProfile_t g_LoadTrapProfile = {0};
+static uint32_t g_LoadTrapCntLast = 0U;
+float LoadTrapFinalTargetData = 0.0f;
+float LoadTrapCmdPosData = 0.0f;
+float LoadTrapCmdVelData = 0.0f;
+float LoadTrapCmdAccData = 0.0f;
+float LoadTrapDtData = 0.0f;
+
+static inline void LoadMotor_SetFinalTarget(float new_target_pos_deg)
+{
+    target_loc = new_target_pos_deg;
+    LoadTrapFinalTargetData = new_target_pos_deg;
+#if LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE
+    RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+    Motor_TrapPos_Reset(&g_LoadTrapProfile, RmMotorAngleData);
+#endif
+}
+
+static inline void LoadMotor_RunTrapTo(float target_pos_deg)
+{
+    float dt_s = DWT_GetDeltaT(&g_LoadTrapCntLast);
+    if (!isfinite(dt_s) || dt_s <= 0.0f || dt_s > 0.02f)
+    {
+        dt_s = 0.001f;
+    }
+    LoadTrapDtData = dt_s;
+    LoadTrapFinalTargetData = target_pos_deg;
+
+    float cmd_pos = Motor_TrapPos_Update(&g_LoadTrapProfile, target_pos_deg, dt_s);
+    LoadTrapCmdPosData = cmd_pos;
+    LoadTrapCmdVelData = g_LoadTrapProfile.cmd_vel;
+    LoadTrapCmdAccData = g_LoadTrapProfile.cmd_acc;
+    RmMotorPID_Calc(RM_3508_GRIPPER, cmd_pos);
+}
+
+static inline void LoadMotor_HoldTargetMs(float hold_target_pos_deg, uint32_t hold_ms)
+{
+    uint32_t start_tick = HAL_GetTick();
+    while ((uint32_t)(HAL_GetTick() - start_tick) < hold_ms)
+    {
+        RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+        LoadMotor_RunTrapTo(hold_target_pos_deg);
+        vTaskDelay(1);
+    }
+}
+
 static uint8_t g_ucReloadQueueStorage[4 * sizeof(uint8_t)];
 static StaticQueue_t g_xReloadQueue;
 static QueueHandle_t g_xLoad3508QueueHandler;
@@ -29,7 +86,7 @@ static QueueHandle_t g_xLoad3508QueueHandler;
 static volatile uint8_t g_ucTestDartNum = 3; // 从第3发开始测试
 /*---------------------------------------------------------------------------------------*/
 
-// 模块驱动初始化
+// // 模块驱动初始化
 void Module_Init(void)
 {
     BSP_POWER_DeInit(); // 失能无绿灯，亮红灯
@@ -74,6 +131,37 @@ void TaskInitFunc(void)
     LoadTaskHandle = osThreadNew(LoadTaskFunc, NULL, &LoadTask_attributes);
 }
 
+/**
+ * @brief 换弹到位后的通用处理：通知舵机、清积分、回零、通知储能
+ * @param dart_num 当前飞镖编号
+ */
+static inline void LoadDart_ReturnToZero(uint8_t dart_num)
+{
+    xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
+    // vTaskDelay(500);                                                          // 这里是上电后的绝对位置
+    while (!des_yes) // 先移动到一个安全角度防止肘击
+    {
+        des_yes = IsInDeadzoneF(Motor_GetTotalAngle(RM_3508_GRIPPER), PresetLoc + offset_angle, MOTOR_DEAD_ZONE);
+        LoadMotor_RunTrapTo(PresetLoc + offset_angle);
+        osDelay(1);
+    }
+    des_yes = false;
+    switch (dart_num)
+    {
+    case 3:
+        HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
+        break;
+    case 2:
+        HAL_GPIO_TogglePin(LED4_GPIO_Port, LED4_Pin);
+        break;
+    case 1:
+        HAL_GPIO_TogglePin(LED5_GPIO_Port, LED5_Pin);
+        break;
+    default:
+        break;
+    }
+}
+
 /***********************************
  * 函数名: LoadTaskFunc
  * 作用:   换弹测试任务（传送带电机控制以及电机目标设定）
@@ -84,129 +172,78 @@ void LoadTaskFunc(void *argument)
 {
     uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
     uint16_t servo_angles[3] = {0x0000, 0x0000, 0x0000};
-    bool MutexTake = false;
     uint8_t dart_num = 0;
+    float pre_loc = 0.0f;
 
     // 初始化舵机到0°位置
     ServoControlMulti(3, servo_ids, servo_angles, 300);
     vTaskDelay(500); // 等待舵机到位
 
-    // 创建舵机控制子任务
     TaskHandle_t Load3508TaskHandle = NULL;
     xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityBelowNormal7, &Load3508TaskHandle);
 
     // 获取电机偏移角度，用于目标值补偿
-    float offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
-    
-    // 初始目标为当前位置（上电零点 + 偏移）
-    GripperTarget = offset_angle;
+    offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
+    pre_loc = 6427.0f + offset_angle;
+    RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+    Motor_TrapPos_Init(&g_LoadTrapProfile, RmMotorAngleData, LOAD_TASK_TRAP_VMAX_DEG_S, LOAD_TASK_TRAP_AMAX_DEG_S2);
+#if LOAD_TASK_TRAP_DISABLE_JERK
+    Motor_TrapPos_SetJerk(&g_LoadTrapProfile, 0.0f);
+#else
+    Motor_TrapPos_SetJerk(&g_LoadTrapProfile, LOAD_TASK_TRAP_AMAX_DEG_S2 * LOAD_TASK_TRAP_JERK_FACTOR);
+#endif
 
     while (1)
     {
         // 独立测试模式：等待一段时间后自动开始测试
-        vTaskDelay(2000); // 2秒后开始测试
-
-        dart_num = g_ucTestDartNum;
-
-        switch (dart_num)
+        RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+        while (!des_yes)
         {
-        case 4:
-            // 测试完成，回到初始位置
-            GripperTarget = offset_angle;
-            MutexTake = false;
-            g_ucTestDartNum = 3; // 重置为第3发，准备下一轮测试
-            vTaskDelay(3000);    // 等待3秒后重新开始
-            continue;
-        case 3:
-            GripperTarget = FirstServoLoc + offset_angle;
-            MutexTake = true;
-            break;
-        case 2:
-            GripperTarget = SecondServoLoc + offset_angle;
-            MutexTake = true;
-            break;
-        case 1:
-            GripperTarget = ThirdServoLoc + offset_angle;
-            MutexTake = true;
-            break;
-        default:
-            g_ucTestDartNum = 3;
-            continue;
+            des_yes = IsInDeadzoneF(RmMotorAngleData, pre_loc, MOTOR_DEAD_ZONE);
+            LoadMotor_RunTrapTo(pre_loc);
+            RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+            vTaskDelay(1);
         }
-
-        while (MutexTake)
+        des_yes = false;
+        dart_num = g_ucTestDartNum;
+        LoadMotor_SetFinalTarget(FirstServoLoc + offset_angle);
+        LoadMotor_HoldTargetMs(target_loc, 2500);
+        while (1)
         {
-            MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-            RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
+            RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+            LoadMotor_RunTrapTo(target_loc);
 
-            // 检查是否到达第3发位置
-            if (IS_IN_DEADZONE(MotorData, FirstServoLoc, MOTOR_DEAD_ZONE) && (dart_num == 3))
+            if (dart_num != 0)
             {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
-                vTaskDelay(SERVO_MOVE_TIME_MS);
-
-                // 回到零点
-                // 换向前清除积分
-                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
-                GripperTarget = offset_angle;
-                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
+                des_yes = IsInDeadzoneF(RmMotorAngleData, target_loc, MOTOR_DEAD_ZONE);
+                if (des_yes)
                 {
-                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                    osDelay(2);
+                    LoadDart_ReturnToZero(dart_num);
+                    LoadMotor_HoldTargetMs(PresetLoc + offset_angle, 2500);
+                    dart_num--;
+                    if (dart_num == 0)
+                    {
+                        LoadMotor_SetFinalTarget(PresetLoc + offset_angle);
+                        des_yes = false;
+                        LoadMotor_HoldTargetMs(target_loc, 2500);
+                        break;
+                    }
+                    else if (dart_num == 2)
+                    {
+                        LoadMotor_SetFinalTarget(offset_angle + SecondServoLoc);
+                        des_yes = false;
+                        LoadMotor_HoldTargetMs(target_loc, 2500);
+                    }
+                    else if (dart_num == 1)
+                    {
+                        LoadMotor_SetFinalTarget(ThirdServoLoc + offset_angle);
+                        des_yes = false;
+                        LoadMotor_HoldTargetMs(target_loc, 2500);
+                    }
                 }
-                MutexTake = false;
-                HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-                g_ucTestDartNum = 2; // 进入下一发测试
             }
-
-            // 检查是否到达第2发位置
-            if (IS_IN_DEADZONE(MotorData, SecondServoLoc, MOTOR_DEAD_ZONE) && (dart_num == 2))
-            {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
-                vTaskDelay(SERVO_MOVE_TIME_MS);
-
-                // 回到零点
-                // 换向前清除积分
-                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
-                GripperTarget = offset_angle;
-                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
-                {
-                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                    osDelay(2);
-                }
-                MutexTake = false;
-                HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
-                g_ucTestDartNum = 1; // 进入下一发测试
-            }
-
-            // 检查是否到达第1发位置
-            if (IS_IN_DEADZONE(MotorData, ThirdServoLoc, MOTOR_DEAD_ZONE) && (dart_num == 1))
-            {
-                xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
-                vTaskDelay(SERVO_MOVE_TIME_MS);
-
-                // 回到零点
-                // 换向前清除积分
-                CASCADE_PID_Clear_Integral(&MotorManager.MotorList[RM_3508_GRIPPER - 1].cascade_pid);
-                GripperTarget = offset_angle;
-                MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                while (!IS_IN_DEADZONE(MotorData, 0.0f, MOTOR_DEAD_ZONE))
-                {
-                    RmMotorPID_Calc(RM_3508_GRIPPER, GripperTarget);
-                    MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-                    osDelay(2);
-                }
-                MutexTake = false;
-                HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
-                g_ucTestDartNum = 4; // 测试完成
-                vTaskDelay(200);
-            }
-
-            osDelay(1); // 控制循环频率
+            HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
+            vTaskDelay(1); // 控制循环频率
         }
     }
 }
@@ -225,26 +262,12 @@ void LoadMotorTaskFunc(void *argument)
     {
         xQueueReceive(g_xLoad3508QueueHandler, &fQueueDartNum, portMAX_DELAY);
 
-        if (fQueueDartNum == 3)
+        if (fQueueDartNum >= 1 && fQueueDartNum <= 3)
         {
-            ServoControlPos(0x03, SeperationAngle, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-            ServoControlPos(0x03, 0x0000, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-        }
-        else if (fQueueDartNum == 2)
-        {
-            ServoControlPos(0x02, SeperationAngle, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-            ServoControlPos(0x02, 0x0000, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-        }
-        else if (fQueueDartNum == 1)
-        {
-            ServoControlPos(0x01, SeperationAngle, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
-            ServoControlPos(0x01, 0x0000, SERVO_MOVE_TIME_MS);
-            vTaskDelay(SERVO_MOVE_TIME_MS + 5);
+            ServoControlPos(fQueueDartNum, SeperationAngle, SERVO_MOVE_TIME_MS);
+            HAL_Delay(SERVO_MOVE_TIME_MS);
+            ServoControlPos(fQueueDartNum, 0x0000, SERVO_MOVE_TIME_MS);
+            vTaskDelay(SERVO_MOVE_TIME_MS);
         }
     }
 }
