@@ -51,8 +51,10 @@
 /* USER CODE BEGIN Variables */
 static StaticSemaphore_t g_xRmBufferMutexBuffer;
 SemaphoreHandle_t g_xRmBufferMutexHandle;
-extern float sine_output;
-extern float trap_output;
+// extern float sine_output;
+// extern float trap_output;
+extern float RmMotorAngleData;
+extern float RmMotorSpeedData;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -65,6 +67,8 @@ const osThreadAttr_t defaultTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+static void DefaultTask_Control3508(void);
+static void DefaultTask_Control2006(void);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -107,7 +111,7 @@ void MX_FREERTOS_Init(void)
   /* add threads, ... */
 
   // 飞镖任务初始化
-  TaskInitFunc();
+  // TaskInitFunc();
 
   /* 正弦波生成 */
   // TaskHandle_t SineWaveTaskHandle = NULL;
@@ -134,19 +138,19 @@ void MX_FREERTOS_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-#if ENABLE_DEFAULTTASK_RC_3508_DEBUG
+#if ENABLE_DEFAULTTASK_RC_DEBUG
   vTaskDelay(2000);
   IA6BTask_Init();
+
 #endif
 
   /* Infinite loop */
   for (;;)
   {
-#if ENABLE_DEFAULTTASK_RC_3508_DEBUG
+#if ENABLE_DEFAULTTASK_RC_DEBUG
     IA6BTask_ProcessAndControl();
-#else
-    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
-    vTaskDelay(250);
+    DefaultTask_Control3508();
+    DefaultTask_Control2006();
 #endif
     vTaskDelay(1);
   }
@@ -155,5 +159,53 @@ void StartDefaultTask(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+static void DefaultTask_Control3508(void)
+{
+#if ENABLE_RC_DEBUG_3508
+  RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
+  RmMotorSpeedData = Motor_GetSpeedRPM(RM_3508_GRIPPER);
+
+#if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
+  if (RcLoad3508PosTargetInitialized)
+  {
+    RmMotorPID_Calc(RM_3508_GRIPPER, RmMotorTargetPosData);
+  }
+  else
+  {
+    RmMotorSendCfg(RM_3508_GRIPPER, 0);
+  }
+#else
+  RmMotorSpeedPID_Calc(RM_3508_GRIPPER, RmMotorTargetSpeedData);
+#endif
+#endif
+}
+
+static void DefaultTask_Control2006(void)
+{
+#if ENABLE_RC_DEBUG_2006
+  static uint8_t s_2006_limit_inited = 0U;
+  static float s_2006_zero_pos_deg = 0.0f;
+
+  float motor_2006_pos_deg_abs = Motor_GetTotalAngle(RM_2006_TRIGGER);
+  float target_pos_rel_deg = RmMotor2006TargetPosData;
+  float target_pos_abs_deg = 0.0f;
+
+  if (s_2006_limit_inited == 0U)
+  {
+    s_2006_zero_pos_deg = motor_2006_pos_deg_abs;
+    s_2006_limit_inited = 1U;
+  }
+  target_pos_abs_deg = s_2006_zero_pos_deg + target_pos_rel_deg;
+
+  float motor_2006_speed_rpm = Motor_GetSpeedRPM(RM_2006_TRIGGER);
+  RmMotor2006SpeedData = motor_2006_speed_rpm;
+  RmMotorPID_Calc(RM_2006_TRIGGER, target_pos_abs_deg);
+
+#if (ENABLE_RC_DEBUG_3508 == 0U)
+  RmMotorSpeedData = motor_2006_speed_rpm;
+  RmMotorAngleData = motor_2006_pos_deg_abs;
+#endif
+#endif
+}
 
 /* USER CODE END Application */
