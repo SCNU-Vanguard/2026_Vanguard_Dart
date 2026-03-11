@@ -7,7 +7,6 @@ volatile float g_MotorTrapPosLastOutput = 0.0f;
 /* ------------------------------------------------------------------ */
 
 static inline float _signf(float x) { return (x > 0.0f) ? 1.0f : ((x < 0.0f) ? -1.0f : 0.0f); }
-static inline float _fabsf(float x) { return (x >= 0.0f) ? x : -x; }
 
 static inline float _clampf(float x, float lo, float hi)
 {
@@ -112,7 +111,8 @@ float Motor_TrapPos_Update(MotorTrapPosProfile_t *profile, float dt)
         if (denom > 1e-6f)
         {
             float ratio = (abs_error - profile->arrive_zone) / denom;
-            if (ratio < 0.0f) ratio = 0.0f;
+            if (ratio < 0.0f)
+                ratio = 0.0f;
             v_limit = profile->vmax * ratio;
         }
         else
