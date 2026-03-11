@@ -12,15 +12,11 @@ bool BSP_POWER_Init(void)
         HAL_GPIO_WritePin(PWR3_GPIO_Port, PWR3_Pin, GPIO_PIN_SET);
         HAL_GPIO_WritePin(PWR4_GPIO_Port, PWR4_Pin, GPIO_PIN_SET);
 
-        HAL_GPIO_WritePin(Green_GPIO_Port, Green_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_SET);
         HAL_Delay(5);
         return true;
     }
     else if (GPIO_PIN_SET == (HAL_GPIO_ReadPin(PWR1_GPIO_Port, PWR1_Pin) && HAL_GPIO_ReadPin(PWR2_GPIO_Port, PWR2_Pin) && HAL_GPIO_ReadPin(PWR3_GPIO_Port, PWR3_Pin) && HAL_GPIO_ReadPin(PWR4_GPIO_Port, PWR4_Pin)))
     {
-        HAL_GPIO_WritePin(Green_GPIO_Port, Green_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_SET);
         HAL_Delay(5);
         return true;
     }
@@ -40,15 +36,11 @@ bool BSP_POWER_DeInit(void)
         HAL_GPIO_WritePin(PWR3_GPIO_Port, PWR3_Pin, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(PWR4_GPIO_Port, PWR4_Pin, GPIO_PIN_RESET);
 
-        HAL_GPIO_WritePin(Green_GPIO_Port, Green_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_RESET);
         HAL_Delay(5);
         return true;
     }
     else if (GPIO_PIN_RESET == (HAL_GPIO_ReadPin(PWR1_GPIO_Port, PWR1_Pin) && HAL_GPIO_ReadPin(PWR2_GPIO_Port, PWR2_Pin) && HAL_GPIO_ReadPin(PWR3_GPIO_Port, PWR3_Pin) && HAL_GPIO_ReadPin(PWR4_GPIO_Port, PWR4_Pin)))
     {
-        HAL_GPIO_WritePin(Green_GPIO_Port, Green_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_RESET);
         HAL_Delay(5);
         return true;
     }

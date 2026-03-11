@@ -116,6 +116,7 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
  ******************************************/
 uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data)
 {
+  static uint32_t s_red_blink_tick = 0U;
   uint32_t TxMailbox;
   uint32_t timeout = 0;
   // @note:增加超时机制，当超时直接退出
@@ -129,10 +130,17 @@ uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader
   }
   if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) != HAL_OK)
   {
-    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
+    // 发送失败：红灯常亮（板载红灯为低电平点亮）
+    HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_RESET);
     return 0; // 发送失败
   }
-  HAL_GPIO_TogglePin(LED8_GPIO_Port, LED8_Pin);
+
+  // 发送成功：红灯按250ms节拍闪烁
+  if ((uint32_t)(HAL_GetTick() - s_red_blink_tick) >= 250U)
+  {
+    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
+    s_red_blink_tick = HAL_GetTick();
+  }
   return 1; // 发送成功
 }
 
