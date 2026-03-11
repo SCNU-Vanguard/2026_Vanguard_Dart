@@ -16,6 +16,8 @@ typedef struct
 
 float RmMotorTargetSpeedData = 0.0f;
 float RmMotorTargetPosData = 0.0f;
+float RmMotor2006TargetPosData = 0.0f;
+float RmMotor2006SpeedData = 0.0f;
 float RcLoad3508DesiredSpeedRpm = 0.0f;
 float RcLoad3508DesiredPosStepDeg = 0.0f;
 float RcLoad3508UkfSpeedRpm = 0.0f;
@@ -26,6 +28,10 @@ float RcLoad3508PosStepValuePerFrame = LOAD3508_POS_STEP_MIN;
 float RcLoad3508UkfCovP = 0.0f;
 int16_t RcLoad3508Raw = 0;
 int8_t RcSWBState = 0;
+uint8_t RcLoad3508PosTargetInitialized = 0U;
+float RcLoad2006DesiredPosStepDeg = 0.0f;
+float RcLoad2006PosStepValuePerFrame = LOAD2006_SPEED_STEP_MIN;
+int16_t RcLoad2006Raw = 0;
 
 float RmMotorPosTargetTestCurrentMs = 0.0f;
 float RmMotorPosTargetTestLastMs = 0.0f;
@@ -38,9 +44,8 @@ extern float RmMotorAngleData;
 extern float RmMotorSpeedData;
 
 static uint32_t g_last_ibus_tick = 0U;
-static float g_prev_desired_speed_rpm = 0.0f;
+static float g_prev_desired_speed_rpm_3508 = 0.0f;
 static float g_prev_desired_pos_step_deg = 0.0f;
-static uint8_t g_pos_target_initialized = 0U;
 static uint8_t g_offset_applied = 0U;
 
 #if RC_INPUT_USE_UKF
@@ -48,52 +53,53 @@ static UKF1D_t g_RcInputUkf = {0};
 #endif
 
 static float NormalizeCenterStick(int16_t raw);
+static float ClampFloat(float value, float min_value, float max_value);
 static float StepToward(float current, float target, float step);
 static float ComputeAdaptiveStep(float desired_value, float prev_desired_value, float tracking_error,
                                  float value_limit_abs, float step_min, float step_max, float step_sensitivity);
+static float UpdateSpeedTargetWithStep(float desired_speed_rpm, float *step_speed_rpm, float *step_value_per_frame,
+                                       float *prev_desired_speed_rpm, float min_speed_rpm, float max_speed_rpm,
+                                       float step_min, float step_max, float step_sensitivity, bool ibus_updated);
 static void UpdatePosTargetDurationTest(float target_pos_deg);
 #if RC_INPUT_USE_UKF
 static void UKF1D_Reset(UKF1D_t *ukf, float init_x);
 static float UKF1D_Update(UKF1D_t *ukf, float z);
 #endif
 static void RC3508ResetStates(void);
+static void RC2006ResetStates(void);
 
 void IA6BTask_Init(void)
 {
-#if ENABLE_DEFAULTTASK_RC_3508_DEBUG
     g_last_ibus_tick = 0U;
-    g_prev_desired_speed_rpm = 0.0f;
+    g_prev_desired_speed_rpm_3508 = 0.0f;
     g_prev_desired_pos_step_deg = 0.0f;
-    g_pos_target_initialized = 0U;
+    RcLoad3508PosTargetInitialized = 0U;
 
     RcLoad3508StepValuePerFrame = LOAD3508_SPEED_STEP_MIN;
     RcLoad3508PosStepValuePerFrame = LOAD3508_POS_STEP_MIN;
+    RcLoad2006PosStepValuePerFrame = LOAD2006_SPEED_STEP_MIN;
+    RmMotor2006TargetPosData = 0.0f;
 
+#if ENABLE_RC_DEBUG_3508
     if (g_offset_applied == 0U)
     {
         float m_offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
         RmMotorTargetPosData += m_offset_angle;
         g_offset_applied = 1U;
     }
+#endif
 
     RC3508ResetStates();
-#else
-    RC3508ResetStates();
-#endif
+    RC2006ResetStates();
 }
 
 void IA6BTask_ProcessAndControl(void)
 {
-#if ENABLE_DEFAULTTASK_RC_3508_DEBUG
+#if ENABLE_DEFAULTTASK_RC_DEBUG
     bool ibus_updated = false;
-    RcLoad3508DesiredSpeedRpm = 0.0f;
-    RcLoad3508DesiredPosStepDeg = 0.0f;
-    RcLoad3508UkfSpeedRpm = 0.0f;
-#if RC_INPUT_USE_UKF
-    RcLoad3508UkfCovP = g_RcInputUkf.P;
-#else
-    RcLoad3508UkfCovP = 0.0f;
-#endif
+    bool rc_online = false;
+    bool rc_enabled_3508 = false;
+    bool rc_enabled_2006 = false;
 
     if (IA6B_ProcessIbusPacket(BSP_UART6))
     {
@@ -101,11 +107,25 @@ void IA6BTask_ProcessAndControl(void)
         g_last_ibus_tick = HAL_GetTick();
     }
 
+    rc_online = (g_last_ibus_tick != 0U) &&
+                ((HAL_GetTick() - g_last_ibus_tick) <= IBUS_LOST_TIMEOUT_MS);
+
     RcSWBState = Channel[4];
-    RcLoad3508Raw = RawChannel[3];
+    rc_enabled_3508 = rc_online && (RcSWBState == 0);
+    rc_enabled_2006 = rc_online;
 
 #if ENABLE_RC_DEBUG_3508
-    if (((HAL_GetTick() - g_last_ibus_tick) <= IBUS_LOST_TIMEOUT_MS) && (RcSWBState == 0))
+    RcLoad3508DesiredSpeedRpm = 0.0f;
+    RcLoad3508DesiredPosStepDeg = 0.0f;
+    RcLoad3508UkfSpeedRpm = 0.0f;
+    RcLoad3508Raw = RawChannel[3];
+#if RC_INPUT_USE_UKF
+    RcLoad3508UkfCovP = g_RcInputUkf.P;
+#else
+    RcLoad3508UkfCovP = 0.0f;
+#endif
+
+    if (rc_enabled_3508)
     {
         float stick_norm = 0.0f;
         float filtered_speed_rpm = 0.0f;
@@ -113,14 +133,7 @@ void IA6BTask_ProcessAndControl(void)
         {
             stick_norm = NormalizeCenterStick(RcLoad3508Raw);
             RcLoad3508DesiredSpeedRpm = stick_norm * LOAD3508_MAX_SPEED_RPM;
-            if (RcLoad3508DesiredSpeedRpm < LOAD3508_MIN_SPEED_RPM)
-            {
-                RcLoad3508DesiredSpeedRpm = LOAD3508_MIN_SPEED_RPM;
-            }
-            else if (RcLoad3508DesiredSpeedRpm > LOAD3508_MAX_SPEED_RPM)
-            {
-                RcLoad3508DesiredSpeedRpm = LOAD3508_MAX_SPEED_RPM;
-            }
+            RcLoad3508DesiredSpeedRpm = ClampFloat(RcLoad3508DesiredSpeedRpm, LOAD3508_MIN_SPEED_RPM, LOAD3508_MAX_SPEED_RPM);
         }
 
 #if RC_INPUT_USE_UKF
@@ -133,52 +146,29 @@ void IA6BTask_ProcessAndControl(void)
         filtered_speed_rpm = RcLoad3508UkfSpeedRpm;
 #endif
 
-        if (filtered_speed_rpm < LOAD3508_MIN_SPEED_RPM)
-        {
-            filtered_speed_rpm = LOAD3508_MIN_SPEED_RPM;
-        }
-        else if (filtered_speed_rpm > LOAD3508_MAX_SPEED_RPM)
-        {
-            filtered_speed_rpm = LOAD3508_MAX_SPEED_RPM;
-        }
-
-        if (ibus_updated)
-        {
-            float tracking_error = filtered_speed_rpm - RcLoad3508StepSpeedRpm;
-            if (tracking_error < 0.0f)
-            {
-                tracking_error = -tracking_error;
-            }
-            RcLoad3508StepValuePerFrame = ComputeAdaptiveStep(RcLoad3508DesiredSpeedRpm,
-                                                              g_prev_desired_speed_rpm,
-                                                              tracking_error,
-                                                              LOAD3508_MAX_SPEED_RPM,
-                                                              LOAD3508_SPEED_STEP_MIN,
-                                                              LOAD3508_SPEED_STEP_MAX,
-                                                              LOAD3508_SPEED_STEP_SENSITIVITY);
-        }
-        RcLoad3508StepSpeedRpm = StepToward(RcLoad3508StepSpeedRpm, filtered_speed_rpm, RcLoad3508StepValuePerFrame);
-        if (RcLoad3508StepSpeedRpm < LOAD3508_MIN_SPEED_RPM)
-        {
-            RcLoad3508StepSpeedRpm = LOAD3508_MIN_SPEED_RPM;
-        }
-        else if (RcLoad3508StepSpeedRpm > LOAD3508_MAX_SPEED_RPM)
-        {
-            RcLoad3508StepSpeedRpm = LOAD3508_MAX_SPEED_RPM;
-        }
-        RmMotorTargetSpeedData = RcLoad3508StepSpeedRpm;
+        filtered_speed_rpm = ClampFloat(filtered_speed_rpm, LOAD3508_MIN_SPEED_RPM, LOAD3508_MAX_SPEED_RPM);
+        RmMotorTargetSpeedData = UpdateSpeedTargetWithStep(filtered_speed_rpm,
+                                                           &RcLoad3508StepSpeedRpm,
+                                                           &RcLoad3508StepValuePerFrame,
+                                                           &g_prev_desired_speed_rpm_3508,
+                                                           LOAD3508_MIN_SPEED_RPM,
+                                                           LOAD3508_MAX_SPEED_RPM,
+                                                           LOAD3508_SPEED_STEP_MIN,
+                                                           LOAD3508_SPEED_STEP_MAX,
+                                                           LOAD3508_SPEED_STEP_SENSITIVITY,
+                                                           ibus_updated);
 
 #if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
-        if (!g_pos_target_initialized)
+        if (!RcLoad3508PosTargetInitialized)
         {
             MotorTypeDef *motor = Motor_GetHandle(RM_3508_GRIPPER);
             if (motor != NULL)
             {
                 RmMotorTargetPosData = motor->motor_data.solved_data[3];
-                g_pos_target_initialized = 1U;
+                RcLoad3508PosTargetInitialized = 1U;
             }
         }
-        if (g_pos_target_initialized)
+        if (RcLoad3508PosTargetInitialized)
         {
             RcLoad3508DesiredPosStepDeg = stick_norm * LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME;
             if (ibus_updated)
@@ -222,7 +212,6 @@ void IA6BTask_ProcessAndControl(void)
 #endif
         if (ibus_updated)
         {
-            g_prev_desired_speed_rpm = RcLoad3508DesiredSpeedRpm;
             g_prev_desired_pos_step_deg = RcLoad3508DesiredPosStepDeg;
         }
     }
@@ -230,29 +219,58 @@ void IA6BTask_ProcessAndControl(void)
     {
         RC3508ResetStates();
     }
-#else
-    RC3508ResetStates();
 #endif
 
-    RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-    RmMotorSpeedData = Motor_GetSpeedRPM(RM_3508_GRIPPER);
-
-#if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
-    UpdatePosTargetDurationTest(RmMotorTargetPosData);
-    if (g_pos_target_initialized)
+#if ENABLE_RC_DEBUG_2006
+    RcLoad2006DesiredPosStepDeg = 0.0f;
+    RcLoad2006Raw = RawChannel[LOAD2006_STEP_RAW_CHANNEL_INDEX];
+    if (rc_enabled_2006)
     {
-        RmMotorPID_Calc(RM_3508_GRIPPER, RmMotorTargetPosData);
+        int16_t rc_dir_raw = RawChannel[LOAD2006_DIR_RAW_CHANNEL_INDEX];
+
+        if (RcLoad2006Raw > LOAD2006_STEP_RAW_IDLE_MAX)
+        {
+            float ratio = (float)(RcLoad2006Raw - LOAD2006_STEP_RAW_IDLE_MAX) /
+                          (float)(LOAD2006_STEP_RAW_MAX - LOAD2006_STEP_RAW_IDLE_MAX);
+            ratio = ClampFloat(ratio, 0.0f, 1.0f);
+            RcLoad2006PosStepValuePerFrame = LOAD2006_SPEED_STEP_MIN +
+                                             (LOAD2006_SPEED_STEP_MAX - LOAD2006_SPEED_STEP_MIN) * ratio;
+        }
+        else
+        {
+            RcLoad2006PosStepValuePerFrame = 0.0f;
+        }
+
+        if ((rc_dir_raw >= LOAD2006_DIR_INC_RAW_MIN) && (rc_dir_raw <= LOAD2006_DIR_INC_RAW_MAX))
+        {
+            RcLoad2006DesiredPosStepDeg = RcLoad2006PosStepValuePerFrame;
+        }
+        else if (rc_dir_raw >= LOAD2006_DIR_DEC_RAW_MIN)
+        {
+            RcLoad2006DesiredPosStepDeg = -RcLoad2006PosStepValuePerFrame;
+        }
+
+        RmMotor2006TargetPosData += RcLoad2006DesiredPosStepDeg;
+        RmMotor2006TargetPosData = ClampFloat(RmMotor2006TargetPosData,
+                                              LOAD2006_POS_TARGET_MIN_DEG,
+                                              LOAD2006_POS_TARGET_MAX_DEG);
     }
     else
     {
-        RmMotorSendCfg(RM_3508_GRIPPER, 0);
+        RC2006ResetStates();
     }
-#else
-    RmMotorSpeedPID_Calc(RM_3508_GRIPPER, RmMotorTargetSpeedData);
 #endif
+
+#if ENABLE_RC_DEBUG_3508
+#if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
+    UpdatePosTargetDurationTest(RmMotorTargetPosData);
+#endif
+#endif
+
 #else
     // 保持兼容：即使外层误调用，本函数也不输出控制
     RC3508ResetStates();
+    RC2006ResetStates();
 #endif
 }
 
@@ -273,9 +291,15 @@ static void RC3508ResetStates(void)
 #else
     RcLoad3508UkfCovP = 0.0f;
 #endif
-    g_prev_desired_speed_rpm = 0.0f;
+    g_prev_desired_speed_rpm_3508 = 0.0f;
     g_prev_desired_pos_step_deg = 0.0f;
-    g_pos_target_initialized = 0U;
+    RcLoad3508PosTargetInitialized = 0U;
+}
+
+static void RC2006ResetStates(void)
+{
+    RcLoad2006DesiredPosStepDeg = 0.0f;
+    RcLoad2006PosStepValuePerFrame = 0.0f;
 }
 
 static float NormalizeCenterStick(int16_t raw)
@@ -299,6 +323,19 @@ static float NormalizeCenterStick(int16_t raw)
     return norm;
 }
 
+static float ClampFloat(float value, float min_value, float max_value)
+{
+    if (value < min_value)
+    {
+        return min_value;
+    }
+    if (value > max_value)
+    {
+        return max_value;
+    }
+    return value;
+}
+
 static float StepToward(float current, float target, float step)
 {
     if (step <= 0.0f)
@@ -315,6 +352,42 @@ static float StepToward(float current, float target, float step)
         return current - step;
     }
     return target;
+}
+
+static float UpdateSpeedTargetWithStep(float desired_speed_rpm, float *step_speed_rpm, float *step_value_per_frame,
+                                       float *prev_desired_speed_rpm, float min_speed_rpm, float max_speed_rpm,
+                                       float step_min, float step_max, float step_sensitivity, bool ibus_updated)
+{
+    float limit_abs = max_speed_rpm;
+    if (-min_speed_rpm > limit_abs)
+    {
+        limit_abs = -min_speed_rpm;
+    }
+
+    desired_speed_rpm = ClampFloat(desired_speed_rpm, min_speed_rpm, max_speed_rpm);
+
+    if (ibus_updated)
+    {
+        float tracking_error = desired_speed_rpm - *step_speed_rpm;
+        if (tracking_error < 0.0f)
+        {
+            tracking_error = -tracking_error;
+        }
+
+        *step_value_per_frame = ComputeAdaptiveStep(desired_speed_rpm,
+                                                    *prev_desired_speed_rpm,
+                                                    tracking_error,
+                                                    limit_abs,
+                                                    step_min,
+                                                    step_max,
+                                                    step_sensitivity);
+        *prev_desired_speed_rpm = desired_speed_rpm;
+    }
+
+    *step_speed_rpm = StepToward(*step_speed_rpm, desired_speed_rpm, *step_value_per_frame);
+    *step_speed_rpm = ClampFloat(*step_speed_rpm, min_speed_rpm, max_speed_rpm);
+
+    return *step_speed_rpm;
 }
 
 static void UpdatePosTargetDurationTest(float target_pos_deg)

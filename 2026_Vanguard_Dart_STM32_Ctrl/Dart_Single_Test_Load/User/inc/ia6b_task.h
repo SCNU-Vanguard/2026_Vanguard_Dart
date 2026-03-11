@@ -18,8 +18,9 @@
 #define LOAD3508_SPEED_STEP_SENSITIVITY 25.0f
 #define IBUS_LOST_TIMEOUT_MS 200U
 
-#define ENABLE_DEFAULTTASK_RC_3508_DEBUG 0U
 #define ENABLE_RC_DEBUG_3508 0U
+#define ENABLE_RC_DEBUG_2006 1U
+#define ENABLE_DEFAULTTASK_RC_DEBUG ((ENABLE_RC_DEBUG_3508) || (ENABLE_RC_DEBUG_2006))
 #define RC_INPUT_USE_UKF 1U
 
 // 3508输出模式：0-速度环，1-串级位置环
@@ -42,6 +43,21 @@
 #define RC_INPUT_UKF_Q 50.0f
 #define RC_INPUT_UKF_R 400.0f
 
+#define LOAD2006_STEP_RAW_CHANNEL_INDEX 2U
+#define LOAD2006_DIR_RAW_CHANNEL_INDEX 5U
+#define LOAD2006_MIN_SPEED_RPM -10000.0f
+#define LOAD2006_MAX_SPEED_RPM 10000.0f
+#define LOAD2006_SPEED_STEP_MIN 200.0f
+#define LOAD2006_SPEED_STEP_MAX 1000.0f
+#define LOAD2006_SPEED_STEP_SENSITIVITY 25.0f
+#define LOAD2006_STEP_RAW_IDLE_MAX 1350
+#define LOAD2006_STEP_RAW_MAX 2000
+#define LOAD2006_DIR_INC_RAW_MIN 1400
+#define LOAD2006_DIR_INC_RAW_MAX 1600
+#define LOAD2006_DIR_DEC_RAW_MIN 1850
+#define LOAD2006_POS_TARGET_MIN_DEG -250000.0f
+#define LOAD2006_POS_TARGET_MAX_DEG 250000.0f
+
 extern float RmMotorTargetSpeedData;
 extern float RmMotorTargetPosData;
 extern float RcLoad3508DesiredSpeedRpm;
@@ -54,6 +70,13 @@ extern float RcLoad3508PosStepValuePerFrame;
 extern float RcLoad3508UkfCovP;
 extern int16_t RcLoad3508Raw;
 extern int8_t RcSWBState;
+extern uint8_t RcLoad3508PosTargetInitialized;
+
+extern float RmMotor2006TargetPosData;
+extern float RmMotor2006SpeedData;
+extern float RcLoad2006DesiredPosStepDeg;
+extern float RcLoad2006PosStepValuePerFrame;
+extern int16_t RcLoad2006Raw;
 
 extern float RmMotorPosTargetTestCurrentMs;
 extern float RmMotorPosTargetTestLastMs;
