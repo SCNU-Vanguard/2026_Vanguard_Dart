@@ -21,6 +21,7 @@
 #include "CanMotor.h"
 #include "DM_Motor.h"
 #include "RM_Motor.h"
+#include "ControlState.h"
 
 // 模块驱动初始化
 void Module_Init(void);

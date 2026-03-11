@@ -440,9 +440,9 @@ static void UpdateControlTargets(float dt)
         {
             servo_action_pending = true;
             // 舵机0x02分离动作：转到分离角度，等待，再回零
-            ServoControlPos(0x02, SeperationAngle, SERVO_MOVE_TIME_MS);
+            ServoControlPos(0x02, ServoAngleMax, SERVO_MOVE_TIME_MS);
             vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
-            ServoControlPos(0x02, 0x0000, SERVO_MOVE_TIME_MS);
+            ServoControlPos(0x02, ServoAngleMin, SERVO_MOVE_TIME_MS);
             vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
         }
     }

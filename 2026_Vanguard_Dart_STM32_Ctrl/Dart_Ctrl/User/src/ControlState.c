@@ -98,7 +98,7 @@ void ControlState_Init(void)
     if (g_xMotorCtrlSemHandle != NULL)
     {
         xSemaphoreGive(g_xMotorCtrlSemHandle);
-        xSemaphoreGive(g_xDebugFinishedSemHandle); // 初始给出信号量
+        // g_xDebugFinishedSemHandle 保持空状态，等待第一次调试窗口触发
     }
     else
     {
@@ -224,7 +224,6 @@ static CtrlMode_e DetermineMode(int8_t swb, int8_t swc)
 {
     // 【调试模式】：SWB=0 时直接进入手动控制，无需等待调试窗口
     // 正式比赛时可以注释掉这段代码，恢复调试窗口限制
-#define DEBUG_MODE_ALWAYS_ALLOW 1
 #if DEBUG_MODE_ALWAYS_ALLOW
     if (swb == 0)
     {
@@ -348,6 +347,8 @@ static void ControlTaskFunc(void *argument)
                 xSemaphoreGive(g_xDebugFinishedSemHandle);
                 holding_motor_ctrl = false;
             }
+            // 退出手动模式时清除调试窗口
+            g_ControlState.debug_window_active = false;
             // 熄灭调试LED
             HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
         }
@@ -370,7 +371,29 @@ static void ControlTaskFunc(void *argument)
             }
         }
 
-        // 固定周期延时
+        // 调试窗口超时自动放行（未被手动接管时，超时后通知自动任务继续）
+        if (g_ControlState.debug_window_active && !holding_motor_ctrl)
+        {
+            // 常开调试模式下：SWB不在手动位时，不阻塞自动流程
+#if DEBUG_MODE_ALWAYS_ALLOW
+            if (g_ControlInput.swb != 0)
+            {
+                g_ControlState.debug_window_active = false;
+                xSemaphoreGive(g_xDebugFinishedSemHandle);
+            }
+            else
+#endif
+            {
+                uint32_t elapsed = HAL_GetTick() - g_ControlState.debug_timer_start;
+                if (elapsed >= DEBUG_WINDOW_MS)
+                {
+                    g_ControlState.debug_window_active = false;
+                    xSemaphoreGive(g_xDebugFinishedSemHandle);
+                }
+            }
+        }
+
+        // 固定周期延时（ControlTask）
         vTaskDelayUntil(&xLastWakeTime, xPeriod);
     }
 }
@@ -381,34 +404,9 @@ static void ControlTaskFunc(void *argument)
  */
 static void UpdateControlTargets(float dt)
 {
-    // 舵机动作状态（用于防止重复触发）
-    static bool servo_action_pending = false;
-
     // YAW目标更新（回中摇杆，增量式）
     g_ControlState.yaw_target += g_ControlInput.yaw_norm * WEIGHT_YAW * dt;
     g_ControlState.yaw_target = ControlState_Clamp(g_ControlState.yaw_target, YAW_MIN, YAW_MAX);
-
-    // 扳机目标更新（非回中摇杆触发，SWC决定方向）
-    // 非回中摇杆默认在底部(1000)，向上推时trigger_dir=1表示激活
-    // 只有摇杆激活时才移动，移动方向由SWC决定：
-    //   SWC=0  -> 扳机上移（向TRIGGER_MAX方向）
-    //   SWC=-1 -> 扳机下移（向TRIGGER_MIN方向）
-    //   SWC=1  -> 不移动
-    if (g_ControlInput.trigger_dir == 1)
-    {
-        int8_t move_dir = 0;
-        if (g_ControlInput.swc == 0)
-        {
-            move_dir = 1; // 上移
-        }
-        else if (g_ControlInput.swc == -1)
-        {
-            move_dir = -1; // 下移
-        }
-        // SWC=1时move_dir=0，不移动
-        g_ControlState.trigger_target += (float)move_dir * WEIGHT_TRIGGER * dt;
-    }
-    g_ControlState.trigger_target = ControlState_Clamp(g_ControlState.trigger_target, TRIGGER_MIN, TRIGGER_MAX);
 
     // 储能电机目标更新（回中摇杆，增量式）
     // 左右电机联动，方向相反
@@ -418,28 +416,8 @@ static void UpdateControlTargets(float dt)
     g_ControlState.energy_left_target = ControlState_Clamp(g_ControlState.energy_left_target, ENERGY_LEFT_MIN, ENERGY_LEFT_MAX);
     g_ControlState.energy_right_target = ControlState_Clamp(g_ControlState.energy_right_target, ENERGY_RIGHT_MIN, ENERGY_RIGHT_MAX);
 
-    // 左摇杆左右：根据状态选择控制3508或舵机
-    if (g_ControlInput.load3508_dir != 0)
-    {
-        // 非回中状态：触发舵机分离动作（仅在调试模式下）
-        // 使用边沿检测，避免重复触发
-        if (!servo_action_pending)
-        {
-            servo_action_pending = true;
-            // 舵机0x02分离动作：转到分离角度，等待，再回零
-            ServoControlPos(0x02, SeperationAngle, SERVO_MOVE_TIME_MS);
-            vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
-            ServoControlPos(0x02, 0x0000, SERVO_MOVE_TIME_MS);
-            vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
-        }
-    }
-    else
-    {
-        // 回中状态：正常更新3508目标，清除舵机动作标志
-        servo_action_pending = false;
-        g_ControlState.load3508_target += g_ControlInput.load3508_norm * WEIGHT_LOAD3508 * dt;
-        g_ControlState.load3508_target = ControlState_Clamp(g_ControlState.load3508_target, LOAD3508_MIN, LOAD3508_MAX);
-    }
+    // 左摇杆功能在调试窗口中禁用（仅右摇杆可用）
+    // 扳机、3508、舵机均不响应
 }
 
 /**
@@ -450,15 +428,11 @@ static void SendMotorCommands(void)
     // YAW电机（DM4310 MIT模式）
     DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT);
 
-    // 扳机电机（RM2006 PID控制）
-    RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target);
-
     // 储能电机（DM3519 位置速度模式）
     DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED);
     DmMotorSendCfg(DM_3519_STRENTH_RIGHT, g_ControlState.energy_right_target, 5.0f, DM_LOCATION_SPEED);
 
-    // 3508电机（RM3508 PID控制）
-    RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target);
+    // 左摇杆功能已禁用，扳机2006和3508不在调试窗口中控制
 }
 
 /*============================== API函数实现 ==============================*/
