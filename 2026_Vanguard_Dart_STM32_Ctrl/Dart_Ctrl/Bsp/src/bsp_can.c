@@ -14,6 +14,7 @@
  * 下面是一些位的注释:  IDE(是否为扩展ID，我们不用扩展ID)
  *                    RTR（是什么帧，远程还是数据）
  *                    EXID(扩展ID的用不上，不用管)
+ * TODO:等待将文件测试是否会出现其他神奇情况，如无直接更新到对应的稳定的bsp_can.c
  ****************************************************************************/
 
 #include "bsp_can.h"
@@ -115,15 +116,31 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
  ******************************************/
 uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data)
 {
+  static uint32_t s_red_blink_tick = 0U;
   uint32_t TxMailbox;
+  uint32_t timeout = 0;
+  // @note:增加超时机制，当超时直接退出
+  while (!HAL_CAN_GetTxMailboxesFreeLevel(canHandle))
+  {
+    timeout++;
+    if (timeout > 5000)
+    {
+      return 0;
+    }
+  }
   if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) != HAL_OK)
   {
-    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
+    // 发送失败：红灯常亮（板载红灯为低电平点亮）
+    HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_RESET);
     return 0; // 发送失败
   }
-  while (HAL_CAN_IsTxMessagePending(canHandle, TxMailbox))
-    ; // 等待发送完成
-  HAL_GPIO_TogglePin(LED8_GPIO_Port, LED8_Pin);
+
+  // 发送成功：红灯按250ms节拍闪烁
+  if ((uint32_t)(HAL_GetTick() - s_red_blink_tick) >= 250U)
+  {
+    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
+    s_red_blink_tick = HAL_GetTick();
+  }
   return 1; // 发送成功
 }
 

@@ -16,6 +16,7 @@
  * - 电机默认参数（减速比、最大电流、电流转换系数）
  * - 虚函数表（初始化、解算、发送控制、PID计算等）
  * 预定义 RM_M2006_Class、RM_M3508_Class、RM_GM6020_Class 三个类实例
+ * TODO:等待测试文件是否有异常，如无直接更新到正常的RM_Motor.c当中
  ****************************************************/
 
 #include "RM_Motor.h"
@@ -26,6 +27,7 @@
 
 // 直接访问电机管理器（减少函数调用开销）
 extern MotorManager_t MotorManager;
+extern SemaphoreHandle_t g_xRmBufferMutexHandle;
 
 float output = 0.0f;
 
@@ -58,6 +60,8 @@ static void RM_GM6020_CalculateInternal(MotorTypeDef *motor);
 // 通用发送控制和PID计算
 static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor);
 static float RM_Motor_PIDCalcInternal(MotorTypeDef *motor, float target);
+static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output);
+static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle);
 
 /*============================== 电机类静态实例定义 ==============================*/
 
@@ -74,7 +78,6 @@ const RM_MotorClass_t RM_M2006_Class = {
     .init = RM_M2006_InitInternal,
     .calculate = RM_M2006_CalculateInternal,
     .send_control = RM_Motor_SendControlInternal,
-    .pid_calc = RM_Motor_PIDCalcInternal,
 };
 
 /// @brief M3508电机类（C620电调）
@@ -90,7 +93,6 @@ const RM_MotorClass_t RM_M3508_Class = {
     .init = RM_M3508_InitInternal,
     .calculate = RM_M3508_CalculateInternal,
     .send_control = RM_Motor_SendControlInternal,
-    .pid_calc = RM_Motor_PIDCalcInternal,
 };
 
 /// @brief GM6020电机类
@@ -106,7 +108,6 @@ const RM_MotorClass_t RM_GM6020_Class = {
     .init = RM_GM6020_InitInternal,
     .calculate = RM_GM6020_CalculateInternal,
     .send_control = RM_Motor_SendControlInternal,
-    .pid_calc = RM_Motor_PIDCalcInternal,
 };
 
 /*============================== 面向对象接口实现 ==============================*/
@@ -168,22 +169,6 @@ uint8_t RM_Motor_SendControl(MotorTypeDef *motor)
     }
 
     return 0;
-}
-
-/// @brief 调用电机的PID计算函数
-float RM_Motor_PIDCalc(MotorTypeDef *motor, float target)
-{
-    if (motor == NULL)
-        return 0.0f;
-
-    // 优先使用类的虚函数表
-    if (motor->motor_class.rm_motor_class != NULL && motor->motor_class.rm_motor_class->pid_calc != NULL)
-    {
-        return motor->motor_class.rm_motor_class->pid_calc(motor, target);
-    }
-
-    // 默认实现
-    return RM_Motor_PIDCalcInternal(motor, target);
 }
 
 /*============================== 电机初始化内部函数 ==============================*/
@@ -321,6 +306,12 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
     if (st == NULL)
         return 0;
 
+    // 发送之前必须先获取互斥量
+    if (xSemaphoreTake(g_xRmBufferMutexHandle, pdMS_TO_TICKS(2)) != pdTRUE)
+    {
+        return 0;
+    }
+
     // 获取发送缓冲区（直接访问，零开销）
     uint8_t *send_buffer = MotorManager.RM_MOTOR_DATA_ARRAY;
 
@@ -360,14 +351,9 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
         }
     }
 
-    // 使用Fast版本发送（内联，零开销）
-    return Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer) ? 1 : 0;
-}
-
-/// @brief 兼容旧接口
-uint8_t RM_MotorSendControl(MotorTypeDef *st)
-{
-    return RM_Motor_SendControlInternal(st);
+    uint8_t res = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer);
+    xSemaphoreGive(g_xRmBufferMutexHandle);
+    return res;
 }
 
 void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
@@ -393,7 +379,7 @@ void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 /// @brief RM电机通用解算（内部函数，优化版本：使用乘法代替除法）
 /// @param motor 电机结构体指针
 /// @param current_inv 电流系数的倒数（预计算，避免运行时除法）
-static void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv)
+static inline void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv)
 {
     MotorSolvedData_t *pData = &motor->motor_data;
     uint8_t *ReceiveData = motor->ReceiveMotorData;
@@ -432,7 +418,7 @@ static void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv)
     }
     else
     {
-        pData->solved_data[1] = (float)speed_rpm * 0.9f + 0.1f * pData->last_speed;
+        pData->solved_data[1] = (float)speed_rpm * 0.96f + 0.04f * pData->last_speed;
     }
 
     // 电流 (A) - 乘法代替除法
@@ -628,7 +614,45 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel)
     }
 }
 
-// 该接口会直接发送数据到电机，但是新接口不会
+static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output)
+{
+    (void)motor_cfg;
+    (void)motor;
+
+    return (int16_t)pid_output;
+}
+
+static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle)
+{
+#if RM_3508_CLEAR_ANGLE_I_ON_DIR_CHANGE
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    PID_t *outer_pid = &motor->cascade_pid.outer;
+    if (!outer_pid->initialized || outer_pid->calc_count == 0U)
+    {
+        return;
+    }
+
+    const float angle_error = target_angle - current_angle;
+    const float current_target_delta = target_angle - outer_pid->target;
+
+    const bool target_direction_reversed = (current_target_delta * outer_pid->feedforward) < 0.0f;
+    const bool error_direction_reversed = (angle_error * outer_pid->last_error) < 0.0f;
+
+    if (target_direction_reversed || error_direction_reversed)
+    {
+        PID_Clear_Integral(outer_pid);
+    }
+#else
+    (void)motor;
+    (void)target_angle;
+    (void)current_angle;
+#endif
+}
+
 void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
@@ -636,59 +660,24 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
         return;
 
     MotorSolvedData_t *pData = &motor->motor_data;
+    RM_Motor_HandleAngleLoopDirectionChange(motor, target, pData->solved_data[3]);
 
     output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
     // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
-    RmMotorSendCfg(motor_cfg, output);
+    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, output));
 }
 
-/*============================== PID计算内部函数(新接口) ==============================*/
-
-/// @brief RM电机PID计算（内部实现）
-static float RM_Motor_PIDCalcInternal(MotorTypeDef *motor, float target)
-{
-    if (motor == NULL)
-        return 0.0f;
-
-    MotorSolvedData_t *pData = &motor->motor_data;
-    float out;
-
-    if (motor->use_cascade)
-    {
-        out = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
-    }
-    else
-    {
-        out = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]);
-    }
-
-    // 限幅
-    if (out > motor->params.max_current)
-        out = motor->params.max_current;
-    if (out < -motor->params.max_current)
-        out = -motor->params.max_current;
-
-    // 考虑反向
-    int16_t current = (int16_t)out;
-    if (motor->config.reverse)
-    {
-        current = -current;
-    }
-
-    // 写入发送数据
-    if (current < 0)
-    {
-        current = (uint16_t)(~(-current));
-    }
-    motor->SendMotorData[0] = (uint8_t)(current >> 8);
-    motor->SendMotorData[1] = (uint8_t)current;
-
-    return out;
-}
-
-/// @brief RM电机PID计算
-float RM_Motor_PID_Calc(can_motor_cfg motor_cfg, float target)
+void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    return RM_Motor_PIDCalcInternal(motor, target);
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+
+    output = PID_Calculate(&motor->inner_pid, target_speed_rpm, pData->solved_data[1]);
+    output = RM_Motor_ApplyOutputLimit(motor_cfg, motor, output);
+    RmMotorSendCfg(motor_cfg, output);
 }

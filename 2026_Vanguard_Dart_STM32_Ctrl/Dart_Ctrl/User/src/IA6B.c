@@ -4,12 +4,133 @@
  * 创建时间：2025-12-24
  * 创建人：bale
  * notice：有16位校验码，通信速率115200（8N1）
- * //TODO：将数据读取到这里并返回位移后的数据，同时解算一定的数据并存放好
+ * //TODO：按照合适的选择映射数据
+ * 需求：
+ * 1.扳机位置2006的转动(适合使用不回中摇杆) -> 分配左摇杆不回中上下
+ * 2.云台关节电机的转动(适合使用回中摇杆) -> 分配右摇杆左右两端
+ * 3.两个储能关机电机的转动(适合使用回中摇杆) -> 分配右摇杆回中上下
+ * 4.3508电机的位置调整(适合使用回中摇杆) -> 分配左摇杆左右两端
+ *
+ * 方案：
+ * 不回中直接使用0 1 -1
+ * 回中使用增加法则减少对应量法则
+
+ * NOTE:
+ * 右边摇杆（回中）
+ *
+ * （左右）
+ * RawChannel 0 : 属于 1000左 -> 1500中 -> 2000右
+ * （上下）
+ * RawChannel 1 : 属于 2000上 -> 1500中 -> 1000下
+ *
+ * 左边摇杆
+ *
+ * （上下）【不回中，默认底部1000】
+ * RawChannel 2 : 属于 1000下(默认) -> 2000上
+ * （左右）【回中】
+ * RawChannel 3 : 属于 1000左 -> 1500中 -> 2000右
+ *
+ * SWB（两段开关）
+ * RawChannel 4 : 位置1对应1000，位置2对应2000
+ *
+ * SWC（三段开关）
+ * RawChannel 5 : 位置1对应1000，位置2对应1500，位置3对应2000
+ *
+ * SWB对应1且SWC对应1则处于正常单发发射模式,这时候过程中无法调节
+ *
+ * 中间20S调试
+ * SWB对应1不动
+ * SWB对应2且SWC对应0则2006上
+ * SWB对应2且SWC对应-1则2006下
+ * 其他电机则是按照上面的分配进行运动即可
  ********************************************/
+#include "config.h"
 #include "IA6B.h"
 
-// 初始化队列接受任务,同时使用DMA加缓冲区接收,但是这个固定很麻烦
-void IA6B_Init(void)
+int8_t Channel[13] = {0};
+int16_t RawChannel[13] = {0};
+void IA6B_HandleData2Channel(uint8_t *data)
 {
-    // 每次上电其实不用初始化什么特别的东西
+    // 传进来的channel数据是符合对应信道格式的,除去帧头和校验帧尾一共28字节
+    // 前Channel1-14获取
+    for (uint8_t i = 0; i < 13; i++)
+    {
+        // 两字节循环,直到26
+        RawChannel[i] = data[2 * i] | (data[2 * i + 1] << 8);
+    }
+    for (uint8_t temp = 0; temp < 4; temp++)
+    {
+        // 一般中间为0
+        if ((RawChannel[temp] >= 1400) && (RawChannel[temp] <= 1600))
+        {
+            Channel[temp] = 0;
+        }
+        // 下和左为-1
+        else if (RawChannel[temp] < 1400)
+        {
+            Channel[temp] = -1;
+        }
+        else
+        {
+            Channel[temp] = 1;
+        }
+    }
+
+    // 对应SWB,1为默认状态为真,2为手动调节为0
+    // 使用范围判断，避免信号波动导致检测不灵敏
+    // 同时检查数据有效性（RawChannel应在1000-2000范围内）
+    if (RawChannel[4] >= 900 && RawChannel[4] <= 2100)
+    {
+        if (RawChannel[4] < 1500)
+        {
+            Channel[4] = 1;  // SWB位置1（默认）
+        }
+        else
+        {
+            Channel[4] = 0;  // SWB位置2（手动调节）
+        }
+    }
+    // 如果数据无效则保持之前的值
+
+    // SWC三段开关：使用范围判断
+    if (RawChannel[5] >= 900 && RawChannel[5] <= 2100)
+    {
+        if (RawChannel[5] < 1250)
+        {
+            Channel[5] = 1;   // SWC位置1
+        }
+        else if (RawChannel[5] < 1750)
+        {
+            Channel[5] = 0;   // SWC位置2（中间）
+        }
+        else
+        {
+            Channel[5] = -1;  // SWC位置3
+        }
+    }
+    // 如果数据无效则保持之前的值
+}
+
+// 初始化队列接受任务,同时使用DMA加缓冲区接收,但是这个固定很麻烦
+int16_t IA6B_ReadChannel(uint8_t ChannelNum)
+{
+    return Channel[ChannelNum - 1];
+}
+
+/**
+ * @brief 处理IBUS数据包并解析通道
+ * @param uart_num UART编号 (通常为BSP_UART6)
+ * @return true-成功获取并解析, false-无数据包
+ * @note 在主循环或任务中周期性调用
+ */
+bool IA6B_ProcessIbusPacket(BSP_UART_NUM_e uart_num)
+{
+    IbusPacket_t packet;
+    if (UART_GetIbusPacket(uart_num, &packet))
+    {
+        // 跳过帧头(data[0]=0x20, data[1]=0x40)，传入28字节通道数据
+        IA6B_HandleData2Channel(&packet.data[2]);
+        return true;
+    }
+    return false;
 }

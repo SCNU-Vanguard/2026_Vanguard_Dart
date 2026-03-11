@@ -139,19 +139,19 @@ void MotorRegister(void)
     // 夹爪传动带结构 - M3508电机
     RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
-                           0.06591f, 0.1f, 0.0f, 0.0001f,
-                           178.91f, 0.40f, 0.0f, 7.95f,
-                           20673.0f, 0.0f, 2.0f,
-                           1691.0f, 0.0f, 300.0f);
+                           14.00f, 0.1f, 0.05f, 10.0f,
+                           0.225f, 1.00f, 0.05f, 93.0f,
+                           20000.0f, 0.0f, 500.0f,
+                           8000.0f, 0.0f, 1500.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机
     RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
-                           0.1058f, 0.0f, 0.0f, 0.002f,
-                           27.91f, 0.08f, 0.0f, 1.0f,
-                           1300.0f, 0.0f, 5000.0f,
-                           5000.0f, 0.0f, 1000.0f);
+                           0.3f, 0.0f, 0.0f, 0.000f,
+                           15.91f, 0.0f, 0.0f, 0.0f,
+                           9000.0f, 0.0f, 0.0f,
+                           6000.0f, 0.0f, 0.0f);
     MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = RM_2006_TRIGGER + g_RM_MOTOR_BIAS_ADDR_2006 + 0x004;
 
     // ==================== DM电机注册 ====================
@@ -194,9 +194,9 @@ void MotorRegister(void)
  * 作用：获取电机管理器指针
  * 返回值：电机管理器结构体
  ****************************************************/
-MotorManager_t GetPtrMotorManager(void)
+MotorManager_t *GetPtrMotorManager(void)
 {
-    return MotorManager;
+    return &MotorManager;
 }
 
 /****************************************************
