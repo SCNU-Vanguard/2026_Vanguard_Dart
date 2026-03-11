@@ -1,0 +1,1 @@
+Project: STM32 dart control system ("Dart_Ctrl") for STM32F427 (Keil MDK-ARM). It implements a layered architecture: BSP drivers (UART/CAN/DWT/etc.), protocol parsing (servo + IBUS), and user tasks (FreeRTOS). Primary goals include motor control and remote/serial communication.
