@@ -147,10 +147,11 @@ void MotorRegister(void)
     // 扳机 - M2006电机
     RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
-                           10.0f, 0.0f, 0.0f, 0.000f,
-                           0.0785f, 0.0f, 0.0f, 40.0f,
+                           0.3f, 0.0f, 0.0f, 0.000f,
+                           15.91f, 0.0f, 0.0f, 0.0f,
                            9000.0f, 0.0f, 0.0f,
-                           5000.0f, 0.0f, 0.0f);
+                           6000.0f, 0.0f, 0.0f);
+    // RM_Motor_SetSpeedPID(&MotorManager.MotorList[RM_2006_TRIGGER - 1], PID_POSITION, 15.91f, 0.0f, 0.0f, 0.0f, 15000.0f, 0.0f, 15000.0f);
     MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = RM_2006_TRIGGER + g_RM_MOTOR_BIAS_ADDR_2006 + 0x004;
 
     // ==================== DM电机注册 ====================

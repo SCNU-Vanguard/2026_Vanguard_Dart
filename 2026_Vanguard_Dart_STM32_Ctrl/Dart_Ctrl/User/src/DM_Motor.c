@@ -647,18 +647,25 @@ uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
+    const uint32_t enable_timeout_ms = 500U;
+    uint32_t start_tick = HAL_GetTick();
 
     while (1)
     {
+        if ((uint32_t)(HAL_GetTick() - start_tick) >= enable_timeout_ms)
+        {
+            return 0;
+        }
+
         // 发送使能命令
         if (!hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
         {
             // CAN发送失败，继续重试
-            vTaskDelay(3);
+            vTaskDelay(pdMS_TO_TICKS(3));
             continue;
         }
 
-        vTaskDelay(3);
+        vTaskDelay(pdMS_TO_TICKS(3));
 
         // 检查反馈帧的使能状态（byte0高4位为状态：0=失能，1=使能）
         uint8_t state = (motor->ReceiveMotorData[0] >> 4) & 0x0F;
