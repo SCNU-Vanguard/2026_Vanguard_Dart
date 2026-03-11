@@ -725,6 +725,11 @@
               <FileType>1</FileType>
               <FilePath>..\User\src\ControlState.c</FilePath>
             </File>
+            <File>
+              <FileName>motor_algrothim.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\motor_algrothim.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
