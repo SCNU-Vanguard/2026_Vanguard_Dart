@@ -43,6 +43,51 @@ static inline void Servo_UART_Send(const uint8_t *data, uint16_t len)
     }
 }
 
+static ServoRegistryItem_t g_servo_registry[SERVO_REG_MAX_COUNT];
+static uint8_t g_servo_registry_count = 0;
+
+void ServoRegistry_Reset(void)
+{
+    memset(g_servo_registry, 0, sizeof(g_servo_registry));
+    g_servo_registry_count = 0;
+}
+
+bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count)
+{
+    if (items == NULL || count == 0 || count > SERVO_REG_MAX_COUNT)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < count; i++)
+    {
+        for (uint8_t j = (uint8_t)(i + 1); j < count; j++)
+        {
+            if (items[i].id == items[j].id)
+            {
+                return false;
+            }
+        }
+    }
+
+    memset(g_servo_registry, 0, sizeof(g_servo_registry));
+    memcpy(g_servo_registry, items, sizeof(ServoRegistryItem_t) * count);
+    g_servo_registry_count = count;
+    return true;
+}
+
+const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id)
+{
+    for (uint8_t i = 0; i < g_servo_registry_count; i++)
+    {
+        if (g_servo_registry[i].id == id)
+        {
+            return &g_servo_registry[i];
+        }
+    }
+    return NULL;
+}
+
 #if (other_mcu_forcing == 1)
 /*******************************************************************************
  * 有MCU控制板协议实现

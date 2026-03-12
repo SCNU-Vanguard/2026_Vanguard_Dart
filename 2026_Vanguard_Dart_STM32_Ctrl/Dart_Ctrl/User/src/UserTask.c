@@ -54,12 +54,32 @@ static float MotorData = 0.0f;
 static float gripper_offset;
 static float trigger_offset;
 static float GripperTarget = 0.0f;
-static uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-static uint16_t servo_angles[3] = {0x0000};
+static const ServoRegistryItem_t g_dart_servo_registry[3] = {
+    {.id = DART_SERVO_ID1, .raw_zero = DART_SERVO1_RAW_ZERO, .raw_release = DART_SERVO1_RAW_RELEASE},
+    {.id = DART_SERVO_ID2, .raw_zero = DART_SERVO2_RAW_ZERO, .raw_release = DART_SERVO2_RAW_RELEASE},
+    {.id = DART_SERVO_ID3, .raw_zero = DART_SERVO3_RAW_ZERO, .raw_release = DART_SERVO3_RAW_RELEASE}};
 volatile uint8_t g_DiagYaw4310EnableOk = 0U;
 
 static MotorTrapPosProfile_t g_LoadTrapProfile = {0};
 static uint32_t g_LoadTrapCntLast = 0U;
+
+static void Servo_RegisterDartProfiles(void)
+{
+    ServoRegistry_Reset();
+    (void)ServoRegistry_RegisterBatch(g_dart_servo_registry, 3);
+}
+
+static void Servo_MoveAllToZero(uint16_t time_ms)
+{
+    uint8_t ids[3];
+    uint16_t zeros[3];
+    for (uint8_t i = 0; i < 3; i++)
+    {
+        ids[i] = g_dart_servo_registry[i].id;
+        zeros[i] = g_dart_servo_registry[i].raw_zero;
+    }
+    ServoControlMulti(3, ids, zeros, time_ms);
+}
 
 /* 3508 目标互斥量 */
 static StaticSemaphore_t g_x3508MtxBuf;
@@ -230,10 +250,12 @@ static inline bool IsInDeadzoneTimedF(float value, float target, float zone, uin
 
     if ((uint32_t)(now_tick - timer->start_tick) >= timeout_ms)
     {
-        // 超时仅做诊断标记，不强制判到位，避免轨迹被截断导致“假加速/跳目标”
+        // 3508策略：超时后按到位处理，避免流程卡死
         g_LoadDeadzoneTimeoutCount++;
-        timer->start_tick = now_tick;
-        return false;
+        timer->active = false;
+        timer->last_target = target;
+        timer->last_zone = abs_zone;
+        return true;
     }
 
     return false;
@@ -371,6 +393,7 @@ void Module_Init(void)
     MotorInit();
     CanFilterCfg();
     BSP_UART_Init();
+    Servo_RegisterDartProfiles(); // 注册时机要求在ServoInit之前
     // while (!ServoInit())
     // ; // 这个地方有一个回调,需要进行数据读取
     UART_SetProtocolType(BSP_UART6, PROTOCOL_IBUS);
@@ -489,12 +512,6 @@ void StoreEnergyTaskFunc(void *argument)
     // 接收计数型信号量之后才可以正常
     __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
     vTaskDelay(pdMS_TO_TICKS(1307));
-    g_DiagYaw4310EnableOk = DM_MotorEnable(DM_4310_YAW);
-    vTaskDelay(1);
-    DM_MotorEnable(DM_3519_STRENTH_LEFT);
-    vTaskDelay(1);
-    DM_MotorEnable(DM_3519_STRENTH_RIGHT);
-    vTaskDelay(1);
     uint8_t StoreState = 0x00;
     uint8_t Dart = 4;
     vTaskDelay(pdMS_TO_TICKS(POWER_ON_DELAY_MS));
@@ -693,6 +710,7 @@ void StoreEnergyTaskFunc(void *argument)
 
         if (Dart == 0)
         {
+            vTaskDelay(750);
             HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, GPIO_PIN_SET);
             // 重新获取控制权进行收尾
             xSemaphoreTake(g_xMotorCtrlSemHandle, portMAX_DELAY);
@@ -713,7 +731,7 @@ void StoreEnergyTaskFunc(void *argument)
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
             DmMotorSendCfg(DM_4310_YAW, 0.0f, 0.0f, DM_MIT);
             DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
-            ServoControlMulti(3, servo_ids, servo_angles, 300);
+            Servo_MoveAllToZero(300);
             xSemaphoreGive(g_xMotorCtrlSemHandle);
             vTaskSuspend(StoreEnergyTaskHandle);
         }
@@ -734,6 +752,10 @@ static inline void LoadDart_ReturnToZero(uint8_t dart_num, float m_offset_angle)
     xSemaphoreTake(g_x3519ArrivedSemHandle, portMAX_DELAY);
     xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
     vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS));
+
+    DmMotorSendCfg(DM_3519_STRENTH_LEFT, (float)(LeftStoreLoad + 50.0f), 4.0f, DM_LOCATION_SPEED);
+    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, (float)(RightStoreLoad - 50.0f), 4.0f, DM_LOCATION_SPEED);
+    vTaskDelay(400);
 
     // 舵机动作完成后，先让3519后退到底，再执行3508回零
     DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreBottom, StoreSpeed, DM_LOCATION_SPEED);
@@ -789,12 +811,11 @@ void LoadTaskFunc(void *argument)
 {
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdFALSE, pdTRUE, portMAX_DELAY);
 
-    uint16_t servo_work_angle[3] = {SeperationAngle, SeperationAngle, SeperationAngle};
     bool MutexTake = false;
     uint8_t dart_num = 0x0000;
 
     // 直接设置成0°,限位确认
-    ServoControlMulti(3, servo_ids, servo_angles, 300);
+    Servo_MoveAllToZero(300);
 
     // 获取电机偏移角度，用于目标值补偿
     float offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
@@ -868,7 +889,11 @@ void LoadMotorTaskFunc(void *argument)
         xQueueReceive(g_xLoad3508QueueHandler, &fQueueDartNum, portMAX_DELAY);
         if (fQueueDartNum >= 1 && fQueueDartNum <= 3)
         {
-            ServoControlPos(fQueueDartNum, SeperationAngle, SERVO_MOVE_TIME_MS);
+            const ServoRegistryItem_t *item = ServoRegistry_Find(fQueueDartNum);
+            if (item != NULL)
+            {
+                ServoControlPos(item->id, item->raw_release, SERVO_MOVE_TIME_MS);
+            }
             vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS));
         }
     }
@@ -882,13 +907,27 @@ void LoadMotorTaskFunc(void *argument)
  ***********************************/
 void StateSetTaskFunc(void *argument)
 {
+    static const uint8_t dm_enable_frame[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
+
     // 接收上位机 / 遥控器 传递的数据
-    DM_MotorEnable(DM_3519_STRENTH_LEFT);
-    vTaskDelay(2);
-    DM_MotorEnable(DM_3519_STRENTH_RIGHT);
-    vTaskDelay(2);
+    vTaskDelay(1);
+    while (!DM_MotorEnable(DM_3519_STRENTH_LEFT))
+    {
+        MotorTypeDef *motor = &MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1];
+        vTaskSuspendAll();
+        (void)Motor_GetHAL_Fast()->can_send(&(motor->g_TxHeader), (uint8_t *)dm_enable_frame);
+        xTaskResumeAll();
+        vTaskDelay(pdMS_TO_TICKS(3));
+    }
+    vTaskDelay(1);
+    while (!DM_MotorEnable(DM_3519_STRENTH_RIGHT))
+    {
+        MotorTypeDef *motor = &MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1];
+        (void)Motor_GetHAL_Fast()->can_send(&(motor->g_TxHeader), (uint8_t *)dm_enable_frame);
+        vTaskDelay(pdMS_TO_TICKS(3));
+    }
+    vTaskDelay(1);
     // preset the target at the base
-    float temp = 0.0f;
     float degree = 0.0f;
     gripper_offset = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
     trigger_offset = MotorManager.MotorList[RM_2006_TRIGGER - 1].motor_data.offset_ecd_angle;
@@ -901,13 +940,22 @@ void StateSetTaskFunc(void *argument)
         Set2006Target(preseting_distance);
         g_b2006CtrlEnabled = true;
         DeadzoneState_t trigger_preset_deadzone = {0};
-        while (!IsInDeadzoneF(Motor_GetTotalAngle(RM_2006_TRIGGER), temp, MOTOR_DEAD_ZONE, &trigger_preset_deadzone, true))
+        while (!IsInDeadzoneF(Motor_GetTotalAngle(RM_2006_TRIGGER), preseting_distance, MOTOR_DEAD_ZONE, &trigger_preset_deadzone, true))
         {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
 
         // 4310 Yaw 归位
-        g_DiagYaw4310EnableOk = DM_MotorEnable(DM_4310_YAW);
+        while (!DM_MotorEnable(DM_4310_YAW))
+        {
+            MotorTypeDef *motor = &MotorManager.MotorList[DM_4310_YAW - 1];
+            vTaskSuspendAll();
+            (void)Motor_GetHAL_Fast()->can_send(&(motor->g_TxHeader), (uint8_t *)dm_enable_frame);
+            xTaskResumeAll();
+            vTaskDelay(pdMS_TO_TICKS(3));
+        }
+        g_DiagYaw4310EnableOk = 1U;
+        vTaskDelay(1);
         DmMotorSendCfg(DM_4310_YAW, preseting_yaw, 0.0f, DM_MIT);
         uint32_t preset_yaw_reissue_tick = HAL_GetTick();
         DeadzoneState_t yaw_preset_deadzone = {0};

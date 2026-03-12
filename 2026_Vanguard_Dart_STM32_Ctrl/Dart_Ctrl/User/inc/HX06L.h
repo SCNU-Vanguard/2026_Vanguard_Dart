@@ -205,6 +205,31 @@ void ServoReadMoveTime(uint8_t ID);
 /// @note 无MCU协议下通过循环逐个控制实现
 void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, uint16_t *angles, uint16_t time);
 
+/*****************************舵机注册表***********************************/
+
+#define SERVO_REG_MAX_COUNT 8U
+
+typedef struct
+{
+    uint8_t id;           // 舵机ID
+    uint16_t raw_zero;    // 机械归零位置原始值
+    uint16_t raw_release; // 机械释放位置原始值
+} ServoRegistryItem_t;
+
+/// @brief 清空舵机注册表
+void ServoRegistry_Reset(void);
+
+/// @brief 批量注册舵机配置（覆盖原有注册）
+/// @param items 注册数组
+/// @param count 注册个数
+/// @retval true 注册成功，false 参数错误/数量超限/ID重复
+bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count);
+
+/// @brief 按ID查找舵机注册项
+/// @param id 舵机ID
+/// @return 内部注册项指针，未找到返回NULL
+const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id);
+
 /// @brief 运行动作组
 /// @param group_num 动作组编号
 /// @param run_times 运行次数（0表示无限次）

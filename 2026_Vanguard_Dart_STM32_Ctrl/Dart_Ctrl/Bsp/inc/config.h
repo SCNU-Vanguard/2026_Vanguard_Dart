@@ -63,6 +63,15 @@
 // 换弹结构相关
 #define ConveyorBeltLength 20673
 #define SeperationAngle 250
+#define DART_SERVO_ID1 0x01
+#define DART_SERVO_ID2 0x02
+#define DART_SERVO_ID3 0x03
+#define DART_SERVO1_RAW_ZERO 0
+#define DART_SERVO1_RAW_RELEASE 250
+#define DART_SERVO2_RAW_ZERO 210
+#define DART_SERVO2_RAW_RELEASE 390
+#define DART_SERVO3_RAW_ZERO 80
+#define DART_SERVO3_RAW_RELEASE 250
 #define PresetLoc (6427.0f)
 #define FirstServoLoc (1688.0f)
 #define SecondServoLoc (-4658.0f)
@@ -71,8 +80,8 @@
 // Preset = 6427，First = 1688，Second = -4658，Third = -11240
 
 // 储能电机相关
-#define LeftStoreLoad (-830.0f)   // 换弹位置
-#define RightStoreLoad (830.0f)   // 换弹位置
+#define LeftStoreLoad (-835.0f)   // 换弹位置
+#define RightStoreLoad (835.0f)   // 换弹位置
 #define LeftStoreBottom (-930.0f) // 左侧滑台底部
 #define RightStoreBottom (930.0f) // 右侧滑台底部
 #define LeftStoreTop (0.0f)       // 左侧滑台叉上滑顶部
