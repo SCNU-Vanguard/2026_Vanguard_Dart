@@ -54,6 +54,8 @@ static float MotorData = 0.0f;
 static float gripper_offset;
 static float trigger_offset;
 static float GripperTarget = 0.0f;
+static uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
+static uint16_t servo_angles[3] = {0x0000};
 volatile uint8_t g_DiagYaw4310EnableOk = 0U;
 
 static MotorTrapPosProfile_t g_LoadTrapProfile = {0};
@@ -711,6 +713,7 @@ void StoreEnergyTaskFunc(void *argument)
             DM_Motor_Disable(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1]);
             DmMotorSendCfg(DM_4310_YAW, 0.0f, 0.0f, DM_MIT);
             DM_Motor_Disable(&MotorManager.MotorList[DM_4310_YAW - 1]);
+            ServoControlMulti(3, servo_ids, servo_angles, 300);
             xSemaphoreGive(g_xMotorCtrlSemHandle);
             vTaskSuspend(StoreEnergyTaskHandle);
         }
@@ -786,8 +789,6 @@ void LoadTaskFunc(void *argument)
 {
     xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdFALSE, pdTRUE, portMAX_DELAY);
 
-    uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-    uint16_t servo_angles[3] = {0x0000};
     uint16_t servo_work_angle[3] = {SeperationAngle, SeperationAngle, SeperationAngle};
     bool MutexTake = false;
     uint8_t dart_num = 0x0000;
