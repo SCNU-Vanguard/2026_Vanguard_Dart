@@ -192,12 +192,26 @@ static void StartIbusDma(UartRxRingBuffer *rb)
     if (rb == NULL || rb->huart == NULL)
         return;
 
-    rb->isReceiving = true;
-    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN) != HAL_OK)
+    HAL_StatusTypeDef status = HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN);
+    if (status == HAL_OK || status == HAL_BUSY)
     {
-        rb->isReceiving = false;
+        rb->isReceiving = true;
+        if (rb->huart->hdmarx != NULL)
+        {
+            __HAL_DMA_DISABLE_IT(rb->huart->hdmarx, DMA_IT_HT);
+        }
         return;
     }
+
+    // 异常状态下尝试一次恢复，避免IBUS偶发错误后长期失联
+    rb->isReceiving = false;
+    (void)HAL_UART_AbortReceive(rb->huart);
+    status = HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_DMA_BUFFER_LEN);
+    if (status == HAL_OK || status == HAL_BUSY)
+    {
+        rb->isReceiving = true;
+    }
+
     if (rb->huart->hdmarx != NULL)
     {
         __HAL_DMA_DISABLE_IT(rb->huart->hdmarx, DMA_IT_HT);
@@ -565,6 +579,26 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     BSP_UART_RxCpltCallback(huart);
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    BSP_UART_NUM_e uart_num = GetUartNum(huart);
+    if (uart_num >= BSP_UART_MAX)
+        return;
+
+    UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
+    if (!rb->isReceiving)
+        return;
+
+    if (uart_num == BSP_UART6 && rb->protocol_type == PROTOCOL_IBUS)
+    {
+        StartIbusDma(rb);
+    }
+    else
+    {
+        HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+    }
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)

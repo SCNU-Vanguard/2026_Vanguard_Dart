@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F427xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../User;../Bsp;../Bsp/inc;../User/inc</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../User;../Bsp;../Bsp/inc;../User/inc;D:\KEIL\Pack\ARM\CMSIS-DSP\1.17.0\Include</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -729,6 +729,11 @@
               <FileName>motor_algrothim.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\src\motor_algrothim.c</FilePath>
+            </File>
+            <File>
+              <FileName>referee.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\referee.c</FilePath>
             </File>
           </Files>
         </Group>

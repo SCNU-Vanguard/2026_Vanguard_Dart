@@ -28,7 +28,7 @@
 
 #define MOTOR_TIMEOUT_MS 5000           // 电机运动超时时间（毫秒）
 #define MOTOR_DEAD_ZONE 3.0f            // 电机死区（用于位置判定）
-#define MOTOR_DEADZONE_TIMEOUT_MS 1000U // 死区判定超时退出（毫秒）
+#define MOTOR_DEADZONE_TIMEOUT_MS 3000U // 死区判定超时退出（毫秒）
 #define TRIGGER_DEAD_ZONE 5.0f          // 扳机电机死区
 #define SERVO_MOVE_TIME_MS 315          // 舵机转动时间（毫秒）
 #define POWER_ON_DELAY_MS 100           // 上电延迟时间（毫秒）
@@ -72,7 +72,7 @@
 #define DART_SERVO2_RAW_RELEASE 390
 #define DART_SERVO3_RAW_ZERO 80
 #define DART_SERVO3_RAW_RELEASE 250
-#define PresetLoc (6427.0f)
+#define PresetLoc (6700.0f)
 #define FirstServoLoc (1688.0f)
 #define SecondServoLoc (-4658.0f)
 #define ThirdServoLoc (-11240.0f)
@@ -80,18 +80,18 @@
 // Preset = 6427，First = 1688，Second = -4658，Third = -11240
 
 // 储能电机相关
-#define LeftStoreLoad (-835.0f)   // 换弹位置
-#define RightStoreLoad (835.0f)   // 换弹位置
-#define LeftStoreBottom (-930.0f) // 左侧滑台底部
-#define RightStoreBottom (930.0f) // 右侧滑台底部
+#define LeftStoreLoad (-850.0f)   // 换弹位置
+#define RightStoreLoad (850.0f)   // 换弹位置
+#define LeftStoreBottom (-860.0f) // 左侧滑台底部
+#define RightStoreBottom (860.0f) // 右侧滑台底部
 #define LeftStoreTop (0.0f)       // 左侧滑台叉上滑顶部
 #define RightStoreTop (0.0f)      // 右侧滑台叉上滑顶部
 #define LimitStore 930.0f         // 电机的位置限制
-#define StoreSpeed (12.0f)        // 储能电机移动速度
+#define StoreSpeed (6.0f)         // 储能电机移动速度
 
 // 扳机射程相关
 #define MG996R_store 2500   // 发射扳机待机状态。
-#define MG996R_shoot 1000   // 发射扳机发射状态
+#define MG996R_shoot 1200   // 发射扳机发射状态
 #define MG996R_initial 2500 // 飞镖支架初始状态，向前摆，方便安装飞镖体
 #define MG996R_extend 1750  // 飞镖支架伸出状态
 #define MG996R_shrink 900   // 飞镖支架收回状态，向后摆，让SG90的线距离C板短点
@@ -116,10 +116,10 @@
 #define SETUP_YAW_DART2 0.0f
 #define SETUP_YAW_DART1 0.0f
 
-#define SETUP_TRIGGER_DART4 (-100.0f)
-#define SETUP_TRIGGER_DART3 (100.0f)
-#define SETUP_TRIGGER_DART2 (200.0f)
-#define SETUP_TRIGGER_DART1 (0.0f)
+#define SETUP_TRIGGER_DART4 (0.0f) // 3
+#define SETUP_TRIGGER_DART3 (20000.0f) // 2
+#define SETUP_TRIGGER_DART2 (20000.0f) // 1
+#define SETUP_TRIGGER_DART1 (15000.0f) // 0
 
 // 调试开关：1=跳过“每发前4310/2006到位等待”，直接进入3519流程；0=按原流程等待
 #define STORE_BYPASS_SETUP_WAIT 0U

@@ -69,7 +69,7 @@ const osThreadAttr_t defaultTask_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 static void DefaultTask_Control3508(void);
 static void DefaultTask_Control2006(void);
-
+	float a = -1000.0f;
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -190,6 +190,7 @@ static void DefaultTask_Control2006(void)
   float target_pos_rel_deg = RmMotor2006TargetPosData;
   float target_pos_abs_deg = 0.0f;
 
+	
   if (s_2006_limit_inited == 0U)
   {
     s_2006_zero_pos_deg = motor_2006_pos_deg_abs;

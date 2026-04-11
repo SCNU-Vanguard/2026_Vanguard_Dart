@@ -135,7 +135,6 @@ extern ControlState_t g_ControlState; // 控制状态（ControlTask更新）
 
 // 电机控制权互斥信号量（调试任务和自动任务互斥使用）
 extern SemaphoreHandle_t g_xMotorCtrlSemHandle;
-extern SemaphoreHandle_t g_xAutoAllowDebugSemHandle;
 extern SemaphoreHandle_t g_xDebugFinishedSemHandle;
 
 /*============================== 任务句柄声明 ==============================*/

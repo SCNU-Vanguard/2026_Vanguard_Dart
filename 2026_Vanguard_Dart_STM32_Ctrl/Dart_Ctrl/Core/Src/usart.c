@@ -507,8 +507,10 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 /* USER CODE BEGIN 1 */
 int fputc(int ch, FILE *f)
 {
+  (void)f;
   // 使用轮询方式发送单个字符（适用于低频调试）
-  HAL_UART_Transmit(&huart6, (uint8_t *)&ch, 1, 1); // 短超时避免死锁
+  // 避免占用USART6（该口用于IBUS遥控接收）
+  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 1); // 短超时避免死锁
   return ch;
 }
 /* USER CODE END 1 */

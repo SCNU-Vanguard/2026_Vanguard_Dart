@@ -103,8 +103,8 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	uint16_t a = 500;
-	uint16_t b = 1290;
-	uint16_t c = 1290;
+	uint16_t b = 1300;
+	uint16_t c = 1300;
   while (1)
   {
 		a = a + 100;

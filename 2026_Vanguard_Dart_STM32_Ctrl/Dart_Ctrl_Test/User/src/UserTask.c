@@ -207,49 +207,7 @@ void StoreEnergyTaskFunc(void *argument)
         {
         case 0x00:
         {
-            // ========== 换弹等待状态 ==========
-            if (Dart == 4)
-            {
-                StoreState++;
-                break;
-            }
-            reload_confirmed = true;
-
-            // 自动激活调试窗口
-            if (!g_ControlState.debug_window_active)
-            {
-                g_ControlState.debug_window_active = true;
-                g_ControlState.debug_timer_start = HAL_GetTick();
-            }
-
-            // 释放信号量，允许调试任务控制（换弹期间可以手动调整）
-            xSemaphoreGive(g_xMotorCtrlSemHandle);
-
-            // 等待确认换弹
-            while (!reload_confirmed)
-            {
-                if (g_ControlInput.swc == -1 && g_ControlInput.swb == 0)
-                {
-#if SERVO_AUTO_RELOAD
-                    // uint8_t servo_id = Dart;
-                    uint8_t servo_id = 2; // 这里固定为2
-                    ServoControlPos(servo_id, SeperationAngle, SERVO_MOVE_TIME_MS);
-                    vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 50));
-                    ServoControlPos(servo_id, 0x0000, SERVO_MOVE_TIME_MS);
-                    vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 50));
-#else
-                    vTaskDelay(pdMS_TO_TICKS(100));
-#endif
-                    reload_confirmed = true;
-                }
-                vTaskDelay(pdMS_TO_TICKS(20));
-            }
-
-            // 重新获取信号量继续执行（使用超时避免死锁）
-            while (xSemaphoreTake(g_xMotorCtrlSemHandle, pdMS_TO_TICKS(100)) != pdTRUE)
-            {
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
+            // ========== 换弹等待状态（已跳过）==========
             StoreState++;
             break;
         }
@@ -347,13 +305,12 @@ void StoreEnergyTaskFunc(void *argument)
             vTaskDelay(1307);
 
             Dart--;
-            ControlState_StartDebugWindow(DEBUG_WINDOW_MS);
-            xSemaphoreGive(g_xMotorCtrlSemHandle);                    // 暂时归还电机控制权
-            xSemaphoreGive(g_xAutoAllowDebugSemHandle);               // 许可调试任务启动
-            xSemaphoreTake(g_xDebugFinishedSemHandle, portMAX_DELAY); // 等待调试结束
-            while (xSemaphoreTake(g_xMotorCtrlSemHandle, pdMS_TO_TICKS(100)) != pdTRUE)
-                vTaskDelay(1); // 重新夺回控制权
+            // 直接继续下一轮，不等待调试窗口
             StoreState = 0;
+            if (Dart == 0)
+            {
+                Dart = 4;
+            }
             break;
         }
         default:
@@ -384,8 +341,8 @@ void StateSetTaskFunc(void *argument)
     vTaskDelay(1);
     float temp = 0.0f;
     float degree = 0.0f;
-    float preseting_distance = RmMotorRemoveBias(RM_2006_TRIGGER, temp, true); // pay attention to this params, its unit is degree not rad!!!!
-    float preseting_yaw = 0.0f;                                                // this param is limited at (-160.0f, 160.0f)
+    float preseting_distance = MotorManager.MotorList[1].motor_data.offset_ecd_angle; // pay attention to this params, its unit is degree not rad!!!!
+    float preseting_yaw = 0.0f;                                                       // this param is limited at (-160.0f, 160.0f)
     HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
     while (1)
     {

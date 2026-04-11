@@ -43,12 +43,12 @@
 
 // @note 直接滑至最底部这样非常ok，这样只需要判断这个Trigger与Load的关系
 // 储能电机相关
-#define LeftStoreTrigger -900.0f // 靠近扳机位置-左边3519电机
-#define RightStoreTrigger 900.0f // 靠近扳机位置-右边3519电机
+#define LeftStoreTrigger -200.0f // 靠近扳机位置-左边3519电机
+#define RightStoreTrigger 200.0f // 靠近扳机位置-右边3519电机
 #define LeftStoreTop 0.0f        // 左侧滑台叉上滑顶部,正常为0
 #define RightStoreTop 0.0f       // 右侧滑台叉上滑顶部,正常为0
-#define LeftStoreLoad -850.0f    // 左侧换弹
-#define RightStoreLoad 850.0f    // 右侧换弹
+#define LeftStoreLoad -200.0f    // 左侧换弹
+#define RightStoreLoad 200.0f    // 右侧换弹
 #define LimitStore 950.0f        // 电机的位置限制
 
 // 扳机射程相关

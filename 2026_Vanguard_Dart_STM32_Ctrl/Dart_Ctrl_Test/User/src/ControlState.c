@@ -99,7 +99,7 @@ void ControlState_Init(void)
     if (g_xMotorCtrlSemHandle != NULL)
     {
         xSemaphoreGive(g_xMotorCtrlSemHandle);
-        xSemaphoreGive(g_xDebugFinishedSemHandle); // 初始给出信号量
+        xSemaphoreGive(g_xDebugFinishedSemHandle); // 初始给出，让第一发的调试等待直接通过
     }
     else
     {
@@ -223,47 +223,28 @@ static void UpdateControlInput(void)
  */
 static CtrlMode_e DetermineMode(int8_t swb, int8_t swc)
 {
-    // 【调试模式】：SWB=0 时直接进入手动控制，无需等待调试窗口
-    // 正式比赛时可以注释掉这段代码，恢复调试窗口限制
-#define DEBUG_MODE_ALWAYS_ALLOW 1
-#if DEBUG_MODE_ALWAYS_ALLOW
+    // 三态模式判定：
+    // SWB=0 -> 手动调试（直接遥控器控制电机）
+    // SWB=1 && 调试窗口激活 -> 调试窗口等待（窗口内可随时切手动）
+    // 其他 -> 正常单发流程
     if (swb == 0)
     {
-        // 如果调试窗口未激活，自动激活它
-        if (!g_ControlState.debug_window_active)
-        {
-            g_ControlState.debug_window_active = true;
-            g_ControlState.debug_timer_start = HAL_GetTick();
-        }
-        return CTRL_MODE_DEBUG_TIMER;
+        return CTRL_MODE_MANUAL_DEBUG;
     }
-    return CTRL_MODE_NORMAL_SINGLE;
-#else
-    // 检查调试窗口是否激活
+
     if (g_ControlState.debug_window_active)
     {
         uint32_t elapsed = HAL_GetTick() - g_ControlState.debug_timer_start;
         if (elapsed < DEBUG_WINDOW_MS)
         {
-            // 调试窗口内，SWB=0 才允许手动控制
-            if (swb == 0)
-            {
-                return CTRL_MODE_DEBUG_TIMER;
-            }
-            // 调试窗口内但SWB=1，仍然是调试窗口模式（但不发送电机命令）
             return CTRL_MODE_DEBUG_TIMER;
         }
-        else
-        {
-            // 调试窗口超时，关闭
-            g_ControlState.debug_window_active = false;
-        }
+        // 超时不在这里关闭 debug_window_active，
+        // 由 ControlTask 统一处理超时并 Give g_xDebugFinishedSemHandle，
+        // 避免 IbusTask 和 ControlTask 竞态导致信号量丢失
     }
 
-    // 调试窗口外，SWB=0 无效，始终为正常单发模式
-    // 只有在调试窗口内才允许手动控制
     return CTRL_MODE_NORMAL_SINGLE;
-#endif
 }
 
 /**
@@ -320,21 +301,18 @@ static void ControlTaskFunc(void *argument)
         // 更新控制状态模式
         bool prev_manual_override = g_ControlState.manual_override;
         g_ControlState.mode = g_ControlInput.mode;
-        // 只有在调试窗口内且SWB=0时才允许手动控制
-        g_ControlState.manual_override = (g_ControlState.mode == CTRL_MODE_DEBUG_TIMER &&
-                                          g_ControlInput.swb == 0);
+        // 手动调试模式：只看 mode，语义清晰
+        g_ControlState.manual_override = (g_ControlState.mode == CTRL_MODE_MANUAL_DEBUG);
 
-        // 检测进入手动模式的瞬间
-        if (g_ControlState.manual_override && !prev_manual_override)
+        // 手动模式下持续尝试获取电机控制权，避免边沿时刻获取失败后无法重试
+        if (g_ControlState.manual_override && !holding_motor_ctrl)
         {
-            // 获取电机控制权信号量（等待自动任务释放）
             if (g_xMotorCtrlSemHandle != NULL &&
-                xSemaphoreTake(g_xMotorCtrlSemHandle, pdMS_TO_TICKS(1000)) == pdTRUE)
+                xSemaphoreTake(g_xMotorCtrlSemHandle, pdMS_TO_TICKS(5)) == pdTRUE)
             {
                 holding_motor_ctrl = true;
-                // 同步目标值与电机反馈
+                // 首次真正接管控制权时同步目标，避免突跳
                 SyncTargetsWithMotorFeedback();
-                // 点亮调试LED
                 HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
             }
         }
@@ -342,13 +320,20 @@ static void ControlTaskFunc(void *argument)
         // 检测退出手动模式的瞬间
         if (!g_ControlState.manual_override && prev_manual_override)
         {
-            // 先释放信号量，再做其他操作（避免竞态条件）
             if (holding_motor_ctrl && g_xMotorCtrlSemHandle != NULL)
             {
+                // 持有信号量：释放电机控制权 + 通知 StoreEnergyTask 调试结束
                 xSemaphoreGive(g_xMotorCtrlSemHandle);
                 xSemaphoreGive(g_xDebugFinishedSemHandle);
                 holding_motor_ctrl = false;
-                g_ControlState.debug_window_active = false; // 防止超时逻辑重复give
+                g_ControlState.debug_window_active = false;
+            }
+            else
+            {
+                // 未持有信号量（快速拨动SWB，从未抢到控制权）
+                // 仍需通知 StoreEnergyTask，否则它会阻塞在 xSemaphoreTake(g_xDebugFinishedSemHandle) 直到超时
+                xSemaphoreGive(g_xDebugFinishedSemHandle);
+                g_ControlState.debug_window_active = false;
             }
             // 熄灭调试LED
             HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);

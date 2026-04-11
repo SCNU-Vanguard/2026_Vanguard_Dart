@@ -28,9 +28,7 @@ ControlState_t g_ControlState = {0};
 // 电机控制权互斥信号量（调试任务和自动任务互斥使用）
 static StaticSemaphore_t g_xMotorCtrlSemBuffer;
 SemaphoreHandle_t g_xMotorCtrlSemHandle = NULL;
-SemaphoreHandle_t g_xAutoAllowDebugSemHandle = NULL;
 SemaphoreHandle_t g_xDebugFinishedSemHandle = NULL;
-static StaticSemaphore_t g_xAutoAllowDebugSemBuffer;
 static StaticSemaphore_t g_xDebugFinishedSemBuffer;
 
 /*============================== 任务相关 ==============================*/
@@ -93,7 +91,6 @@ void ControlState_Init(void)
 
     // 创建电机控制权互斥信号量（初始状态为可用，自动任务可以先获取）
     g_xMotorCtrlSemHandle = xSemaphoreCreateBinaryStatic(&g_xMotorCtrlSemBuffer);
-    g_xAutoAllowDebugSemHandle = xSemaphoreCreateBinaryStatic(&g_xAutoAllowDebugSemBuffer);
     g_xDebugFinishedSemHandle = xSemaphoreCreateBinaryStatic(&g_xDebugFinishedSemBuffer);
     if (g_xMotorCtrlSemHandle != NULL)
     {
@@ -271,8 +268,8 @@ static CtrlMode_e DetermineMode(int8_t swb, int8_t swc)
 static void SyncTargetsWithMotorFeedback(void)
 {
     // 同步YAW目标（DM4310）
-    DM_Motor_RefreshData(DM_4310_YAW);
-    g_ControlState.yaw_target = Motor_GetTotalAngle(DM_4310_YAW);
+    // DM_Motor_RefreshData(DM_4310_YAW);
+    // g_ControlState.yaw_target = Motor_GetTotalAngle(DM_4310_YAW);
 
     // 同步扳机目标（RM2006）
     g_ControlState.trigger_target = Motor_GetTotalAngle(RM_2006_TRIGGER);
@@ -316,40 +313,30 @@ static void ControlTaskFunc(void *argument)
     while (1)
     {
         // 更新控制状态模式
-        bool prev_manual_override = g_ControlState.manual_override;
         g_ControlState.mode = g_ControlInput.mode;
         // 只有在调试窗口内且SWB=0时才允许手动控制
         g_ControlState.manual_override = (g_ControlState.mode == CTRL_MODE_DEBUG_TIMER &&
                                           g_ControlInput.swb == 0);
 
-        // 检测进入手动模式的瞬间
-        if (g_ControlState.manual_override && !prev_manual_override)
+        // 手动模式下持续尝试拿锁（非阻塞），不依赖边沿检测
+        if (g_ControlState.manual_override && !holding_motor_ctrl)
         {
-            // 获取电机控制权信号量（等待自动任务释放）
             if (g_xMotorCtrlSemHandle != NULL &&
-                xSemaphoreTake(g_xMotorCtrlSemHandle, pdMS_TO_TICKS(1000)) == pdTRUE)
+                xSemaphoreTake(g_xMotorCtrlSemHandle, 0) == pdTRUE)
             {
                 holding_motor_ctrl = true;
-                // 同步目标值与电机反馈
                 SyncTargetsWithMotorFeedback();
-                // 点亮调试LED
                 HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
             }
         }
 
-        // 检测退出手动模式的瞬间
-        if (!g_ControlState.manual_override && prev_manual_override)
+        // 退出手动模式：释放控制权
+        if (!g_ControlState.manual_override && holding_motor_ctrl)
         {
-            // 先释放信号量，再做其他操作（避免竞态条件）
-            if (holding_motor_ctrl && g_xMotorCtrlSemHandle != NULL)
-            {
-                xSemaphoreGive(g_xMotorCtrlSemHandle);
-                xSemaphoreGive(g_xDebugFinishedSemHandle);
-                holding_motor_ctrl = false;
-            }
-            // 退出手动模式时清除调试窗口
+            xSemaphoreGive(g_xMotorCtrlSemHandle);
+            xSemaphoreGive(g_xDebugFinishedSemHandle);
+            holding_motor_ctrl = false;
             g_ControlState.debug_window_active = false;
-            // 熄灭调试LED
             HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
         }
 
@@ -426,7 +413,7 @@ static void UpdateControlTargets(float dt)
 static void SendMotorCommands(void)
 {
     // YAW电机（DM4310 MIT模式）
-    DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT);
+    // DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT);
 
     // 储能电机（DM3519 位置速度模式）
     DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED);
