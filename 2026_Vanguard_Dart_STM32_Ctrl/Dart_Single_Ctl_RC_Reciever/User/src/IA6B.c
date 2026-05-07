@@ -28,13 +28,13 @@
 #include "config.h"
 #include "IA6B.h"
 
-int8_t Channel[13] = {0};
-int16_t RawChannel[13] = {0};
+int8_t Channel[14] = {0};
+int16_t RawChannel[14] = {0};
 void IA6B_HandleData2Channel(uint8_t *data)
 {
     // 传进来的channel数据是符合对应信道格式的,除去帧头和校验帧尾一共28字节
     // 前Channel1-14获取
-    for (uint8_t i = 0; i < 14; i++)
+    for (uint8_t i = 0; i < 13; i++)
     {
         // 两字节循环,直到26
         RawChannel[i] = data[2 * i] | (data[2 * i + 1] << 8);
@@ -89,7 +89,7 @@ int16_t IA6B_ReadChannel(uint8_t ChannelNum)
 
 /**
  * @brief 处理IBUS数据包并解析通道
- * @param uart_num UART编号 (通常为BSP_UART6)
+ * @param uart_num UART编号 (通常为BSP_UART6 / BSP_UART_IBUS)
  * @return true-成功获取并解析, false-无数据包
  * @note 在主循环或任务中周期性调用
  */

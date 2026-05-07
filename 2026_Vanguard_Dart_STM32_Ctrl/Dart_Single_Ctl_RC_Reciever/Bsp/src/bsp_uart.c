@@ -9,7 +9,7 @@
 /* 内部缓冲区定义（用户无需关心） */
 static UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
 static UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
-static uint8_t g_ibus_dma_buffer[IBUS_DMA_BUFFER_LEN];
+static uint8_t g_ibus_dma_buffers[BSP_UART_MAX][IBUS_DMA_BUFFER_LEN];
 
 /* 内部函数声明 */
 static void TxRingBuffer_Init(UartTxRingBuffer *rb, UART_HandleTypeDef *huart);
@@ -46,6 +46,8 @@ static UART_HandleTypeDef *GetUartHandle(BSP_UART_NUM_e uart_num)
         return &huart3;
     case BSP_UART6:
         return &huart6;
+    case BSP_UART1:
+        return &huart1;
     default:
         return NULL;
     }
@@ -60,6 +62,8 @@ static BSP_UART_NUM_e GetUartNum(UART_HandleTypeDef *huart)
         return BSP_UART3;
     if (huart == &huart6)
         return BSP_UART6;
+    if (huart == &huart1)
+        return BSP_UART1;
     return BSP_UART_MAX;
 }
 
@@ -161,15 +165,19 @@ static void StartTransmit(UartTxRingBuffer *rb)
 }
 
 /**
- * @brief 启动IBUS DMA接收（UART6专用）
+ * @brief 启动IBUS DMA接收（当前绑定USART6）
  */
 static void StartIbusDma(UartRxRingBuffer *rb)
 {
     if (rb == NULL || rb->huart == NULL)
         return;
 
+    BSP_UART_NUM_e uart_num = GetUartNum(rb->huart);
+    if (uart_num >= BSP_UART_MAX)
+        return;
+
     rb->isReceiving = true;
-    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffer, IBUS_FRAME_LEN) != HAL_OK)
+    if (HAL_UARTEx_ReceiveToIdle_DMA(rb->huart, g_ibus_dma_buffers[uart_num], IBUS_FRAME_LEN) != HAL_OK)
     {
         rb->isReceiving = false;
         return;
@@ -230,6 +238,7 @@ static uint16_t RxRingBuffer_Read(UartRxRingBuffer *rb, uint8_t *data, uint16_t 
  * @note 自动开启所有UART的中断接收，并为每个串口设置默认协议
  *       - UART3: SERVO_MCU协议（舵机通信，有MCU控制板，无CRC）
  *       - UART6: IBUS协议（遥控器接收）
+ *       - UART1: SBUS串口，当前先复用IBUS解析链路
  *       - 其他: OTHER（暂未定义）
  */
 void BSP_UART_Init(void)
@@ -251,6 +260,9 @@ void BSP_UART_Init(void)
                 break;
             case BSP_UART6:
                 rb->protocol_type = PROTOCOL_IBUS; // UART6: IBUS接收
+                break;
+            case BSP_UART1:
+                rb->protocol_type = PROTOCOL_IBUS; // UART1: 暂时复用同一解析链路
                 break;
             default:
                 rb->protocol_type = PROTOCOL_OTHER; // 其他串口暂未定义
@@ -304,7 +316,7 @@ void UART_SetProtocolType(BSP_UART_NUM_e uart_num, PROTOCOL_TYPE_e protocol_type
         return;
     }
 
-    if (protocol_type == PROTOCOL_IBUS && uart_num == BSP_UART6)
+    if (protocol_type == PROTOCOL_IBUS && (uart_num == BSP_UART6 || uart_num == BSP_UART1))
     {
         StartIbusDma(rb);
     }
@@ -357,7 +369,7 @@ void UART_RestartRx(BSP_UART_NUM_e uart_num)
     UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
     if (rb->huart == NULL)
         return;
-    if (rb->protocol_type == PROTOCOL_IBUS && uart_num == BSP_UART6)
+    if (rb->protocol_type == PROTOCOL_IBUS && (uart_num == BSP_UART6 || uart_num == BSP_UART1))
     {
         StartIbusDma(rb);
     }
@@ -490,7 +502,7 @@ void BSP_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 
 /**
  * @brief UART接收完成回调
- * @note  UART6 使用DMA接收IBUS固定32字节帧；
+ * @note  UART6 / UART1 当前均使用DMA接收同一固定帧格式；
  *        其他串口使用中断按字节接收并解析舵机协议
  */
 void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -500,7 +512,7 @@ void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         return;
 
     UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
-    if (uart_num == BSP_UART6 && rb->protocol_type == PROTOCOL_IBUS)
+    if ((uart_num == BSP_UART6 || uart_num == BSP_UART1) && rb->protocol_type == PROTOCOL_IBUS)
         return;
 
     // 将字节写入环形缓冲区（用于原始数据读取）
@@ -528,16 +540,17 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-    if (huart != &huart6)
+    BSP_UART_NUM_e uart_num = GetUartNum(huart);
+    if (uart_num != BSP_UART6 && uart_num != BSP_UART1)
         return;
 
-    UartRxRingBuffer *rb = &g_uart_rx_buffers[BSP_UART6];
+    UartRxRingBuffer *rb = &g_uart_rx_buffers[uart_num];
     if (rb->protocol_type != PROTOCOL_IBUS)
         return;
 
     if (Size > 0 && Size <= IBUS_DMA_BUFFER_LEN)
     {
-        Protocol_ParseIbusStream(rb, g_ibus_dma_buffer, Size);
+        Protocol_ParseIbusStream(rb, g_ibus_dma_buffers[uart_num], Size);
     }
 
     if (rb->isReceiving)

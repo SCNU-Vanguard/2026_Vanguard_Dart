@@ -10,11 +10,166 @@
  ****************************************************************/
 
 #include "HX06L.h"
+#include "config.h"
 #include "bsp_dwt.h"
 #include <string.h>
 #include "UartModule.h"
 #include "FreeRTOS.h"
 #include "task.h"
+
+static ServoRegistryItem_t g_servo_registry[SERVO_REG_MAX_COUNT];
+static uint8_t g_servo_registry_count = 0U;
+
+#define DART_SERVO_COUNT 6U
+#define DART_RELEASE_GROUP_COUNT 3U
+#define DART_RELEASE_GROUP_WIDTH 2U
+
+typedef struct
+{
+    uint8_t dart_num;
+    uint8_t servo_ids[DART_RELEASE_GROUP_WIDTH];
+} DartServoReleaseGroup_t;
+
+static const ServoRegistryItem_t g_dart_servo_registry[DART_SERVO_COUNT] = {
+    {.id = 0x01, .raw_zero = 0x0000, .raw_release = SeperationAngle},
+    {.id = 0x02, .raw_zero = 0x03E8, .raw_release = (0x03E8 - SeperationAngle)},
+    {.id = 0x03, .raw_zero = 0x0000, .raw_release = SeperationAngle},
+    {.id = 0x04, .raw_zero = 0x03E8, .raw_release = (0x03E8 - SeperationAngle)},
+    {.id = 0x05, .raw_zero = 0x0000, .raw_release = SeperationAngle},
+    {.id = 0x06, .raw_zero = 0x03E8, .raw_release = (0x03E8 - SeperationAngle)},
+};
+
+static const DartServoReleaseGroup_t g_dart_release_groups[DART_RELEASE_GROUP_COUNT] = {
+    {.dart_num = 1U, .servo_ids = {0x01, 0x02}},
+    {.dart_num = 2U, .servo_ids = {0x03, 0x04}},
+    {.dart_num = 3U, .servo_ids = {0x05, 0x06}},
+};
+
+static const DartServoReleaseGroup_t *Servo_FindDartGroup(uint8_t dart_num)
+{
+    for (uint8_t i = 0; i < DART_RELEASE_GROUP_COUNT; i++)
+    {
+        if (g_dart_release_groups[i].dart_num == dart_num)
+        {
+            return &g_dart_release_groups[i];
+        }
+    }
+    return NULL;
+}
+
+void ServoRegistry_Reset(void)
+{
+    memset(g_servo_registry, 0, sizeof(g_servo_registry));
+    g_servo_registry_count = 0U;
+}
+
+bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count)
+{
+    if (items == NULL || count == 0U || count > SERVO_REG_MAX_COUNT)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < count; i++)
+    {
+        for (uint8_t j = (uint8_t)(i + 1U); j < count; j++)
+        {
+            if (items[i].id == items[j].id)
+            {
+                return false;
+            }
+        }
+    }
+
+    memset(g_servo_registry, 0, sizeof(g_servo_registry));
+    memcpy(g_servo_registry, items, sizeof(ServoRegistryItem_t) * count);
+    g_servo_registry_count = count;
+    return true;
+}
+
+const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id)
+{
+    for (uint8_t i = 0; i < g_servo_registry_count; i++)
+    {
+        if (g_servo_registry[i].id == id)
+        {
+            return &g_servo_registry[i];
+        }
+    }
+    return NULL;
+}
+
+void Servo_RegisterDartProfiles(void)
+{
+    ServoRegistry_Reset();
+    (void)ServoRegistry_RegisterBatch(g_dart_servo_registry, DART_SERVO_COUNT);
+}
+
+void Servo_MoveAllToZero(uint16_t time_ms)
+{
+    uint8_t ids[DART_SERVO_COUNT];
+    uint16_t zeros[DART_SERVO_COUNT];
+
+    for (uint8_t i = 0; i < DART_SERVO_COUNT; i++)
+    {
+        ids[i] = g_dart_servo_registry[i].id;
+        zeros[i] = g_dart_servo_registry[i].raw_zero;
+    }
+
+    ServoControlMulti(DART_SERVO_COUNT, ids, zeros, time_ms);
+}
+
+bool Servo_MoveDartGroupToZero(uint8_t dart_num, uint16_t time_ms)
+{
+    uint8_t ids[DART_RELEASE_GROUP_WIDTH];
+    uint16_t zeros[DART_RELEASE_GROUP_WIDTH];
+    const DartServoReleaseGroup_t *group = Servo_FindDartGroup(dart_num);
+
+    if (group == NULL)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < DART_RELEASE_GROUP_WIDTH; i++)
+    {
+        const ServoRegistryItem_t *item = ServoRegistry_Find(group->servo_ids[i]);
+        if (item == NULL)
+        {
+            return false;
+        }
+        ids[i] = item->id;
+        zeros[i] = item->raw_zero;
+    }
+
+    ServoControlMulti(DART_RELEASE_GROUP_WIDTH, ids, zeros, time_ms);
+    return true;
+}
+
+bool Servo_ReleaseDartGroup(uint8_t dart_num, uint16_t time_ms)
+{
+    uint8_t ids[DART_RELEASE_GROUP_WIDTH];
+    uint16_t releases[DART_RELEASE_GROUP_WIDTH];
+    const DartServoReleaseGroup_t *group = Servo_FindDartGroup(dart_num);
+
+    if (group == NULL)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < DART_RELEASE_GROUP_WIDTH; i++)
+    {
+        const ServoRegistryItem_t *item = ServoRegistry_Find(group->servo_ids[i]);
+        if (item == NULL)
+        {
+            return false;
+        }
+        ids[i] = item->id;
+        releases[i] = item->raw_release;
+    }
+
+    ServoControlMulti(DART_RELEASE_GROUP_WIDTH, ids, releases, time_ms);
+    return true;
+}
 
 #if (other_mcu_forcing == 1)
 /*******************************************************************************
@@ -46,6 +201,7 @@ bool ServoInit(void)
     static uint8_t ServoInitCount = 0;
     if (ServoInitCount == 0)
     {
+        Servo_RegisterDartProfiles();
         uint8_t data[4];
         data[0] = 0x55;                    // 帧头
         data[1] = 0x55;                    // 帧头
@@ -304,15 +460,15 @@ bool ServoInit(void)
     if (ServoInitCount == 0)
     {
         // 第一步：让所有舵机上电
-        ServoSetLoad(1, 1);
-        ServoSetLoad(2, 1);
-        ServoSetLoad(3, 1);
+        Servo_RegisterDartProfiles();
+        for (uint8_t i = 0; i < DART_SERVO_COUNT; i++)
+        {
+            ServoSetLoad(g_dart_servo_registry[i].id, 1);
+        }
         vTaskDelay(50); // 等待舵机上电稳定
         
         // 第二步：控制舵机到初始位置0
-        ServoControlPos(1, 0, 500);
-        ServoControlPos(2, 0, 500);
-        ServoControlPos(3, 0, 500);
+        Servo_MoveAllToZero(500);
         vTaskDelay(100); // 等待返回消息
         ServoInitCount = 1;
     }

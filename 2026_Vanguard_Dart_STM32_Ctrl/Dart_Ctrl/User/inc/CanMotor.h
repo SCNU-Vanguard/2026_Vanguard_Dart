@@ -129,9 +129,12 @@ typedef enum
     SingleMotorTest = 1,
     RM_3508_GRIPPER = 1,
     RM_2006_TRIGGER,
-    DM_3519_STRENTH_LEFT,
-    DM_3519_STRENTH_RIGHT,
-    DM_4310_YAW
+    RM_3508_STORE_LEFT,
+    RM_3508_STORE_RIGHT,
+    DM_4310_YAW,
+    RM_6020_YAW = 5,
+    DM_3519_STRENTH_LEFT = RM_3508_STORE_LEFT,
+    DM_3519_STRENTH_RIGHT = RM_3508_STORE_RIGHT
 } can_motor_cfg;
 
 #pragma pack(push, 1)
@@ -139,9 +142,27 @@ typedef enum
 typedef struct
 {
     float direction_bias;     // 换向偏移补偿(°)
-    float position_tolerance; // 位置误差容限(°)
+    float position_min;       // 相对零点最小允许位置(°)
+    float position_max;       // 相对零点最大允许位置(°)
+    float position_tolerance; // 位置误差容限/到位死区(°)
     uint8_t reverse;          // 是否反向: 0-正向, 1-反向
 } MotorConfig_t;
+
+// S 型规划器的注册参数：
+// 1. 只保存“初始化/注册配置”
+// 2. 不保存运行时 cmd_pos/cmd_vel 之类状态
+// 3. 运行时状态仍由具体控制任务维护
+typedef struct
+{
+    uint8_t registered;
+    uint8_t resync_on_target_change;
+    float vmax_deg_s;
+    float amax_deg_s2;
+    float jmax_deg_s3;
+    float brake_gain;
+    float arrive_zone;
+    float decel_zone;
+} MotorTrapConfig_t;
 
 // 电机参数结构体（只读，由型号决定）
 typedef struct
@@ -176,6 +197,7 @@ typedef struct _MotorTypeDef
     // 电机配置和参数（面向对象扩展）
     MotorConfig_t config; // 用户可调配置
     MotorParams_t params; // 电机参数（只读）
+    MotorTrapConfig_t trap_config; // S 型规划器注册参数
 
     // ==================== 面向对象扩展 ====================
     // 电机类指针（指向类型定义，包含虚函数表和默认参数）

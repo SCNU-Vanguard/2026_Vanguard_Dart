@@ -1,4 +1,4 @@
-/*****************************************************
+﻿/*****************************************************
  * DM电机（达妙电机）控制模块
  * 适配H35系列电机（DM3519、DM4310等）
  * --------------------------------------------------
@@ -15,18 +15,25 @@
 
 #include "DM_Motor.h"
 #include "CanMotor.h"
+#include "config.h"
 #include "bsp_dwt.h"
+#include <math.h>
 #include <stdbool.h>
 #include "FreeRTOS.h"
 #include "task.h"
 
 // 直接访问电机管理器（减少函数调用开销）
 extern MotorManager_t MotorManager;
+static float s_dm_motor_pid_output = 0.0f;
 
 // 注意：不再直接调用硬件函数，改用 Motor_GetHAL() 接口
 
 #define CtrlMotorLen 8
 #define DM_SPEED_FILTER_COEF 0.0f // 达妙电机本身很准确
+#define DM3519_STALL_TORQUE_LIMIT_NM 5.0f
+#define DM3519_STALL_TORQUE_CLEAR_NM 4.0f
+#define DM3519_STALL_CONFIRM_MS 2500U
+#define DM3519_COIL_TEMP_LIMIT_C 50.0f
 
 // DM电机控制帧
 static const uint8_t DM_MOTOR_ENABLE[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
@@ -37,6 +44,146 @@ static bool DM_ENABLE_ARR[g_DM_MOTOR_NUM] = {false};
 
 // DM电机配置存储（非static，供头文件内联函数使用）
 DM_MotorConfig_t g_DM_Configs[4] = {0};
+
+typedef struct
+{
+    uint32_t over_current_start_ms;
+} DM3519_StallState_t;
+
+static volatile uint8_t s_dm3519_stall_protected = 0U;
+static DM3519_StallState_t s_dm3519_stall_state[2] = {0};
+
+static inline float DM_ClampFloat(float value, float min, float max)
+{
+    if (value < min)
+        return min;
+    if (value > max)
+        return max;
+    return value;
+}
+
+static inline float DM_ApplyOutputLimit(MotorTypeDef *motor, float pid_output)
+{
+    if (motor == NULL)
+        return 0.0f;
+
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls != NULL)
+    {
+        return DM_ClampFloat(pid_output, cls->torque_min, cls->torque_max);
+    }
+
+    return pid_output;
+}
+
+static inline void DM_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle)
+{
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    PID_t *outer_pid = &motor->cascade_pid.outer;
+    if (!outer_pid->initialized || outer_pid->calc_count == 0U)
+    {
+        return;
+    }
+
+    const float angle_error = target_angle - current_angle;
+    const float current_target_delta = target_angle - outer_pid->target;
+    const bool target_direction_reversed = (current_target_delta * outer_pid->feedforward) < 0.0f;
+    const bool error_direction_reversed = (angle_error * outer_pid->last_error) < 0.0f;
+
+    if (target_direction_reversed || error_direction_reversed)
+    {
+        PID_Clear_Integral(outer_pid);
+    }
+}
+
+static int DM_Get3519PairIndexByMotorCfg(can_motor_cfg motor_cfg)
+{
+    if (motor_cfg == DM_3519_STRENTH_LEFT)
+        return 0;
+    if (motor_cfg == DM_3519_STRENTH_RIGHT)
+        return 1;
+    return -1;
+}
+
+static int DM_Get3519PairIndex(const MotorTypeDef *motor)
+{
+    if (motor == NULL)
+        return -1;
+
+    const uint8_t motor_index = (uint8_t)(motor - MotorManager.MotorList);
+    const can_motor_cfg motor_cfg = (can_motor_cfg)(motor_index + 1U);
+    return DM_Get3519PairIndexByMotorCfg(motor_cfg);
+}
+
+static void DM_Reset3519StallStateByIndex(int index, float current_pos)
+{
+    (void)current_pos;
+    if (index < 0 || index >= 2)
+        return;
+
+    s_dm3519_stall_state[index].over_current_start_ms = 0U;
+}
+
+static void DM_Record3519TargetChange(can_motor_cfg motor_cfg, float target_pos)
+{
+    (void)target_pos;
+    DM_Reset3519StallStateByIndex(DM_Get3519PairIndexByMotorCfg(motor_cfg),
+                                  MotorManager.MotorList[motor_cfg - 1].motor_data.solved_data[0]);
+}
+
+static void DM_Check3519StallInFeedback(MotorTypeDef *motor)
+{
+    const int index = DM_Get3519PairIndex(motor);
+    if (index < 0 || motor == NULL)
+        return;
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+    DM3519_StallState_t *state = &s_dm3519_stall_state[index];
+    const float torque_nm = pData->solved_data[2];
+    const float coil_temp_c = pData->solved_data[4];
+    const uint32_t now_ms = HAL_GetTick();
+
+    if (!isfinite(torque_nm) || !isfinite(coil_temp_c))
+    {
+        state->over_current_start_ms = 0U;
+        return;
+    }
+
+    if (coil_temp_c > DM3519_COIL_TEMP_LIMIT_C)
+    {
+        s_dm3519_stall_protected = 1U;
+        state->over_current_start_ms = 0U;
+        return;
+    }
+
+    if (fabsf(torque_nm) <= DM3519_STALL_TORQUE_CLEAR_NM)
+    {
+        state->over_current_start_ms = 0U;
+        return;
+    }
+
+    if (fabsf(torque_nm) >= DM3519_STALL_TORQUE_LIMIT_NM)
+    {
+        if (state->over_current_start_ms == 0U)
+        {
+            state->over_current_start_ms = now_ms;
+            return;
+        }
+
+        if ((uint32_t)(now_ms - state->over_current_start_ms) >= DM3519_STALL_CONFIRM_MS)
+        {
+            s_dm3519_stall_protected = 1U;
+        }
+    }
+    else
+    {
+        state->over_current_start_ms = 0U;
+    }
+}
 
 /*============================== DM电机ID配置表 ==============================*/
 // 集中管理所有DM电机的CAN ID配置，修改ID只需改这里
@@ -85,8 +232,8 @@ const DM_MotorClass_t DM_J3519_Class = {
     .kp_min = 0.0f,
     .kd_max = 5.0f,
     .kd_min = 0.0f,
-    .pos_max = 1000.0f,
-    .pos_min = -1000.0f,
+    .pos_max = 1500.0f,
+    .pos_min = -1500.0f,
     .vel_max = 40.0f,
     .vel_min = -40.0f,
     .torque_max = 10.0f,
@@ -94,11 +241,10 @@ const DM_MotorClass_t DM_J3519_Class = {
     // 默认控制参数
     .default_kp = 0.0f,
     .default_kd = 0.0f,
-    .default_torque_ff = 0.2f,
+    .default_torque_ff = 0.0f,
     // 虚函数表
     .init = DM_J3519_InitInternal,
     .calculate = DM_J3519_CalculateInternal,
-    .send_control = DM_Motor_SendControlInternal,
     .refresh_data = DM_Motor_RefreshData,
     .WorkMode = DM_LOCATION_SPEED,
 };
@@ -127,7 +273,6 @@ const DM_MotorClass_t DM_J4310_Class = {
     // 虚函数表
     .init = DM_J4310_InitInternal,
     .calculate = DM_J4310_CalculateInternal,
-    .send_control = DM_Motor_SendControlInternal,
     .refresh_data = DM_Motor_RefreshData,
     .WorkMode = DM_MIT,
 };
@@ -312,27 +457,6 @@ void DM_Motor_Calculate(MotorTypeDef *motor)
     }
 }
 
-/// @brief 调用电机的发送控制函数
-uint8_t DM_Motor_SendControl(MotorTypeDef *motor)
-{
-    if (motor == NULL)
-        return 0;
-
-    // 优先使用类的虚函数表
-    if (motor->motor_class.dm_motor_class != NULL && motor->motor_class.dm_motor_class->send_control != NULL)
-    {
-        return motor->motor_class.dm_motor_class->send_control(motor);
-    }
-
-    // 兼容旧接口
-    if (motor->SendMotorControl != NULL)
-    {
-        return motor->SendMotorControl(motor);
-    }
-
-    return 0;
-}
-
 /// @brief 获取电机所属的类指针
 const DM_MotorClass_t *DM_Motor_GetClass(MotorTypeDef *motor)
 {
@@ -444,6 +568,36 @@ DM_MotorConfig_t *DM_Motor_GetConfig(MotorTypeDef *motor)
         return &g_DM_Configs[id - 1];
     }
     return NULL;
+}
+
+void DM_Motor_SetCascadePID(MotorTypeDef *motor,
+                            float outer_p, float outer_i, float outer_d, float outer_f,
+                            float inner_p, float inner_i, float inner_d, float inner_f,
+                            float outer_max_out, float outer_min_out, float outer_max_iout,
+                            float inner_max_out, float inner_min_out, float inner_max_iout)
+{
+    if (motor == NULL)
+        return;
+
+    motor->use_cascade = 1;
+    CASCADE_PID_Init(&motor->cascade_pid,
+                     outer_p, outer_i, outer_d, outer_f,
+                     inner_p, inner_i, inner_d, inner_f,
+                     outer_max_out, outer_min_out, outer_max_iout,
+                     inner_max_out, inner_min_out, inner_max_iout);
+    CASCADE_PID_Clear(&motor->cascade_pid);
+}
+
+void DM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
+                          float p, float i, float d, float f,
+                          float max_out, float min_out, float max_iout)
+{
+    if (motor == NULL)
+        return;
+
+    motor->use_cascade = 0;
+    PID_Init(&motor->inner_pid, mode, p, i, d, f, max_out, min_out, max_iout);
+    PID_Clear(&motor->inner_pid);
 }
 
 /*============================== 单独配置参数函数 ==============================*/
@@ -806,6 +960,8 @@ static void DM_J3519_CalculateInternal(MotorTypeDef *motor)
 
     pData->solved_data[5] = pData->solved_data[0] / 19.2f; // 转过的角度
     pData->solved_data[6] = pData->solved_data[1] / 19.2f; // 转过的速度
+
+    DM_Check3519StallInFeedback(motor);
 }
 
 /// @brief J4310电机解算（内部版本，优化：使用Fast版本获取配置）
@@ -876,8 +1032,41 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor)
     // }
 }
 
+static void DM_SendMITPIDFrame(can_motor_cfg motor_cfg, float target_pos, float target_vel, float torque_ff)
+{
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
+        return;
+
+    const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
+    if (cls == NULL)
+        return;
+
+    DM_MotorConfig_t *cfg = DM_Motor_GetConfig(motor);
+    if (cfg == NULL)
+        return;
+
+    uint8_t data[8] = {0x00};
+    uint16_t KP_RESULT = float_to_uint_config(cfg->kp, DM_KP, DM_MIT, cfg, cls);
+    uint16_t KD_RESULT = float_to_uint_config(cfg->kd, DM_KD, DM_MIT, cfg, cls);
+    uint16_t Torque_ff = float_to_uint_config(torque_ff, DM_TORQUE, DM_MIT, cfg, cls);
+    uint16_t Pos_des = float_to_uint_config(target_pos, DM_POS, DM_MIT, cfg, cls);
+    uint16_t Vel_des = float_to_uint_config(target_vel, DM_VEL, DM_MIT, cfg, cls);
+
+    data[0] = Pos_des >> 8;
+    data[1] = (uint8_t)Pos_des;
+    data[2] = Vel_des >> 4;
+    data[3] = ((Vel_des & 0x000F) << 4) | ((KP_RESULT & 0x0F00) >> 8);
+    data[4] = KP_RESULT;
+    data[5] = KD_RESULT >> 4;
+    data[6] = ((KD_RESULT & 0x000F) << 4) | ((Torque_ff & 0x0F00) >> 8);
+    data[7] = Torque_ff;
+
+    DM_MotorSetTxData(motor_cfg, data);
+}
+
 // 通用电机使用，可以是J4310也可以是J3519电机
-void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode)
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, float TargetTorque, DM_WorkMode workmode)
 {
     // 获取电机结构体并使用其配置参数（使用接口函数，解耦）
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
@@ -897,9 +1086,11 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
         // 使用用户配置的参数进行转换（修复：使用cfg而非cls->default）
         uint16_t KP_RESULT = float_to_uint_config(cfg->kp, DM_KP, DM_MIT, cfg, cls);
         uint16_t KD_RESULT = float_to_uint_config(cfg->kd, DM_KD, DM_MIT, cfg, cls);
-        uint16_t Torque_ff = float_to_uint_config(cfg->torque_ff, DM_TORQUE, DM_MIT, cfg, cls);
-        uint16_t Pos_des = float_to_uint_config(TargetPos, DM_POS, DM_MIT, cfg, cls);
-        uint16_t Vel_des = float_to_uint_config(TargetVel, DM_VEL, DM_MIT, cfg, cls);
+        uint16_t Torque_ff = float_to_uint_config(TargetTorque, DM_TORQUE, DM_MIT, cfg, cls);
+
+        // 直接调PID电流
+        uint16_t Pos_des = float_to_uint_config(0.0f, DM_POS, DM_MIT, cfg, cls);
+        uint16_t Vel_des = float_to_uint_config(0.0f, DM_VEL, DM_MIT, cfg, cls);
 
         data[0] = Pos_des >> 8;
         data[1] = (uint8_t)Pos_des;
@@ -912,6 +1103,8 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
     }
     else if (workmode == DM_LOCATION_SPEED)
     {
+        DM_Record3519TargetChange(motor_cfg, TargetPos);
+
         // 位置速度模式：直接发送float原始字节（小端序）
         uint8_t *pbuf = (uint8_t *)&TargetPos;
         uint8_t *vbuf = (uint8_t *)&TargetVel;
@@ -951,7 +1144,53 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
 
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
-    // 达妙电机无需PID（无功率控制情况下）,如果是有功率控制情况下,需要结合本身的系数将力矩转换成电流
+    if (motor_cfg < DM_3519_STRENTH_LEFT || motor_cfg > DM_4310_YAW)
+        return;
 
-    // DM_Motor_SetTorqueFF(); // 最后是对力矩进行设置
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
+        return;
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+    DM_HandleAngleLoopDirectionChange(motor, target, pData->solved_data[0]);
+
+    const float target_speed = PID_Calculate(&motor->cascade_pid.outer, target, pData->solved_data[0]);
+    s_dm_motor_pid_output = PID_Calculate(&motor->cascade_pid.inner, target_speed, pData->solved_data[1]);
+    // s_dm_motor_pid_output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[1]); // 用于测试单环调参
+    s_dm_motor_pid_output = DM_ApplyOutputLimit(motor, s_dm_motor_pid_output);
+
+    // 默认使用MIT模式
+    DmMotorSendCfg(motor_cfg, 0.0f, 0.0f, s_dm_motor_pid_output, DM_MIT);
+}
+
+void DmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
+{
+    if (motor_cfg < DM_3519_STRENTH_LEFT || motor_cfg > DM_4310_YAW)
+        return;
+
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
+        return;
+
+    MotorSolvedData_t *pData = &motor->motor_data;
+
+    s_dm_motor_pid_output = PID_Calculate(&motor->inner_pid, target_speed_rpm, pData->solved_data[1]);
+    s_dm_motor_pid_output = DM_ApplyOutputLimit(motor, s_dm_motor_pid_output);
+
+    // 默认使用MIT模式
+    DmMotorSendCfg(motor_cfg, 0.0f, 0.0f, s_dm_motor_pid_output, DM_MIT);
+}
+
+bool DM_Motor_Is3519StallProtected(void)
+{
+    return (s_dm3519_stall_protected != 0U);
+}
+
+void DM_Motor_Clear3519StallProtection(void)
+{
+    taskENTER_CRITICAL();
+    s_dm3519_stall_protected = 0U;
+    DM_Reset3519StallStateByIndex(0, MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0]);
+    DM_Reset3519StallStateByIndex(1, MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0]);
+    taskEXIT_CRITICAL();
 }

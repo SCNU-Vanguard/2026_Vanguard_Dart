@@ -680,6 +680,16 @@
               <FileType>1</FileType>
               <FilePath>..\Bsp\src\UartProtocol.c</FilePath>
             </File>
+            <File>
+              <FileName>CRC.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Bsp\src\CRC.c</FilePath>
+            </File>
+            <File>
+              <FileName>UserLib.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Bsp\src\UserLib.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

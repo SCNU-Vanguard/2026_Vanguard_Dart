@@ -13,6 +13,8 @@
 #include "RM_Motor.h"
 #include "DM_Motor.h"
 #include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 // 电机管理表
 MotorManager_t MotorManager = {0};
@@ -20,9 +22,9 @@ MotorManager_t MotorManager = {0};
 /*============================== 硬件抽象层实现 ==============================*/
 
 /// @brief 默认CAN发送函数
-static uint8_t Motor_DefaultCanSend(CAN_TxHeaderTypeDef *hdr, uint8_t *data)
+static uint8_t Motor_DefaultCanSend(CAN_TxHeaderTypeDef *hdr, uint8_t *data, CAN_TxRetryMode retry_mode)
 {
-    return CAN_SendData(&hcan1, hdr, data);
+    return CAN_SendData(&hcan1, hdr, data, retry_mode);
 }
 
 /// @brief 默认延时函数（毫秒）
@@ -137,19 +139,19 @@ void MotorRegister(void)
     // 夹爪传动带结构 - M3508电机
     RM_M3508_Init(&MotorManager.MotorList[RM_3508_GRIPPER - 1], RM_3508_GRIPPER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
-                           0.5f, 0.2f, 0.0f, 40.0f,
-                           0.091f, 1.0f, 0.0f, 93.0f,
-                           20000.0f, 0.0f, 2.0f,
-                           3500.0f, 0.0f, 600.0f);
+                           14.00f, 0.1f, 0.05f, 10.0f,
+                           0.225f, 1.00f, 0.05f, 93.0f,
+                           20000.0f, 0.0f, 500.0f,
+                           8000.0f, 0.0f, 1500.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].CAN_Rid = 0X001 | g_RM_MOTOR_BIAS_ADDR;
 
     // 扳机 - M2006电机
     RM_M2006_Init(&MotorManager.MotorList[RM_2006_TRIGGER - 1], RM_2006_TRIGGER);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_2006_TRIGGER - 1],
-                           10.0f, 0.0f, 0.0f, 0.000f,
-                           0.0785f, 0.0f, 0.0f, 40.0f,
+                           0.3f, 0.0f, 0.0f, 0.000f,
+                           15.91f, 0.0f, 0.0f, 0.0f,
                            9000.0f, 0.0f, 0.0f,
-                           5000.0f, 0.0f, 0.0f);
+                           6000.0f, 0.0f, 0.0f);
     MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = RM_2006_TRIGGER + g_RM_MOTOR_BIAS_ADDR_2006 + 0x004;
 
     // ==================== DM电机注册 ====================
@@ -157,23 +159,33 @@ void MotorRegister(void)
     DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1],
                   DM_GetIdConfig(DM_3519_STRENTH_LEFT)->motor_id);
     DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -20.0f, 20.0f);
-    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -200.0f, 200.0f);
+    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1], -1500.0f, 1500.0f);
     MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].CAN_Rid = DM_GetIdConfig(DM_3519_STRENTH_LEFT)->rx_id;
 
     // 右侧蓄力电机 - J3519
     DM_J3519_Init(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1],
                   DM_GetIdConfig(DM_3519_STRENTH_RIGHT)->motor_id);
     DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -20.0f, 20.0f);
-    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -200.0f, 200.0f);
+    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1], -1500.0f, 1500.0f);
     MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].CAN_Rid = DM_GetIdConfig(DM_3519_STRENTH_RIGHT)->rx_id;
 
     // Yaw轴电机 - J4310
-    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1],
-                  DM_GetIdConfig(DM_4310_YAW)->motor_id);
-    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -30.0f, 30.0f);
-    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -160.0f, 160.0f);
-    DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4591f, 1.0f, 0.0f);
-    MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = DM_GetIdConfig(DM_4310_YAW)->rx_id;
+    // DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1],
+    //               DM_GetIdConfig(DM_4310_YAW)->motor_id);
+    // DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -30.0f, 30.0f);
+    // DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -160.0f, 160.0f);
+    // DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4591f, 1.0f, 0.0f);
+    // MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = DM_GetIdConfig(DM_4310_YAW)->rx_id;
+
+    // 临时使用 GM6020 替代第 5 槽位的 4310，保持上层枚举和槽位编号不变。
+    RM_GM6020_Init(&MotorManager.MotorList[RM_6020_YAW - 1], 5);
+    // RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_6020_YAW - 1],
+    //                        0.3f, 0.0f, 0.0f, 0.000f,
+    //                        15.91f, 0.0f, 0.0f, 0.0f,
+    //                        9000.0f, 0.0f, 0.0f,
+    //                        10000.0f, 0.0f, 5000.0f);
+    RM_Motor_SetSpeedPID(&MotorManager.MotorList[RM_6020_YAW - 1], PID_POSITION, 40.0f, 0.0f, 0.0f, 0.0f, 10000.0f, 0.0f, 10000.0f);
+    MotorManager.MotorList[RM_6020_YAW - 1].CAN_Rid = 0x209;
 
     // ==================== 完成注册 ====================
     MotorManager.registered_count = 5;

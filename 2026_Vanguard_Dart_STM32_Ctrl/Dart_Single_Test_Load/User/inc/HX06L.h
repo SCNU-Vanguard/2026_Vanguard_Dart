@@ -205,6 +205,25 @@ void ServoReadMoveTime(uint8_t ID);
 /// @note 无MCU协议下通过循环逐个控制实现
 void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, uint16_t *angles, uint16_t time);
 
+/*****************************Servo registry***********************************/
+
+#define SERVO_REG_MAX_COUNT 12U
+
+typedef struct
+{
+    uint8_t id;
+    uint16_t raw_zero;
+    uint16_t raw_release;
+} ServoRegistryItem_t;
+
+void ServoRegistry_Reset(void);
+bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count);
+const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id);
+void Servo_RegisterDartProfiles(void);
+void Servo_MoveAllToZero(uint16_t time_ms);
+bool Servo_MoveDartGroupToZero(uint8_t dart_num, uint16_t time_ms);
+bool Servo_ReleaseDartGroup(uint8_t dart_num, uint16_t time_ms);
+
 /// @brief 运行动作组
 /// @param group_num 动作组编号
 /// @param run_times 运行次数（0表示无限次）

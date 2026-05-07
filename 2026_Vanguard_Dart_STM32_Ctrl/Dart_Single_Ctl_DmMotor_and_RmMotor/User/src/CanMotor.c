@@ -167,11 +167,16 @@ void MotorRegister(void)
     MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].CAN_Rid = (DM_3519_STRENTH_RIGHT | DM_LS_RX_BIAS) - g_RM_MOTOR_NUM;
 
     // Yaw轴电机 - J4310
-    DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1], DM_4310_YAW - g_RM_MOTOR_NUM);
-    DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -30.0f, 30.0f);
-    DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -160.0f, 160.0f);
-    DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4591f, 1.0f, 0.0f);
-    MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = (DM_4310_YAW | DM_MIT_RX_BIAS) - g_RM_MOTOR_NUM;
+    // DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1], DM_4310_YAW - g_RM_MOTOR_NUM);
+    // DM_Motor_SetVelLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -30.0f, 30.0f);
+    // DM_Motor_SetPosLimits(&MotorManager.MotorList[DM_4310_YAW - 1], -160.0f, 160.0f);
+    // DM_Motor_SetMITParams(&MotorManager.MotorList[DM_4310_YAW - 1], 1.4591f, 1.0f, 0.0f);
+    // MotorManager.MotorList[DM_4310_YAW - 1].CAN_Rid = (DM_4310_YAW | DM_MIT_RX_BIAS) - g_RM_MOTOR_NUM;
+
+    // 临时使用 GM6020 替代第 5 槽位的 4310，保持上层枚举和槽位编号不变。
+    RM_GM6020_Init(&MotorManager.MotorList[RM_6020_YAW - 1], 5);
+    RM_Motor_SetSpeedPID(&MotorManager.MotorList[RM_6020_YAW - 1], PID_POSITION, 40.0f, 0.0f, 0.0f, 0.0f, 10000.0f, 0.0f, 10000.0f);
+    MotorManager.MotorList[RM_6020_YAW - 1].CAN_Rid = 0x209;
 
     // ==================== 完成注册 ====================
     MotorManager.registered_count = 5;

@@ -318,11 +318,14 @@ void RM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
 
 static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
 {
-    if (st == NULL)
+    if (st == NULL || st->MotorInf.band != RM_MOTOR_BAND)
         return 0;
 
     // 获取发送缓冲区（直接访问，零开销）
     uint8_t *send_buffer = MotorManager.RM_MOTOR_DATA_ARRAY;
+
+    // 共享发送缓冲区每次重组前都清零，避免残留旧分组数据。
+    memset(send_buffer, 0x00, CtrlMotorLen);
 
     // 将RM3508电机的数据进行拼接（使用Fast版本，无边界检查）
     if (st->MotorInf.model == RmM3508)
@@ -378,7 +381,7 @@ void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
     }
 
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != RM_MOTOR_BAND)
     {
         return;
     }

@@ -16,7 +16,7 @@
 #define g_RM_MOTOR_NUM 2
 #define g_RM_M3508_NUM 1
 #define g_RM_M2006_NUM 1
-#define g_RM_GM6020_NUM 0
+#define g_RM_GM6020_NUM 4
 
 #define RM_TestUse 0U
 
@@ -34,7 +34,7 @@
 
 // GM6020电机参数
 #define RM_GM6020_GEAR_RATIO 1.0f                 // 减速比
-#define RM_GM6020_MAX_CURRENT 30000               // 最大电流（电压控制）
+#define RM_GM6020_MAX_CURRENT 16384               // 最大电流（电流控制）
 #define RM_GM6020_CURRENT_RATIO (16384.0f / 3.0f) // 16384对应3A
 
 /*============================== 前向声明 ==============================*/

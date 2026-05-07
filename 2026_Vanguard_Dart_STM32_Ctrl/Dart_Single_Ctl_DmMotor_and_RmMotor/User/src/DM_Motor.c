@@ -292,7 +292,7 @@ void DM_Motor_Calculate(MotorTypeDef *motor)
 /// @brief 调用电机的发送控制函数
 uint8_t DM_Motor_SendControl(MotorTypeDef *motor)
 {
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     // 优先使用类的虚函数表
@@ -564,7 +564,7 @@ float DM_Motor_GetTorqueFF(MotorTypeDef *motor)
 
 uint8_t DM_Motor_Enable(MotorTypeDef *motor)
 {
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
@@ -582,7 +582,7 @@ uint8_t DM_Motor_Enable(MotorTypeDef *motor)
 
 uint8_t DM_Motor_Disable(MotorTypeDef *motor)
 {
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
@@ -601,7 +601,7 @@ uint8_t DM_Motor_Disable(MotorTypeDef *motor)
 uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
@@ -617,22 +617,40 @@ uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
     return 0;
 }
 
-static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 {
+    if (motor_cfg < DM_3519_STRENTH_LEFT || motor_cfg > DM_4310_YAW)
+        return 0;
+
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
-    if (hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
+    const uint32_t enable_timeout_ms = 100U;
+    uint32_t start_tick = HAL_GetTick();
+
+    while ((uint32_t)(HAL_GetTick() - start_tick) < enable_timeout_ms)
     {
-        if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+        if (!hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
         {
-            DM_ENABLE_ARR[motor->MotorID - 1] = true;
+            vTaskDelay(pdMS_TO_TICKS(27));
+            continue;
         }
-        hal->delay_ms(1);
-        return 1;
+
+        vTaskDelay(pdMS_TO_TICKS(27));
+
+        uint8_t state = (motor->ReceiveMotorData[0] >> 4) & 0x0F;
+        if (state == 0x01)
+        {
+            if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+            {
+                DM_ENABLE_ARR[motor->MotorID - 1] = true;
+            }
+            return 1;
+        }
     }
+
     return 0;
 }
 
@@ -640,7 +658,7 @@ static uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
 void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
 {
     MotorTypeDef *st = &MotorManager.MotorList[motor_cfg - 1];
-    if (st == NULL)
+    if (st == NULL || st->MotorInf.band != DM_MOTOR_BAND)
     {
         return;
     }
@@ -660,7 +678,7 @@ void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
 
 static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
 {
-    if (st == NULL)
+    if (st == NULL || st->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     // 自动使能（合并条件判断）

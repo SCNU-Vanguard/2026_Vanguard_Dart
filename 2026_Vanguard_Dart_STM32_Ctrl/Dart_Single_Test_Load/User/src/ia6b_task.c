@@ -14,24 +14,50 @@ typedef struct
     uint8_t initialized;
 } UKF1D_t;
 
-float RmMotorTargetSpeedData = 0.0f;
-float RmMotorTargetPosData = 0.0f;
-float RmMotor2006TargetPosData = 0.0f;
-float RmMotor2006SpeedData = 0.0f;
-float RcLoad3508DesiredSpeedRpm = 0.0f;
-float RcLoad3508DesiredPosStepDeg = 0.0f;
-float RcLoad3508UkfSpeedRpm = 0.0f;
-float RcLoad3508StepSpeedRpm = 0.0f;
-float RcLoad3508StepValuePerFrame = LOAD3508_SPEED_STEP_MIN;
-float RcLoad3508StepPosStepDeg = 0.0f;
-float RcLoad3508PosStepValuePerFrame = LOAD3508_POS_STEP_MIN;
-float RcLoad3508UkfCovP = 0.0f;
-int16_t RcLoad3508Raw = 0;
-int8_t RcSWBState = 0;
-uint8_t RcLoad3508PosTargetInitialized = 0U;
-float RcLoad2006DesiredPosStepDeg = 0.0f;
-float RcLoad2006PosStepValuePerFrame = LOAD2006_SPEED_STEP_MIN;
-int16_t RcLoad2006Raw = 0;
+typedef struct
+{
+    can_motor_cfg motor_id;
+    float min_pos_deg;
+    float max_pos_deg;
+} RcDebug3508MotorInfo_t;
+
+float g_RcDebug3508TargetSpeedRpm = 0.0f;
+float g_RcDebug3508TargetPosDeg = 0.0f;
+float g_RcDebug3508LeftTargetPosDeg = 0.0f;
+float g_RcDebug3508RightTargetPosDeg = 0.0f;
+float g_RcDebug3508LeftPosDeg = 0.0f;
+float g_RcDebug3508RightPosDeg = 0.0f;
+float g_RcDebug3508LeftSpeedRpm = 0.0f;
+float g_RcDebug3508RightSpeedRpm = 0.0f;
+float g_RcDebug3508SyncErrorDeg = 0.0f;
+float g_RcDebug3508SyncPidOutputDeg = 0.0f;
+float g_RcDebug2006TargetPosDeg = 0.0f;
+float g_RcDebug2006SpeedRpm = 0.0f;
+float g_RcDebug3508DesiredSpeedRpm = 0.0f;
+float g_RcDebug3508DesiredPosStepDeg = 0.0f;
+float g_RcDebug3508UkfSpeedRpm = 0.0f;
+float g_RcDebug3508StepSpeedRpm = 0.0f;
+float g_RcDebug3508SpeedStepPerFrame = LOAD3508_SPEED_STEP_MIN;
+float g_RcDebug3508StepPosDeg = 0.0f;
+float g_RcDebug3508PosStepPerFrame = LOAD3508_POS_STEP_MIN;
+float g_RcDebug3508UkfCovP = 0.0f;
+int16_t g_RcDebug3508Raw = 0;
+int8_t g_RcDebugSwbState = 0;
+uint8_t g_RcDebug3508PosTargetInitialized = 0U;
+float g_RcDebug2006DesiredPosStepDeg = 0.0f;
+float g_RcDebug2006PosStepPerFrame = LOAD2006_SPEED_STEP_MIN;
+int16_t g_RcDebug2006Raw = 0;
+float g_RcDebug6020TargetSpeedRpm = 0.0f;
+float g_RcDebug6020TargetPosDeg = 0.0f;
+float g_RcDebug6020SpeedRpm = 0.0f;
+float g_RcDebug6020DesiredSpeedRpm = 0.0f;
+float g_RcDebug6020DesiredPosStepDeg = 0.0f;
+float g_RcDebug6020StepSpeedRpm = 0.0f;
+float g_RcDebug6020SpeedStepPerFrame = LOAD6020_SPEED_STEP_MIN;
+float g_RcDebug6020StepPosDeg = 0.0f;
+float g_RcDebug6020PosStepPerFrame = LOAD6020_POS_STEP_MIN;
+int16_t g_RcDebug6020Raw = 0;
+uint8_t g_RcDebug6020PosTargetInitialized = 0U;
 
 float RmMotorPosTargetTestCurrentMs = 0.0f;
 float RmMotorPosTargetTestLastMs = 0.0f;
@@ -46,13 +72,23 @@ extern float RmMotorSpeedData;
 static uint32_t g_last_ibus_tick = 0U;
 static float g_prev_desired_speed_rpm_3508 = 0.0f;
 static float g_prev_desired_pos_step_deg = 0.0f;
-static uint8_t g_offset_applied = 0U;
+static float g_prev_desired_speed_rpm_6020 = 0.0f;
+static float g_prev_desired_pos_step_deg_6020 = 0.0f;
+static PID_t g_RcDebug3508SyncPid;
 
 #if RC_INPUT_USE_UKF
 static UKF1D_t g_RcInputUkf = {0};
 #endif
 
+static const RcDebug3508MotorInfo_t g_RcDebug3508PrimaryMotorInfo =
+#if ENABLE_RC_DEBUG_3508_STORE_RIGHT
+    {RM_3508_STORE_RIGHT, RightStoreTop, LimitStore};
+#else
+    {RM_3508_STORE_LEFT, -LimitStore, LeftStoreTop};
+#endif
+
 static float NormalizeCenterStick(int16_t raw);
+static float NormalizeCenterStickWithConfig(int16_t raw, int16_t center, float range, float deadzone);
 static float ClampFloat(float value, float min_value, float max_value);
 static float StepToward(float current, float target, float step);
 static float ComputeAdaptiveStep(float desired_value, float prev_desired_value, float tracking_error,
@@ -61,36 +97,49 @@ static float UpdateSpeedTargetWithStep(float desired_speed_rpm, float *step_spee
                                        float *prev_desired_speed_rpm, float min_speed_rpm, float max_speed_rpm,
                                        float step_min, float step_max, float step_sensitivity, bool ibus_updated);
 static void UpdatePosTargetDurationTest(float target_pos_deg);
+static uint8_t IsMotorHandleReady(can_motor_cfg motor_id);
+static float GetMotorRelativePosDeg(can_motor_cfg motor_id);
+static float GetMotorRelativeSpeedRpm(can_motor_cfg motor_id);
+static void Initialize3508PosTargetsIfNeeded(void);
+static void Update3508CascadeTargets(float stick_norm, bool ibus_updated);
 #if RC_INPUT_USE_UKF
 static void UKF1D_Reset(UKF1D_t *ukf, float init_x);
 static float UKF1D_Update(UKF1D_t *ukf, float z);
 #endif
 static void RC3508ResetStates(void);
 static void RC2006ResetStates(void);
+static void RC6020ResetStates(void);
 
 void IA6BTask_Init(void)
 {
     g_last_ibus_tick = 0U;
     g_prev_desired_speed_rpm_3508 = 0.0f;
     g_prev_desired_pos_step_deg = 0.0f;
-    RcLoad3508PosTargetInitialized = 0U;
+    g_prev_desired_speed_rpm_6020 = 0.0f;
+    g_prev_desired_pos_step_deg_6020 = 0.0f;
+    g_RcDebug3508PosTargetInitialized = 0U;
+    g_RcDebug6020PosTargetInitialized = 0U;
 
-    RcLoad3508StepValuePerFrame = LOAD3508_SPEED_STEP_MIN;
-    RcLoad3508PosStepValuePerFrame = LOAD3508_POS_STEP_MIN;
-    RcLoad2006PosStepValuePerFrame = LOAD2006_SPEED_STEP_MIN;
-    RmMotor2006TargetPosData = 0.0f;
+    g_RcDebug3508SpeedStepPerFrame = LOAD3508_SPEED_STEP_MIN;
+    g_RcDebug3508PosStepPerFrame = LOAD3508_POS_STEP_MIN;
+    g_RcDebug2006PosStepPerFrame = LOAD2006_SPEED_STEP_MIN;
+    g_RcDebug6020SpeedStepPerFrame = LOAD6020_SPEED_STEP_MIN;
+    g_RcDebug6020PosStepPerFrame = LOAD6020_POS_STEP_MIN;
+    g_RcDebug2006TargetPosDeg = 0.0f;
+    PID_Init(&g_RcDebug3508SyncPid, PID_POSITION,
+             LOAD3508_SYNC_PID_KP, LOAD3508_SYNC_PID_KI, LOAD3508_SYNC_PID_KD, LOAD3508_SYNC_PID_KF,
+             LOAD3508_SYNC_PID_MAX_OUT, LOAD3508_SYNC_PID_MIN_OUT, LOAD3508_SYNC_PID_MAX_IOUT);
+    PID_Clear(&g_RcDebug3508SyncPid);
 
 #if ENABLE_RC_DEBUG_3508
-    if (g_offset_applied == 0U)
-    {
-        float m_offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
-        RmMotorTargetPosData += m_offset_angle;
-        g_offset_applied = 1U;
-    }
+    g_RcDebug3508TargetPosDeg = 0.0f;
+    g_RcDebug3508LeftTargetPosDeg = 0.0f;
+    g_RcDebug3508RightTargetPosDeg = 0.0f;
 #endif
 
     RC3508ResetStates();
     RC2006ResetStates();
+    RC6020ResetStates();
 }
 
 void IA6BTask_ProcessAndControl(void)
@@ -100,6 +149,7 @@ void IA6BTask_ProcessAndControl(void)
     bool rc_online = false;
     bool rc_enabled_3508 = false;
     bool rc_enabled_2006 = false;
+    bool rc_enabled_6020 = false;
 
     if (IA6B_ProcessIbusPacket(BSP_UART6))
     {
@@ -110,109 +160,67 @@ void IA6BTask_ProcessAndControl(void)
     rc_online = (g_last_ibus_tick != 0U) &&
                 ((HAL_GetTick() - g_last_ibus_tick) <= IBUS_LOST_TIMEOUT_MS);
 
-    RcSWBState = Channel[4];
-    rc_enabled_3508 = rc_online && (RcSWBState == 0);
+    g_RcDebugSwbState = Channel[4];
+    rc_enabled_3508 = rc_online && (g_RcDebugSwbState == 0);
     rc_enabled_2006 = rc_online;
+    rc_enabled_6020 = rc_online;
 
 #if ENABLE_RC_DEBUG_3508
-    RcLoad3508DesiredSpeedRpm = 0.0f;
-    RcLoad3508DesiredPosStepDeg = 0.0f;
-    RcLoad3508UkfSpeedRpm = 0.0f;
-    RcLoad3508Raw = RawChannel[3];
+    g_RcDebug3508DesiredSpeedRpm = 0.0f;
+    g_RcDebug3508DesiredPosStepDeg = 0.0f;
+    g_RcDebug3508UkfSpeedRpm = 0.0f;
+    g_RcDebug3508Raw = RawChannel[LOAD3508_RAW_CHANNEL_INDEX];
+    g_RcDebug3508LeftPosDeg = GetMotorRelativePosDeg(RM_3508_STORE_LEFT);
+    g_RcDebug3508RightPosDeg = GetMotorRelativePosDeg(RM_3508_STORE_RIGHT);
+    g_RcDebug3508LeftSpeedRpm = GetMotorRelativeSpeedRpm(RM_3508_STORE_LEFT);
+    g_RcDebug3508RightSpeedRpm = GetMotorRelativeSpeedRpm(RM_3508_STORE_RIGHT);
+    g_RcDebug3508SyncErrorDeg = g_RcDebug3508LeftPosDeg + g_RcDebug3508RightPosDeg;
+    g_RcDebug3508SyncPidOutputDeg = 0.0f;
 #if RC_INPUT_USE_UKF
-    RcLoad3508UkfCovP = g_RcInputUkf.P;
+    g_RcDebug3508UkfCovP = g_RcInputUkf.P;
 #else
-    RcLoad3508UkfCovP = 0.0f;
+    g_RcDebug3508UkfCovP = 0.0f;
 #endif
 
     if (rc_enabled_3508)
     {
         float stick_norm = 0.0f;
         float filtered_speed_rpm = 0.0f;
-        if (RcLoad3508Raw >= 900 && RcLoad3508Raw <= 2100)
+        if (g_RcDebug3508Raw >= 900 && g_RcDebug3508Raw <= 2100)
         {
-            stick_norm = NormalizeCenterStick(RcLoad3508Raw);
-            RcLoad3508DesiredSpeedRpm = stick_norm * LOAD3508_MAX_SPEED_RPM;
-            RcLoad3508DesiredSpeedRpm = ClampFloat(RcLoad3508DesiredSpeedRpm, LOAD3508_MIN_SPEED_RPM, LOAD3508_MAX_SPEED_RPM);
+            stick_norm = NormalizeCenterStick(g_RcDebug3508Raw);
+            g_RcDebug3508DesiredSpeedRpm = stick_norm * LOAD3508_MAX_SPEED_RPM;
+            g_RcDebug3508DesiredSpeedRpm = ClampFloat(g_RcDebug3508DesiredSpeedRpm, LOAD3508_MIN_SPEED_RPM, LOAD3508_MAX_SPEED_RPM);
         }
 
 #if RC_INPUT_USE_UKF
-        RcLoad3508UkfSpeedRpm = UKF1D_Update(&g_RcInputUkf, RcLoad3508DesiredSpeedRpm);
-        RcLoad3508UkfCovP = g_RcInputUkf.P;
-        filtered_speed_rpm = RcLoad3508UkfSpeedRpm;
+        g_RcDebug3508UkfSpeedRpm = UKF1D_Update(&g_RcInputUkf, g_RcDebug3508DesiredSpeedRpm);
+        g_RcDebug3508UkfCovP = g_RcInputUkf.P;
+        filtered_speed_rpm = g_RcDebug3508UkfSpeedRpm;
 #else
-        RcLoad3508UkfSpeedRpm = RcLoad3508DesiredSpeedRpm;
-        RcLoad3508UkfCovP = 0.0f;
-        filtered_speed_rpm = RcLoad3508UkfSpeedRpm;
+        g_RcDebug3508UkfSpeedRpm = g_RcDebug3508DesiredSpeedRpm;
+        g_RcDebug3508UkfCovP = 0.0f;
+        filtered_speed_rpm = g_RcDebug3508UkfSpeedRpm;
 #endif
 
         filtered_speed_rpm = ClampFloat(filtered_speed_rpm, LOAD3508_MIN_SPEED_RPM, LOAD3508_MAX_SPEED_RPM);
-        RmMotorTargetSpeedData = UpdateSpeedTargetWithStep(filtered_speed_rpm,
-                                                           &RcLoad3508StepSpeedRpm,
-                                                           &RcLoad3508StepValuePerFrame,
-                                                           &g_prev_desired_speed_rpm_3508,
-                                                           LOAD3508_MIN_SPEED_RPM,
-                                                           LOAD3508_MAX_SPEED_RPM,
-                                                           LOAD3508_SPEED_STEP_MIN,
-                                                           LOAD3508_SPEED_STEP_MAX,
-                                                           LOAD3508_SPEED_STEP_SENSITIVITY,
-                                                           ibus_updated);
+        g_RcDebug3508TargetSpeedRpm = UpdateSpeedTargetWithStep(filtered_speed_rpm,
+                                                                &g_RcDebug3508StepSpeedRpm,
+                                                                &g_RcDebug3508SpeedStepPerFrame,
+                                                                &g_prev_desired_speed_rpm_3508,
+                                                                LOAD3508_MIN_SPEED_RPM,
+                                                                LOAD3508_MAX_SPEED_RPM,
+                                                                LOAD3508_SPEED_STEP_MIN,
+                                                                LOAD3508_SPEED_STEP_MAX,
+                                                                LOAD3508_SPEED_STEP_SENSITIVITY,
+                                                                ibus_updated);
 
 #if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
-        if (!RcLoad3508PosTargetInitialized)
-        {
-            MotorTypeDef *motor = Motor_GetHandle(RM_3508_GRIPPER);
-            if (motor != NULL)
-            {
-                RmMotorTargetPosData = motor->motor_data.solved_data[3];
-                RcLoad3508PosTargetInitialized = 1U;
-            }
-        }
-        if (RcLoad3508PosTargetInitialized)
-        {
-            RcLoad3508DesiredPosStepDeg = stick_norm * LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME;
-            if (ibus_updated)
-            {
-                float tracking_error_pos = RcLoad3508DesiredPosStepDeg - RcLoad3508StepPosStepDeg;
-                if (tracking_error_pos < 0.0f)
-                {
-                    tracking_error_pos = -tracking_error_pos;
-                }
-                RcLoad3508PosStepValuePerFrame = ComputeAdaptiveStep(RcLoad3508DesiredPosStepDeg,
-                                                                     g_prev_desired_pos_step_deg,
-                                                                     tracking_error_pos,
-                                                                     LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME,
-                                                                     LOAD3508_POS_STEP_MIN,
-                                                                     LOAD3508_POS_STEP_MAX,
-                                                                     LOAD3508_POS_STEP_SENSITIVITY);
-            }
-
-            RcLoad3508StepPosStepDeg = StepToward(RcLoad3508StepPosStepDeg,
-                                                  RcLoad3508DesiredPosStepDeg,
-                                                  RcLoad3508PosStepValuePerFrame);
-            if (RcLoad3508StepPosStepDeg < -LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME)
-            {
-                RcLoad3508StepPosStepDeg = -LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME;
-            }
-            else if (RcLoad3508StepPosStepDeg > LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME)
-            {
-                RcLoad3508StepPosStepDeg = LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME;
-            }
-
-            RmMotorTargetPosData += RcLoad3508StepPosStepDeg;
-            if (RmMotorTargetPosData < LOAD3508_POS_TARGET_MIN_DEG)
-            {
-                RmMotorTargetPosData = LOAD3508_POS_TARGET_MIN_DEG;
-            }
-            else if (RmMotorTargetPosData > LOAD3508_POS_TARGET_MAX_DEG)
-            {
-                RmMotorTargetPosData = LOAD3508_POS_TARGET_MAX_DEG;
-            }
-        }
+        Update3508CascadeTargets(stick_norm, ibus_updated);
 #endif
         if (ibus_updated)
         {
-            g_prev_desired_pos_step_deg = RcLoad3508DesiredPosStepDeg;
+            g_prev_desired_pos_step_deg = g_RcDebug3508DesiredPosStepDeg;
         }
     }
     else
@@ -222,48 +230,162 @@ void IA6BTask_ProcessAndControl(void)
 #endif
 
 #if ENABLE_RC_DEBUG_2006
-    RcLoad2006DesiredPosStepDeg = 0.0f;
-    RcLoad2006Raw = RawChannel[LOAD2006_STEP_RAW_CHANNEL_INDEX];
+    g_RcDebug2006DesiredPosStepDeg = 0.0f;
+#if LOAD2006_USE_CENTER_STICK
+    g_RcDebug2006Raw = RawChannel[LOAD2006_CENTER_RAW_CHANNEL_INDEX];
+    if (rc_enabled_2006)
+    {
+        float stick_norm = 0.0f;
+        if (g_RcDebug2006Raw >= 900 && g_RcDebug2006Raw <= 2100)
+        {
+            stick_norm = NormalizeCenterStickWithConfig(g_RcDebug2006Raw,
+                                                        LOAD2006_CENTER_STICK_CENTER,
+                                                        LOAD2006_CENTER_STICK_RANGE,
+                                                        LOAD2006_CENTER_STICK_DEADZONE);
+        }
+
+        g_RcDebug2006DesiredPosStepDeg = stick_norm * LOAD2006_CENTER_POS_STEP_MAX_DEG_PER_FRAME;
+        g_RcDebug2006PosStepPerFrame = g_RcDebug2006DesiredPosStepDeg;
+        g_RcDebug2006TargetPosDeg += g_RcDebug2006DesiredPosStepDeg;
+        g_RcDebug2006TargetPosDeg = ClampFloat(g_RcDebug2006TargetPosDeg,
+                                               LOAD2006_POS_TARGET_MIN_DEG,
+                                               LOAD2006_POS_TARGET_MAX_DEG);
+    }
+    else
+    {
+        RC2006ResetStates();
+    }
+#else
+    g_RcDebug2006Raw = RawChannel[LOAD2006_STEP_RAW_CHANNEL_INDEX];
     if (rc_enabled_2006)
     {
         int16_t rc_dir_raw = RawChannel[LOAD2006_DIR_RAW_CHANNEL_INDEX];
 
-        if (RcLoad2006Raw > LOAD2006_STEP_RAW_IDLE_MAX)
+        if (g_RcDebug2006Raw > LOAD2006_STEP_RAW_IDLE_MAX)
         {
-            float ratio = (float)(RcLoad2006Raw - LOAD2006_STEP_RAW_IDLE_MAX) /
+            float ratio = (float)(g_RcDebug2006Raw - LOAD2006_STEP_RAW_IDLE_MAX) /
                           (float)(LOAD2006_STEP_RAW_MAX - LOAD2006_STEP_RAW_IDLE_MAX);
             ratio = ClampFloat(ratio, 0.0f, 1.0f);
-            RcLoad2006PosStepValuePerFrame = LOAD2006_SPEED_STEP_MIN +
-                                             (LOAD2006_SPEED_STEP_MAX - LOAD2006_SPEED_STEP_MIN) * ratio;
+            g_RcDebug2006PosStepPerFrame = LOAD2006_SPEED_STEP_MIN +
+                                           (LOAD2006_SPEED_STEP_MAX - LOAD2006_SPEED_STEP_MIN) * ratio;
         }
         else
         {
-            RcLoad2006PosStepValuePerFrame = 0.0f;
+            g_RcDebug2006PosStepPerFrame = 0.0f;
         }
 
         if ((rc_dir_raw >= LOAD2006_DIR_INC_RAW_MIN) && (rc_dir_raw <= LOAD2006_DIR_INC_RAW_MAX))
         {
-            RcLoad2006DesiredPosStepDeg = RcLoad2006PosStepValuePerFrame;
+            g_RcDebug2006DesiredPosStepDeg = g_RcDebug2006PosStepPerFrame;
         }
         else if (rc_dir_raw >= LOAD2006_DIR_DEC_RAW_MIN)
         {
-            RcLoad2006DesiredPosStepDeg = -RcLoad2006PosStepValuePerFrame;
+            g_RcDebug2006DesiredPosStepDeg = -g_RcDebug2006PosStepPerFrame;
         }
 
-        RmMotor2006TargetPosData += RcLoad2006DesiredPosStepDeg;
-        RmMotor2006TargetPosData = ClampFloat(RmMotor2006TargetPosData,
-                                              LOAD2006_POS_TARGET_MIN_DEG,
-                                              LOAD2006_POS_TARGET_MAX_DEG);
+        g_RcDebug2006TargetPosDeg += g_RcDebug2006DesiredPosStepDeg;
+        g_RcDebug2006TargetPosDeg = ClampFloat(g_RcDebug2006TargetPosDeg,
+                                               LOAD2006_POS_TARGET_MIN_DEG,
+                                               LOAD2006_POS_TARGET_MAX_DEG);
     }
     else
     {
         RC2006ResetStates();
     }
 #endif
+#endif
+
+#if ENABLE_RC_DEBUG_6020
+    g_RcDebug6020DesiredSpeedRpm = 0.0f;
+    g_RcDebug6020DesiredPosStepDeg = 0.0f;
+    g_RcDebug6020Raw = RawChannel[LOAD6020_RAW_CHANNEL_INDEX];
+    if (rc_enabled_6020)
+    {
+        float stick_norm = 0.0f;
+        if (g_RcDebug6020Raw >= 900 && g_RcDebug6020Raw <= 2100)
+        {
+            stick_norm = NormalizeCenterStickWithConfig(g_RcDebug6020Raw,
+                                                        LOAD6020_STICK_CENTER,
+                                                        LOAD6020_STICK_RANGE,
+                                                        LOAD6020_STICK_DEADZONE);
+            g_RcDebug6020DesiredSpeedRpm = stick_norm * LOAD6020_MAX_SPEED_RPM;
+            g_RcDebug6020DesiredSpeedRpm = ClampFloat(g_RcDebug6020DesiredSpeedRpm,
+                                                      LOAD6020_MIN_SPEED_RPM,
+                                                      LOAD6020_MAX_SPEED_RPM);
+        }
+
+#if LOAD6020_OUTPUT_MODE == LOAD6020_OUTPUT_CASCADE_POS
+        if (!g_RcDebug6020PosTargetInitialized)
+        {
+            MotorTypeDef *motor = Motor_GetHandle(RM_6020_YAW);
+            if (motor != NULL)
+            {
+                g_RcDebug6020TargetPosDeg = motor->motor_data.solved_data[3];
+                g_RcDebug6020PosTargetInitialized = 1U;
+            }
+        }
+        if (g_RcDebug6020PosTargetInitialized)
+        {
+            g_RcDebug6020DesiredPosStepDeg = stick_norm * LOAD6020_POS_STEP_CMD_MAX_DEG_PER_FRAME;
+            if (ibus_updated)
+            {
+                float tracking_error_pos = g_RcDebug6020DesiredPosStepDeg - g_RcDebug6020StepPosDeg;
+                if (tracking_error_pos < 0.0f)
+                {
+                    tracking_error_pos = -tracking_error_pos;
+                }
+                g_RcDebug6020PosStepPerFrame = ComputeAdaptiveStep(g_RcDebug6020DesiredPosStepDeg,
+                                                                   g_prev_desired_pos_step_deg_6020,
+                                                                   tracking_error_pos,
+                                                                   LOAD6020_POS_STEP_CMD_MAX_DEG_PER_FRAME,
+                                                                   LOAD6020_POS_STEP_MIN,
+                                                                   LOAD6020_POS_STEP_MAX,
+                                                                   LOAD6020_POS_STEP_SENSITIVITY);
+            }
+
+            g_RcDebug6020StepPosDeg = StepToward(g_RcDebug6020StepPosDeg,
+                                                 g_RcDebug6020DesiredPosStepDeg,
+                                                 g_RcDebug6020PosStepPerFrame);
+            if (g_RcDebug6020StepPosDeg < -LOAD6020_POS_STEP_CMD_MAX_DEG_PER_FRAME)
+            {
+                g_RcDebug6020StepPosDeg = -LOAD6020_POS_STEP_CMD_MAX_DEG_PER_FRAME;
+            }
+            else if (g_RcDebug6020StepPosDeg > LOAD6020_POS_STEP_CMD_MAX_DEG_PER_FRAME)
+            {
+                g_RcDebug6020StepPosDeg = LOAD6020_POS_STEP_CMD_MAX_DEG_PER_FRAME;
+            }
+
+            g_RcDebug6020TargetPosDeg += g_RcDebug6020StepPosDeg;
+            g_RcDebug6020TargetPosDeg = ClampFloat(g_RcDebug6020TargetPosDeg,
+                                                   LOAD6020_POS_TARGET_MIN_DEG,
+                                                   LOAD6020_POS_TARGET_MAX_DEG);
+        }
+        if (ibus_updated)
+        {
+            g_prev_desired_pos_step_deg_6020 = g_RcDebug6020DesiredPosStepDeg;
+        }
+#else
+        g_RcDebug6020TargetSpeedRpm = UpdateSpeedTargetWithStep(g_RcDebug6020DesiredSpeedRpm,
+                                                                &g_RcDebug6020StepSpeedRpm,
+                                                                &g_RcDebug6020SpeedStepPerFrame,
+                                                                &g_prev_desired_speed_rpm_6020,
+                                                                LOAD6020_MIN_SPEED_RPM,
+                                                                LOAD6020_MAX_SPEED_RPM,
+                                                                LOAD6020_SPEED_STEP_MIN,
+                                                                LOAD6020_SPEED_STEP_MAX,
+                                                                LOAD6020_SPEED_STEP_SENSITIVITY,
+                                                                ibus_updated);
+#endif
+    }
+    else
+    {
+        RC6020ResetStates();
+    }
+#endif
 
 #if ENABLE_RC_DEBUG_3508
 #if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
-    UpdatePosTargetDurationTest(RmMotorTargetPosData);
+    UpdatePosTargetDurationTest(g_RcDebug3508TargetPosDeg);
 #endif
 #endif
 
@@ -271,6 +393,7 @@ void IA6BTask_ProcessAndControl(void)
     // 保持兼容：即使外层误调用，本函数也不输出控制
     RC3508ResetStates();
     RC2006ResetStates();
+    RC6020ResetStates();
 #endif
 }
 
@@ -279,32 +402,187 @@ static void RC3508ResetStates(void)
 #if RC_INPUT_USE_UKF
     UKF1D_Reset(&g_RcInputUkf, 0.0f);
 #endif
-    RcLoad3508StepSpeedRpm = 0.0f;
-    RcLoad3508StepValuePerFrame = LOAD3508_SPEED_STEP_MIN;
-    RcLoad3508DesiredPosStepDeg = 0.0f;
-    RcLoad3508StepPosStepDeg = 0.0f;
-    RcLoad3508PosStepValuePerFrame = LOAD3508_POS_STEP_MIN;
-    RmMotorTargetSpeedData = 0.0f;
-    RcLoad3508UkfSpeedRpm = 0.0f;
+    g_RcDebug3508StepSpeedRpm = 0.0f;
+    g_RcDebug3508SpeedStepPerFrame = LOAD3508_SPEED_STEP_MIN;
+    g_RcDebug3508DesiredPosStepDeg = 0.0f;
+    g_RcDebug3508StepPosDeg = 0.0f;
+    g_RcDebug3508PosStepPerFrame = LOAD3508_POS_STEP_MIN;
+    g_RcDebug3508TargetSpeedRpm = 0.0f;
+    g_RcDebug3508UkfSpeedRpm = 0.0f;
 #if RC_INPUT_USE_UKF
-    RcLoad3508UkfCovP = g_RcInputUkf.P;
+    g_RcDebug3508UkfCovP = g_RcInputUkf.P;
 #else
-    RcLoad3508UkfCovP = 0.0f;
+    g_RcDebug3508UkfCovP = 0.0f;
 #endif
     g_prev_desired_speed_rpm_3508 = 0.0f;
     g_prev_desired_pos_step_deg = 0.0f;
-    RcLoad3508PosTargetInitialized = 0U;
+    g_RcDebug3508PosTargetInitialized = 0U;
+    g_RcDebug3508TargetPosDeg = 0.0f;
+    g_RcDebug3508LeftTargetPosDeg = 0.0f;
+    g_RcDebug3508RightTargetPosDeg = 0.0f;
+    g_RcDebug3508SyncErrorDeg = 0.0f;
+    g_RcDebug3508SyncPidOutputDeg = 0.0f;
+    PID_Clear(&g_RcDebug3508SyncPid);
 }
 
 static void RC2006ResetStates(void)
 {
-    RcLoad2006DesiredPosStepDeg = 0.0f;
-    RcLoad2006PosStepValuePerFrame = 0.0f;
+    g_RcDebug2006DesiredPosStepDeg = 0.0f;
+    g_RcDebug2006PosStepPerFrame = 0.0f;
+}
+
+static void RC6020ResetStates(void)
+{
+    g_RcDebug6020DesiredSpeedRpm = 0.0f;
+    g_RcDebug6020StepSpeedRpm = 0.0f;
+    g_RcDebug6020SpeedStepPerFrame = LOAD6020_SPEED_STEP_MIN;
+    g_RcDebug6020TargetSpeedRpm = 0.0f;
+    g_RcDebug6020DesiredPosStepDeg = 0.0f;
+    g_RcDebug6020StepPosDeg = 0.0f;
+    g_RcDebug6020PosStepPerFrame = LOAD6020_POS_STEP_MIN;
+    g_prev_desired_speed_rpm_6020 = 0.0f;
+    g_prev_desired_pos_step_deg_6020 = 0.0f;
+    g_RcDebug6020PosTargetInitialized = 0U;
 }
 
 static float NormalizeCenterStick(int16_t raw)
 {
-    float norm = ((float)raw - (float)LOAD3508_STICK_CENTER) / LOAD3508_STICK_RANGE;
+    return NormalizeCenterStickWithConfig(raw,
+                                          LOAD3508_STICK_CENTER,
+                                          LOAD3508_STICK_RANGE,
+                                          LOAD3508_STICK_DEADZONE);
+}
+
+static uint8_t IsMotorHandleReady(can_motor_cfg motor_id)
+{
+    return (Motor_GetHandle(motor_id) != NULL) ? 1U : 0U;
+}
+
+static float GetMotorRelativePosDeg(can_motor_cfg motor_id)
+{
+    MotorTypeDef *motor = Motor_GetHandle(motor_id);
+    if (motor == NULL)
+    {
+        return 0.0f;
+    }
+    return motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle;
+}
+
+static float GetMotorRelativeSpeedRpm(can_motor_cfg motor_id)
+{
+    MotorTypeDef *motor = Motor_GetHandle(motor_id);
+    if (motor == NULL)
+    {
+        return 0.0f;
+    }
+    return motor->motor_data.solved_data[1];
+}
+
+static void Initialize3508PosTargetsIfNeeded(void)
+{
+    if (g_RcDebug3508PosTargetInitialized != 0U)
+    {
+        return;
+    }
+
+#if ENABLE_RC_DEBUG_3508_STORE_BOTH
+    if ((IsMotorHandleReady(RM_3508_STORE_LEFT) == 0U) ||
+        (IsMotorHandleReady(RM_3508_STORE_RIGHT) == 0U))
+    {
+        return;
+    }
+
+    g_RcDebug3508LeftTargetPosDeg = GetMotorRelativePosDeg(RM_3508_STORE_LEFT);
+    g_RcDebug3508RightTargetPosDeg = GetMotorRelativePosDeg(RM_3508_STORE_RIGHT);
+    g_RcDebug3508TargetPosDeg = 0.5f * ((-g_RcDebug3508LeftTargetPosDeg) + g_RcDebug3508RightTargetPosDeg);
+#else
+    if (IsMotorHandleReady(g_RcDebug3508PrimaryMotorInfo.motor_id) == 0U)
+    {
+        return;
+    }
+
+    g_RcDebug3508TargetPosDeg = GetMotorRelativePosDeg(g_RcDebug3508PrimaryMotorInfo.motor_id);
+#if ENABLE_RC_DEBUG_3508_STORE_LEFT
+    g_RcDebug3508LeftTargetPosDeg = g_RcDebug3508TargetPosDeg;
+    g_RcDebug3508RightTargetPosDeg = 0.0f;
+#elif ENABLE_RC_DEBUG_3508_STORE_RIGHT
+    g_RcDebug3508RightTargetPosDeg = g_RcDebug3508TargetPosDeg;
+    g_RcDebug3508LeftTargetPosDeg = 0.0f;
+#endif
+#endif
+
+    g_RcDebug3508PosTargetInitialized = 1U;
+}
+
+static void Update3508CascadeTargets(float stick_norm, bool ibus_updated)
+{
+    Initialize3508PosTargetsIfNeeded();
+    if (g_RcDebug3508PosTargetInitialized == 0U)
+    {
+        return;
+    }
+
+    g_RcDebug3508DesiredPosStepDeg = stick_norm * LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME;
+    if (ibus_updated)
+    {
+        float tracking_error_pos = g_RcDebug3508DesiredPosStepDeg - g_RcDebug3508StepPosDeg;
+        if (tracking_error_pos < 0.0f)
+        {
+            tracking_error_pos = -tracking_error_pos;
+        }
+        g_RcDebug3508PosStepPerFrame = ComputeAdaptiveStep(g_RcDebug3508DesiredPosStepDeg,
+                                                           g_prev_desired_pos_step_deg,
+                                                           tracking_error_pos,
+                                                           LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME,
+                                                           LOAD3508_POS_STEP_MIN,
+                                                           LOAD3508_POS_STEP_MAX,
+                                                           LOAD3508_POS_STEP_SENSITIVITY);
+    }
+
+    g_RcDebug3508StepPosDeg = StepToward(g_RcDebug3508StepPosDeg,
+                                         g_RcDebug3508DesiredPosStepDeg,
+                                         g_RcDebug3508PosStepPerFrame);
+    g_RcDebug3508StepPosDeg = ClampFloat(g_RcDebug3508StepPosDeg,
+                                         -LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME,
+                                         LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME);
+
+#if ENABLE_RC_DEBUG_3508_STORE_BOTH
+    g_RcDebug3508TargetPosDeg += g_RcDebug3508StepPosDeg;
+    g_RcDebug3508TargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg,
+                                           LOAD3508_BOTH_TARGET_MIN_DEG,
+                                           LOAD3508_BOTH_TARGET_MAX_DEG);
+
+    g_RcDebug3508SyncErrorDeg = g_RcDebug3508LeftPosDeg + g_RcDebug3508RightPosDeg;
+    g_RcDebug3508SyncPidOutputDeg = PID_Calculate(&g_RcDebug3508SyncPid, 0.0f, g_RcDebug3508SyncErrorDeg);
+    g_RcDebug3508SyncPidOutputDeg = ClampFloat(g_RcDebug3508SyncPidOutputDeg,
+                                               -LOAD3508_SYNC_PID_MAX_OUT,
+                                               LOAD3508_SYNC_PID_MAX_OUT);
+
+    /* 左侧目标为镜像负值，右侧目标为正值；同步 PID 输出在此基础上做差分补偿。 */
+    g_RcDebug3508LeftTargetPosDeg = ClampFloat(-g_RcDebug3508TargetPosDeg + g_RcDebug3508SyncPidOutputDeg,
+                                               -LimitStore,
+                                               LeftStoreTop);
+    g_RcDebug3508RightTargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg - g_RcDebug3508SyncPidOutputDeg,
+                                                RightStoreTop,
+                                                LimitStore);
+#elif ENABLE_RC_DEBUG_3508_STORE_LEFT
+    g_RcDebug3508TargetPosDeg += g_RcDebug3508StepPosDeg;
+    g_RcDebug3508TargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg,
+                                           g_RcDebug3508PrimaryMotorInfo.min_pos_deg,
+                                           g_RcDebug3508PrimaryMotorInfo.max_pos_deg);
+    g_RcDebug3508LeftTargetPosDeg = g_RcDebug3508TargetPosDeg;
+#elif ENABLE_RC_DEBUG_3508_STORE_RIGHT
+    g_RcDebug3508TargetPosDeg += g_RcDebug3508StepPosDeg;
+    g_RcDebug3508TargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg,
+                                           g_RcDebug3508PrimaryMotorInfo.min_pos_deg,
+                                           g_RcDebug3508PrimaryMotorInfo.max_pos_deg);
+    g_RcDebug3508RightTargetPosDeg = g_RcDebug3508TargetPosDeg;
+#endif
+}
+
+static float NormalizeCenterStickWithConfig(int16_t raw, int16_t center, float range, float deadzone)
+{
+    float norm = ((float)raw - (float)center) / range;
 
     if (norm > 1.0f)
     {
@@ -315,7 +593,7 @@ static float NormalizeCenterStick(int16_t raw)
         norm = -1.0f;
     }
 
-    if ((norm > -LOAD3508_STICK_DEADZONE) && (norm < LOAD3508_STICK_DEADZONE))
+    if ((norm > -deadzone) && (norm < deadzone))
     {
         norm = 0.0f;
     }

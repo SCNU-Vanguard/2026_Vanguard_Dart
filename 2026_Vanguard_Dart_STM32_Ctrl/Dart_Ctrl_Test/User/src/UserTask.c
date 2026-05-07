@@ -154,31 +154,22 @@ void TaskInitFunc(void)
  * 参数:   无
  *
  * 状态机流程:
- * case 0x00: 换弹等待（Dart<4需手动确认，Dart=4直接跳过）
+ * case 0x00: 无换弹，直接进入下一步
  * case 0x01: 上移到扳机位置
- * case 0x02: 滑台叉上移 + 发射
- *
- * 换弹模式选择（修改下面的宏）:
- * SERVO_AUTO_RELOAD = 1: 舵机自动换弹（确认后舵机自动分离）
- * SERVO_AUTO_RELOAD = 0: 手动换弹（只等待确认，不驱动舵机）
+ * case 0x02: 滑台叉上移 + 发射，然后继续下一轮
  **********************************/
-#define SERVO_AUTO_RELOAD 0 // 1=舵机自动换弹, 0=手动换弹
-
 void StoreEnergyTaskFunc(void *argument)
 {
     // 等待事件组：云台和扳机都就绪后才开始
-    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdTRUE, pdTRUE, portMAX_DELAY);
+    xEventGroupWaitBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY, pdFALSE, pdTRUE, portMAX_DELAY);
     HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
     vTaskDelay(1);
-    DM_MotorEnable(DM_3519_STRENTH_LEFT);
-    DM_MotorEnable(DM_3519_STRENTH_RIGHT);
+    DM_MotorEnable(DM_3519_STRENTH_LEFT, CAN_TX_RETRY_ENABLE);
+    DM_MotorEnable(DM_3519_STRENTH_RIGHT, CAN_TX_RETRY_ENABLE);
 
     uint8_t StoreState = 0x00;
-    uint8_t Dart = 4; // 飞镖数量，对应舵机ID（4无舵机，3/2/1对应舵机ID）
     vTaskDelay(POWER_ON_DELAY_MS);
     float left_pos = 0.0f, right_pos = 0.0f;
-    bool manual_interrupted = false;
-    bool reload_confirmed = false; // 换弹确认标志
 
     while (1)
     {
@@ -201,8 +192,6 @@ void StoreEnergyTaskFunc(void *argument)
             continue; // 重新尝试获取
         }
 
-        manual_interrupted = false;
-
         switch (StoreState)
         {
         case 0x00:
@@ -217,8 +206,10 @@ void StoreEnergyTaskFunc(void *argument)
             // ========== 移到扳机位置 ==========
             __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
             vTaskDelay(500);
-            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
+            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+            vTaskDelay(1);
+            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+            vTaskDelay(1);
             while (1)
             {
                 // 检查调试模式，如果激活则释放信号量等待
@@ -238,11 +229,13 @@ void StoreEnergyTaskFunc(void *argument)
                         vTaskDelay(pdMS_TO_TICKS(10));
                     }
                     // 重新发送目标位置
-                    DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED);
-                    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED);
+                    DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTrigger, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+                    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTrigger, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
                 }
-                DM_Motor_RefreshData(DM_3519_STRENTH_LEFT);
-                DM_Motor_RefreshData(DM_3519_STRENTH_RIGHT);
+                DM_Motor_RefreshData(DM_3519_STRENTH_LEFT, CAN_TX_RETRY_ENABLE);
+                vTaskDelay(1);
+                DM_Motor_RefreshData(DM_3519_STRENTH_RIGHT, CAN_TX_RETRY_ENABLE);
+                vTaskDelay(1);
                 left_pos = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT);
                 right_pos = Motor_GetTotalAngle(DM_3519_STRENTH_RIGHT);
 
@@ -263,8 +256,8 @@ void StoreEnergyTaskFunc(void *argument)
             // ========== 滑台叉上移 + 发射 ==========
             __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_store);
             vTaskDelay(1307);
-            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED);
-            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTop, 5.0f, DM_LOCATION_SPEED);
+            DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+            DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTop, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
             while (1)
             {
                 // 检查调试模式
@@ -282,12 +275,12 @@ void StoreEnergyTaskFunc(void *argument)
                     {
                         vTaskDelay(pdMS_TO_TICKS(10));
                     }
-                    DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED);
-                    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTop, 5.0f, DM_LOCATION_SPEED);
+                    DmMotorSendCfg(DM_3519_STRENTH_LEFT, LeftStoreTop, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+                    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, RightStoreTop, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
                 }
 
-                DM_Motor_RefreshData(DM_3519_STRENTH_LEFT);
-                DM_Motor_RefreshData(DM_3519_STRENTH_RIGHT);
+                DM_Motor_RefreshData(DM_3519_STRENTH_LEFT, CAN_TX_RETRY_ENABLE);
+                DM_Motor_RefreshData(DM_3519_STRENTH_RIGHT, CAN_TX_RETRY_ENABLE);
                 left_pos = MotorManager.MotorList[DM_3519_STRENTH_LEFT - 1].motor_data.solved_data[0];
                 right_pos = MotorManager.MotorList[DM_3519_STRENTH_RIGHT - 1].motor_data.solved_data[0];
 
@@ -304,13 +297,8 @@ void StoreEnergyTaskFunc(void *argument)
             __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, MG996R_shoot);
             vTaskDelay(1307);
 
-            Dart--;
-            // 直接继续下一轮，不等待调试窗口
-            StoreState = 0;
-            if (Dart == 0)
-            {
-                Dart = 4;
-            }
+            // 无换弹测试：发射后直接回到下一轮
+            StoreState = 0x00;
             break;
         }
         default:
@@ -319,11 +307,6 @@ void StoreEnergyTaskFunc(void *argument)
 
         // 释放信号量，允许其他任务或调试任务获取
         xSemaphoreGive(g_xMotorCtrlSemHandle);
-
-        if (Dart == 0)
-        {
-            Dart = 4;
-        }
 
         vTaskDelay(7); // 短暂让出CPU
     }
@@ -339,24 +322,23 @@ void StateSetTaskFunc(void *argument)
 {
     // 接收上位机 / 遥控器 传递的数据
     vTaskDelay(1);
-    float temp = 0.0f;
     float degree = 0.0f;
     float preseting_distance = MotorManager.MotorList[1].motor_data.offset_ecd_angle; // pay attention to this params, its unit is degree not rad!!!!
     float preseting_yaw = 0.0f;                                                       // this param is limited at (-160.0f, 160.0f)
     HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
     while (1)
     {
-        while (!IS_IN_DEADZONE(Motor_GetTotalAngle(RM_2006_TRIGGER), temp, 2.0f))
-        {
-            RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance);
-            vTaskDelay(1);
-        }
-        DmMotorSendCfg(DM_4310_YAW, preseting_yaw, 0.0f, DM_MIT); // 调节Yaw轴位置
-        while (degree = Motor_GetTotalAngle(DM_4310_YAW), !IS_IN_DEADZONE(degree, preseting_yaw, 1.0f))
-        {
-            DM_Motor_RefreshData(DM_4310_YAW);
-            vTaskDelay(1);
-        }
+        // while (!IS_IN_DEADZONE(Motor_GetTotalAngle(RM_2006_TRIGGER), preseting_distance, 2.0f))
+        // {
+        //     RmMotorPID_Calc(RM_2006_TRIGGER, preseting_distance, CAN_TX_RETRY_DISABLE);
+        //     vTaskDelay(1);
+        // }
+        // DmMotorSendCfg(DM_4310_YAW, preseting_yaw, 0.0f, DM_MIT, CAN_TX_RETRY_ENABLE); // 调节Yaw轴位置
+        // while (degree = Motor_GetTotalAngle(DM_4310_YAW), !IS_IN_DEADZONE(degree, preseting_yaw, 1.0f))
+        // {
+        //     DM_Motor_RefreshData(DM_4310_YAW, CAN_TX_RETRY_ENABLE);
+        //     vTaskDelay(1);
+        // }
         // 事件组唤醒所有其他的任务
         xEventGroupSetBits(g_pxStateSetEventGroupHandeler, EVENT_ALL_READY);
         vTaskDelay(1);

@@ -10,6 +10,7 @@
  ****************************************************************/
 
 #include "HX06L.h"
+#include "config.h"
 #include "bsp_dwt.h"
 #include <string.h>
 #include "UartProtocol.h"
@@ -45,6 +46,42 @@ static inline void Servo_UART_Send(const uint8_t *data, uint16_t len)
 
 static ServoRegistryItem_t g_servo_registry[SERVO_REG_MAX_COUNT];
 static uint8_t g_servo_registry_count = 0;
+
+#define DART_SERVO_COUNT 6U
+#define DART_RELEASE_GROUP_COUNT 3U
+#define DART_RELEASE_GROUP_WIDTH 2U
+
+typedef struct
+{
+    uint8_t dart_num;
+    uint8_t servo_ids[DART_RELEASE_GROUP_WIDTH];
+} DartServoReleaseGroup_t;
+
+static const ServoRegistryItem_t g_dart_servo_registry[DART_SERVO_COUNT] = {
+    {.id = 0x01, .raw_zero = 0x0000, .raw_release = SeperationAngle},
+    {.id = 0x02, .raw_zero = 0x03E8, .raw_release = (0x03E8 - SeperationAngle)},
+    {.id = 0x03, .raw_zero = 0x0000, .raw_release = SeperationAngle},
+    {.id = 0x04, .raw_zero = 0x03E8, .raw_release = (0x03E8 - SeperationAngle)},
+    {.id = 0x05, .raw_zero = 0x0000, .raw_release = SeperationAngle},
+    {.id = 0x06, .raw_zero = 0x03E8, .raw_release = (0x03E8 - SeperationAngle)}};
+
+static const DartServoReleaseGroup_t g_dart_release_groups[DART_RELEASE_GROUP_COUNT] = {
+    {.dart_num = 1U, .servo_ids = {0x01, 0x02}},
+    {.dart_num = 2U, .servo_ids = {0x03, 0x04}},
+    {.dart_num = 3U, .servo_ids = {0x05, 0x06}},
+};
+
+static const DartServoReleaseGroup_t *Servo_FindDartGroup(uint8_t dart_num)
+{
+    for (uint8_t i = 0; i < DART_RELEASE_GROUP_COUNT; i++)
+    {
+        if (g_dart_release_groups[i].dart_num == dart_num)
+        {
+            return &g_dart_release_groups[i];
+        }
+    }
+    return NULL;
+}
 
 void ServoRegistry_Reset(void)
 {
@@ -86,6 +123,77 @@ const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id)
         }
     }
     return NULL;
+}
+
+void Servo_RegisterDartProfiles(void)
+{
+    ServoRegistry_Reset();
+    (void)ServoRegistry_RegisterBatch(g_dart_servo_registry, DART_SERVO_COUNT);
+}
+
+void Servo_MoveAllToZero(uint16_t time_ms)
+{
+    uint8_t ids[DART_SERVO_COUNT];
+    uint16_t zeros[DART_SERVO_COUNT];
+
+    for (uint8_t i = 0; i < DART_SERVO_COUNT; i++)
+    {
+        ids[i] = g_dart_servo_registry[i].id;
+        zeros[i] = g_dart_servo_registry[i].raw_zero;
+    }
+    ServoControlMulti(DART_SERVO_COUNT, ids, zeros, time_ms);
+}
+
+bool Servo_MoveDartGroupToZero(uint8_t dart_num, uint16_t time_ms)
+{
+    uint8_t ids[DART_RELEASE_GROUP_WIDTH];
+    uint16_t zeros[DART_RELEASE_GROUP_WIDTH];
+    const DartServoReleaseGroup_t *group = Servo_FindDartGroup(dart_num);
+
+    if (group == NULL)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < DART_RELEASE_GROUP_WIDTH; i++)
+    {
+        const ServoRegistryItem_t *item = ServoRegistry_Find(group->servo_ids[i]);
+        if (item == NULL)
+        {
+            return false;
+        }
+        ids[i] = item->id;
+        zeros[i] = item->raw_zero;
+    }
+
+    ServoControlMulti(DART_RELEASE_GROUP_WIDTH, ids, zeros, time_ms);
+    return true;
+}
+
+bool Servo_ReleaseDartGroup(uint8_t dart_num, uint16_t time_ms)
+{
+    uint8_t ids[DART_RELEASE_GROUP_WIDTH];
+    uint16_t releases[DART_RELEASE_GROUP_WIDTH];
+    const DartServoReleaseGroup_t *group = Servo_FindDartGroup(dart_num);
+
+    if (group == NULL)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < DART_RELEASE_GROUP_WIDTH; i++)
+    {
+        const ServoRegistryItem_t *item = ServoRegistry_Find(group->servo_ids[i]);
+        if (item == NULL)
+        {
+            return false;
+        }
+        ids[i] = item->id;
+        releases[i] = item->raw_release;
+    }
+
+    ServoControlMulti(DART_RELEASE_GROUP_WIDTH, ids, releases, time_ms);
+    return true;
 }
 
 #if (other_mcu_forcing == 1)

@@ -21,7 +21,7 @@ int16_t IA6B_ReadChannel(uint8_t ChannelNum);
 
 /**
  * @brief 处理IBUS数据包并解析通道（便捷函数）
- * @param uart_num UART编号 (通常为BSP_UART6)
+ * @param uart_num UART编号 (通常为BSP_UART6 / BSP_UART_IBUS)
  * @return true-成功获取并解析, false-无数据包
  * @note 在主循环或任务中周期性调用
  * @example

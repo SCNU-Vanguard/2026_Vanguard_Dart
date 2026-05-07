@@ -11,6 +11,15 @@ UartTxRingBuffer g_uart_tx_buffers[BSP_UART_MAX];
 UartRxRingBuffer g_uart_rx_buffers[BSP_UART_MAX];
 static uint8_t g_ibus_dma_buffer[IBUS_DMA_BUFFER_LEN];
 
+volatile uint32_t Uart8RxDebug_ByteCount = 0U;
+volatile uint8_t Uart8RxDebug_LastByte = 0U;
+volatile uint32_t Uart8RxDebug_LastTick = 0U;
+volatile uint32_t Uart8RxDebug_RestartCount = 0U;
+volatile uint32_t Uart8RxDebug_ReceiveItFailCount = 0U;
+volatile uint32_t Uart8RxDebug_LastReceiveStatus = HAL_OK;
+volatile uint32_t Uart8RxDebug_ErrorCount = 0U;
+volatile uint32_t Uart8RxDebug_LastErrorCode = 0U;
+
 /* 内部函数声明 */
 static void TxRingBuffer_Init(UartTxRingBuffer *rb, UART_HandleTypeDef *huart);
 static void RxRingBuffer_Init(UartRxRingBuffer *rb, UART_HandleTypeDef *huart);
@@ -290,6 +299,9 @@ void BSP_UART_Init(void)
             case BSP_UART6:
                 rb->protocol_type = PROTOCOL_IBUS; // UART6: IBUS接收
                 break;
+            case BSP_UART8:
+                rb->protocol_type = PROTOCOL_REFEREE; // UART8: 裁判系统接收
+                break;
             default:
                 rb->protocol_type = PROTOCOL_OTHER; // 其他串口暂未定义
                 break;
@@ -523,6 +535,30 @@ void UART_ClearIbusPacket(BSP_UART_NUM_e uart_num)
     Protocol_ClearIbusPacket(uart_num);
 }
 
+/**
+ * @brief 检查是否有完整的裁判系统数据包
+ */
+bool UART_HasRefereePacket(BSP_UART_NUM_e uart_num)
+{
+    return Protocol_HasRefereePacket(uart_num);
+}
+
+/**
+ * @brief 获取裁判系统数据包
+ */
+bool UART_GetRefereePacket(BSP_UART_NUM_e uart_num, RefereePacket_t *packet)
+{
+    return Protocol_GetRefereePacket(uart_num, packet);
+}
+
+/**
+ * @brief 清除裁判系统数据包标志
+ */
+void UART_ClearRefereePacket(BSP_UART_NUM_e uart_num)
+{
+    Protocol_ClearRefereePacket(uart_num);
+}
+
 /* ========== HAL回调函数实现 ========== */
 
 /**
@@ -558,6 +594,13 @@ void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     if (uart_num == BSP_UART6 && rb->protocol_type == PROTOCOL_IBUS)
         return;
 
+    if (uart_num == BSP_UART8)
+    {
+        Uart8RxDebug_ByteCount++;
+        Uart8RxDebug_LastByte = rb->rxByte;
+        Uart8RxDebug_LastTick = HAL_GetTick();
+    }
+
     // 将字节写入环形缓冲区（用于原始数据读取）
     RxRingBuffer_WriteByte(rb, rb->rxByte);
 
@@ -567,7 +610,15 @@ void BSP_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     // 继续接收下一个字节
     if (rb->isReceiving)
     {
-        HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+        HAL_StatusTypeDef status = HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+        if (uart_num == BSP_UART8)
+        {
+            Uart8RxDebug_LastReceiveStatus = (uint32_t)status;
+            if (status != HAL_OK)
+            {
+                Uart8RxDebug_ReceiveItFailCount++;
+            }
+        }
     }
 }
 
@@ -591,13 +642,28 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     if (!rb->isReceiving)
         return;
 
+    if (uart_num == BSP_UART8)
+    {
+        Uart8RxDebug_ErrorCount++;
+        Uart8RxDebug_LastErrorCode = huart->ErrorCode;
+    }
+
     if (uart_num == BSP_UART6 && rb->protocol_type == PROTOCOL_IBUS)
     {
         StartIbusDma(rb);
     }
     else
     {
-        HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+        HAL_StatusTypeDef status = HAL_UART_Receive_IT(rb->huart, &rb->rxByte, 1);
+        if (uart_num == BSP_UART8)
+        {
+            Uart8RxDebug_RestartCount++;
+            Uart8RxDebug_LastReceiveStatus = (uint32_t)status;
+            if (status != HAL_OK)
+            {
+                Uart8RxDebug_ReceiveItFailCount++;
+            }
+        }
     }
 }
 

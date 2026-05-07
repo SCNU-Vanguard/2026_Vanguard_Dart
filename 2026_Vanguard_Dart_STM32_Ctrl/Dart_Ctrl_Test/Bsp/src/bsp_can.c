@@ -20,6 +20,174 @@
 #include "bsp_can.h"
 #include <string.h>
 #include <stdlib.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+#define CAN_TX_MAILBOX_WAIT_TIMEOUT_MS 5U
+#define CAN_TX_COMPLETE_TIMEOUT_MS 5U
+#define CAN_TX_RETRY_MAX_ATTEMPTS 10U
+#define CAN_TX_RETRY_DELAY_MS 3U
+#define CAN_TX_RETRY_INTERFRAME_DELAY_MS 3U
+#define CAN_TX_MUTEX_WAIT_MS 50U
+
+static StaticSemaphore_t s_can_tx_mutex_buffer;
+static SemaphoreHandle_t s_can_tx_mutex = NULL;
+
+static SemaphoreHandle_t CAN_GetTxMutex(void)
+{
+  if (s_can_tx_mutex == NULL)
+  {
+    s_can_tx_mutex = xSemaphoreCreateMutexStatic(&s_can_tx_mutex_buffer);
+  }
+
+  return s_can_tx_mutex;
+}
+
+static uint8_t CAN_TakeTxMutex(CAN_TxRetryMode retry_mode)
+{
+  SemaphoreHandle_t mutex = CAN_GetTxMutex();
+
+  if (mutex == NULL)
+  {
+    return 0U;
+  }
+
+  if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+  {
+    return 1U;
+  }
+
+  if (retry_mode == CAN_TX_RETRY_ENABLE)
+  {
+    return (xSemaphoreTake(mutex, pdMS_TO_TICKS(CAN_TX_MUTEX_WAIT_MS)) == pdTRUE) ? 1U : 0U;
+  }
+
+  return (xSemaphoreTake(mutex, 0U) == pdTRUE) ? 1U : 0U;
+}
+
+static void CAN_GiveTxMutex(void)
+{
+  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED && s_can_tx_mutex != NULL)
+  {
+    xSemaphoreGive(s_can_tx_mutex);
+  }
+}
+
+static void CAN_TxDelayMs(uint32_t delay_ms)
+{
+  if (delay_ms == 0U)
+  {
+    return;
+  }
+
+  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
+  {
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+  }
+  else
+  {
+    HAL_Delay(delay_ms);
+  }
+}
+
+static uint8_t CAN_WaitTxMailboxFree(CAN_HandleTypeDef *canHandle)
+{
+  uint32_t start_tick = HAL_GetTick();
+
+  while (!HAL_CAN_GetTxMailboxesFreeLevel(canHandle))
+  {
+    if ((uint32_t)(HAL_GetTick() - start_tick) >= CAN_TX_MAILBOX_WAIT_TIMEOUT_MS)
+    {
+      return 0U;
+    }
+  }
+
+  return 1U;
+}
+
+static uint8_t CAN_GetTxMailboxStatus(uint32_t tx_mailbox, uint32_t *rqcp_flag, uint32_t *txok_flag, uint32_t *clear_flag)
+{
+  if (rqcp_flag == NULL || txok_flag == NULL || clear_flag == NULL)
+  {
+    return 0U;
+  }
+
+  switch (tx_mailbox)
+  {
+  case CAN_TX_MAILBOX0:
+    *rqcp_flag = CAN_TSR_RQCP0;
+    *txok_flag = CAN_TSR_TXOK0;
+    *clear_flag = CAN_FLAG_RQCP0;
+    return 1U;
+  case CAN_TX_MAILBOX1:
+    *rqcp_flag = CAN_TSR_RQCP1;
+    *txok_flag = CAN_TSR_TXOK1;
+    *clear_flag = CAN_FLAG_RQCP1;
+    return 1U;
+  case CAN_TX_MAILBOX2:
+    *rqcp_flag = CAN_TSR_RQCP2;
+    *txok_flag = CAN_TSR_TXOK2;
+    *clear_flag = CAN_FLAG_RQCP2;
+    return 1U;
+  default:
+    return 0U;
+  }
+}
+
+static void CAN_ClearTxMailboxStatus(CAN_HandleTypeDef *canHandle, uint32_t tx_mailbox)
+{
+  uint32_t rqcp_flag = 0U;
+  uint32_t txok_flag = 0U;
+  uint32_t clear_flag = 0U;
+
+  (void)rqcp_flag;
+  (void)txok_flag;
+
+  if (CAN_GetTxMailboxStatus(tx_mailbox, &rqcp_flag, &txok_flag, &clear_flag))
+  {
+    __HAL_CAN_CLEAR_FLAG(canHandle, clear_flag);
+  }
+}
+
+static void CAN_ClearAllTxMailboxStatus(CAN_HandleTypeDef *canHandle)
+{
+  CAN_ClearTxMailboxStatus(canHandle, CAN_TX_MAILBOX0);
+  CAN_ClearTxMailboxStatus(canHandle, CAN_TX_MAILBOX1);
+  CAN_ClearTxMailboxStatus(canHandle, CAN_TX_MAILBOX2);
+}
+
+static uint8_t CAN_WaitTxMailboxComplete(CAN_HandleTypeDef *canHandle, uint32_t tx_mailbox)
+{
+  uint32_t rqcp_flag = 0U;
+  uint32_t txok_flag = 0U;
+  uint32_t clear_flag = 0U;
+  uint32_t start_tick = HAL_GetTick();
+
+  if (!CAN_GetTxMailboxStatus(tx_mailbox, &rqcp_flag, &txok_flag, &clear_flag))
+  {
+    return 0U;
+  }
+
+  while (1)
+  {
+    uint32_t tsr = canHandle->Instance->TSR;
+
+    if ((tsr & rqcp_flag) != 0U)
+    {
+      uint8_t tx_ok = ((tsr & txok_flag) != 0U) ? 1U : 0U;
+      __HAL_CAN_CLEAR_FLAG(canHandle, clear_flag);
+      return tx_ok;
+    }
+
+    if ((uint32_t)(HAL_GetTick() - start_tick) >= CAN_TX_COMPLETE_TIMEOUT_MS)
+    {
+      (void)HAL_CAN_AbortTxRequest(canHandle, tx_mailbox);
+      CAN_ClearTxMailboxStatus(canHandle, tx_mailbox);
+      return 0U;
+    }
+  }
+}
 
 /// @brief 目前使用这个函数暴露接口方便简单地配置想要接收的CAN设备
 /// @param canHandle CAN句柄
@@ -114,26 +282,66 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
  *
  * 注意：当CAN挂载设备多了应考虑是否直接写入缓冲区
  ******************************************/
-uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data)
+uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data, CAN_TxRetryMode retry_mode)
 {
   uint32_t TxMailbox;
-  uint32_t timeout = 0;
-  // @note:增加超时机制，当超时直接退出
-  while (!HAL_CAN_GetTxMailboxesFreeLevel(canHandle))
+
+  if (canHandle == NULL || TxHeader == NULL || data == NULL)
   {
-    timeout++;
-    if (timeout > 5000)
+    return 0U;
+  }
+
+  if (!CAN_TakeTxMutex(retry_mode))
+  {
+    return 0U;
+  }
+
+  if (retry_mode == CAN_TX_RETRY_DISABLE)
+  {
+    if (!HAL_CAN_GetTxMailboxesFreeLevel(canHandle))
     {
-      return 0;
+      CAN_GiveTxMutex();
+      return 0U;
+    }
+
+    if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) == HAL_OK)
+    {
+      HAL_GPIO_TogglePin(LED8_GPIO_Port, LED8_Pin);
+      CAN_GiveTxMutex();
+      return 1U;
+    }
+
+    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
+    CAN_GiveTxMutex();
+    return 0U;
+  }
+
+  const uint8_t max_attempts = (retry_mode == CAN_TX_RETRY_ENABLE) ? CAN_TX_RETRY_MAX_ATTEMPTS : 1U;
+
+  for (uint8_t attempt = 0U; attempt < max_attempts; attempt++)
+  {
+    if (CAN_WaitTxMailboxFree(canHandle))
+    {
+      CAN_ClearAllTxMailboxStatus(canHandle);
+      if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) == HAL_OK &&
+          CAN_WaitTxMailboxComplete(canHandle, TxMailbox))
+      {
+        HAL_GPIO_TogglePin(LED8_GPIO_Port, LED8_Pin);
+        CAN_TxDelayMs(CAN_TX_RETRY_INTERFRAME_DELAY_MS);
+        CAN_GiveTxMutex();
+        return 1U;
+      }
+    }
+
+    if ((attempt + 1U) < max_attempts)
+    {
+      CAN_TxDelayMs(CAN_TX_RETRY_DELAY_MS);
     }
   }
-  if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) != HAL_OK)
-  {
-    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
-    return 0; // 发送失败
-  }
-  HAL_GPIO_TogglePin(LED8_GPIO_Port, LED8_Pin);
-  return 1; // 发送成功
+
+  HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
+  CAN_GiveTxMutex();
+  return 0U;
 }
 
 /******************************************

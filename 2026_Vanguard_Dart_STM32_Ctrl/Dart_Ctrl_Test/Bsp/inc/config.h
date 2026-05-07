@@ -29,22 +29,10 @@
 #define EVENT_TRIGGER_LOC_READY (1 << 3) // 0x08 - 扳机位置就绪
 #define EVENT_ALL_READY 0x4C             // 0x4C - 全部就绪
 
-// 换弹结构相关
-#define ConveyorBeltLength 15000
-#define ServoAngleMin 0
-#define ServoAngleMax 1000
-#define MoveStartPoint 3304
-#define FirstServoLoc -940
-#define SecondServoLoc -4101
-#define ThirdServoLoc -7388
-// 第三个舵机（距离940）
-// 第二个舵机（距离4101）
-// 第一个舵机（距离7388）
-
 // @note 直接滑至最底部这样非常ok，这样只需要判断这个Trigger与Load的关系
 // 储能电机相关
-#define LeftStoreTrigger -200.0f // 靠近扳机位置-左边3519电机
-#define RightStoreTrigger 200.0f // 靠近扳机位置-右边3519电机
+#define LeftStoreTrigger -800.0f // 靠近扳机位置-左边3519电机
+#define RightStoreTrigger 800.0f // 靠近扳机位置-右边3519电机
 #define LeftStoreTop 0.0f        // 左侧滑台叉上滑顶部,正常为0
 #define RightStoreTop 0.0f       // 右侧滑台叉上滑顶部,正常为0
 #define LeftStoreLoad -200.0f    // 左侧换弹
@@ -53,7 +41,7 @@
 
 // 扳机射程相关
 #define MG996R_store 2500 // 发射扳机待机状态
-#define MG996R_shoot 1290 // 发射扳机发射状态
+#define MG996R_shoot 1200 // 发射扳机发射状态
 
 // 云台转轴相关
 

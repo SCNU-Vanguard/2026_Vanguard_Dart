@@ -13,6 +13,20 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+extern volatile uint32_t RefereeProtocolDebug_SofCount;
+extern volatile uint32_t RefereeProtocolDebug_HeaderCrcFailCount;
+extern volatile uint32_t RefereeProtocolDebug_FrameCrcFailCount;
+extern volatile uint32_t RefereeProtocolDebug_InvalidLengthCount;
+extern volatile uint32_t RefereeProtocolDebug_FrameOverflowCount;
+extern volatile uint32_t RefereeProtocolDebug_FrameOkCount;
+extern volatile uint32_t RefereeProtocolDebug_QueuePushCount;
+extern volatile uint32_t RefereeProtocolDebug_QueueFullDropCount;
+extern volatile uint32_t RefereeProtocolDebug_QueuePopCount;
+extern volatile uint32_t RefereeProtocolDebug_ClearCount;
+extern volatile uint16_t RefereeProtocolDebug_LastDataLen;
+extern volatile uint16_t RefereeProtocolDebug_LastFrameLen;
+extern volatile uint16_t RefereeProtocolDebug_LastCmdID;
+
 /* ========== 协议解析API ========== */
 
 /**
@@ -71,6 +85,27 @@ bool Protocol_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet);
  * @param uart_num UART编号
  */
 void Protocol_ClearIbusPacket(BSP_UART_NUM_e uart_num);
+
+/**
+ * @brief 检查是否有完整的裁判系统数据包
+ * @param uart_num UART编号
+ * @return true-有完整数据包，false-无
+ */
+bool Protocol_HasRefereePacket(BSP_UART_NUM_e uart_num);
+
+/**
+ * @brief 获取裁判系统数据包
+ * @param uart_num UART编号
+ * @param packet 数据包指针
+ * @return true-获取成功，false-失败
+ */
+bool Protocol_GetRefereePacket(BSP_UART_NUM_e uart_num, RefereePacket_t *packet);
+
+/**
+ * @brief 清除裁判系统数据包标志
+ * @param uart_num UART编号
+ */
+void Protocol_ClearRefereePacket(BSP_UART_NUM_e uart_num);
 
 /**
  * @brief 获取有效帧数量（舵机协议）

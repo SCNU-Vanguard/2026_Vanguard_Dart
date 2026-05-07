@@ -1,5 +1,7 @@
 ﻿#include "motor_algrothim.h"
 
+#include <math.h>
+
 volatile float g_MotorTrapPosLastOutput = 0.0f;
 
 /* ------------------------------------------------------------------ */
@@ -20,6 +22,50 @@ static inline float _clampf(float x, float lo, float hi)
 /* ------------------------------------------------------------------ */
 /*  公开 API                                                            */
 /* ------------------------------------------------------------------ */
+
+uint32_t CalcTrapMoveTimeoutMs(float start_pos, float target_pos,
+                               float vmax, float amax,
+                               uint32_t min_ms, uint32_t max_ms)
+{
+    float dist = fabsf(target_pos - start_pos);
+    float abs_vmax = fabsf(vmax);
+    float abs_amax = fabsf(amax);
+    float t_s = 0.0f;
+    uint32_t est_ms;
+
+    if (abs_vmax <= 1e-3f || abs_amax <= 1e-3f)
+    {
+        return min_ms;
+    }
+
+    {
+        float t_acc = abs_vmax / abs_amax;
+        float d_acc = 0.5f * abs_amax * t_acc * t_acc;
+
+        if (dist <= 2.0f * d_acc)
+        {
+            /* 三角速度曲线 */
+            t_s = 2.0f * sqrtf(dist / abs_amax);
+        }
+        else
+        {
+            /* 梯形速度曲线 */
+            t_s = 2.0f * t_acc + (dist - 2.0f * d_acc) / abs_vmax;
+        }
+    }
+
+    /* 估算时间增加安全裕量，避免长行程按理论值过早超时 */
+    est_ms = (uint32_t)(t_s * 1000.0f * 1.6f + 200.0f);
+    if (est_ms < min_ms)
+    {
+        est_ms = min_ms;
+    }
+    if (est_ms > max_ms)
+    {
+        est_ms = max_ms;
+    }
+    return est_ms;
+}
 
 void Motor_TrapPos_Init(MotorTrapPosProfile_t *profile,
                         float initial_pos, float vmax, float amax)

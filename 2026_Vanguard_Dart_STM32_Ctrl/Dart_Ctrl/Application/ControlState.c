@@ -15,9 +15,10 @@
 #include "ControlState.h"
 #include "IA6B.h"
 #include "CanMotor.h"
-#include "DM_Motor.h"
 #include "RM_Motor.h"
 #include "HX06L.h"
+#include "FireControl.h"
+#include "MotorControlTask.h"
 #include "config.h"
 
 /*============================== 全局变量定义 ==============================*/
@@ -54,6 +55,7 @@ static const osThreadAttr_t ControlTask_attributes = {
 static void IbusTaskFunc(void *argument);
 static void ControlTaskFunc(void *argument);
 static void UpdateControlInput(void);
+static void UpdateFireIntentFromControlInput(void);
 static void UpdateControlTargets(float dt);
 static void SendMotorCommands(void);
 static CtrlMode_e DetermineMode(int8_t swb, int8_t swc);
@@ -165,6 +167,7 @@ static void IbusTaskFunc(void *argument)
             {
                 g_ControlInput.data_valid = false;
                 no_data_count = NO_DATA_TIMEOUT; // 防止溢出
+                (void)FireControl_SetFireEnable(false);
             }
         }
 
@@ -209,6 +212,35 @@ static void UpdateControlInput(void)
 
     // 标记数据有效
     g_ControlInput.data_valid = true;
+
+    // 将遥控器解析后的业务意图同步到 FireControl
+    UpdateFireIntentFromControlInput();
+}
+
+/**
+ * @brief 将当前遥控器输入映射为 FireControl 业务意图
+ *
+ * 当前采用最小映射方案：
+ * - fire_enable  : SWB 不在手动调试位时允许自动流程申请发射
+ * - target_select: SWC=1 选择前哨站，其余档位选择基地
+ * - range_select : 左摇杆左右三态量映射为默认/中档/高档
+ */
+static void UpdateFireIntentFromControlInput(void)
+{
+    bool fire_enable = (g_ControlInput.swb != 0);
+    uint8_t target_select = (g_ControlInput.swc == 1) ? FIRE_TARGET_OUTPOST : FIRE_TARGET_BASE; // 这里等待更改
+    uint8_t range_select = FIRE_RANGE_DEFAULT;
+
+    if (g_ControlInput.load3508_dir > 0)
+    {
+        range_select = FIRE_RANGE_1;
+    }
+    else if (g_ControlInput.load3508_dir < 0)
+    {
+        range_select = FIRE_RANGE_2;
+    }
+
+    (void)FireControl_UpdateIntent(fire_enable, target_select, range_select);
 }
 
 /**
@@ -267,16 +299,16 @@ static CtrlMode_e DetermineMode(int8_t swb, int8_t swc)
  */
 static void SyncTargetsWithMotorFeedback(void)
 {
-    // 同步YAW目标（DM4310）
-    // DM_Motor_RefreshData(DM_4310_YAW);
-    // g_ControlState.yaw_target = Motor_GetTotalAngle(DM_4310_YAW);
+    // 同步YAW目标（RM6020）
+    // g_ControlState.yaw_target = Motor_GetTotalAngle(RM_6020_YAW);
 
     // 同步扳机目标（RM2006）
     g_ControlState.trigger_target = Motor_GetTotalAngle(RM_2006_TRIGGER);
 
     // 同步储能电机目标（DM3519）
-    g_ControlState.energy_left_target = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT);
-    g_ControlState.energy_right_target = Motor_GetTotalAngle(DM_3519_STRENTH_RIGHT);
+    // 同步两侧储能 M3508 的目标位置
+    g_ControlState.energy_left_target = Motor_GetTotalAngle(RM_3508_STORE_LEFT);
+    g_ControlState.energy_right_target = Motor_GetTotalAngle(RM_3508_STORE_RIGHT);
 
     // 同步3508目标
     g_ControlState.load3508_target = Motor_GetTotalAngle(RM_3508_GRIPPER);
@@ -392,8 +424,13 @@ static void ControlTaskFunc(void *argument)
 static void UpdateControlTargets(float dt)
 {
     // YAW目标更新（回中摇杆，增量式）
-    g_ControlState.yaw_target += g_ControlInput.yaw_norm * WEIGHT_YAW * dt;
-    g_ControlState.yaw_target = ControlState_Clamp(g_ControlState.yaw_target, YAW_MIN, YAW_MAX);
+    // g_ControlState.yaw_target += g_ControlInput.yaw_norm * WEIGHT_YAW * dt;
+    // g_ControlState.yaw_target = ControlState_Clamp(g_ControlState.yaw_target, YAW_MIN, YAW_MAX);
+
+    // 扳机目标更新（非回中摇杆，单方向）
+    // IA6B 左摇杆上下默认在底部，仅在激活时向一个方向推进 2006 目标
+    g_ControlState.trigger_target -= (float)g_ControlInput.trigger_dir * WEIGHT_TRIGGER * dt;
+    g_ControlState.trigger_target = ControlState_Clamp(g_ControlState.trigger_target, TRIGGER_MIN, TRIGGER_MAX);
 
     // 储能电机目标更新（回中摇杆，增量式）
     // 左右电机联动，方向相反
@@ -403,8 +440,7 @@ static void UpdateControlTargets(float dt)
     g_ControlState.energy_left_target = ControlState_Clamp(g_ControlState.energy_left_target, ENERGY_LEFT_MIN, ENERGY_LEFT_MAX);
     g_ControlState.energy_right_target = ControlState_Clamp(g_ControlState.energy_right_target, ENERGY_RIGHT_MIN, ENERGY_RIGHT_MAX);
 
-    // 左摇杆功能在调试窗口中禁用（仅右摇杆可用）
-    // 扳机、3508、舵机均不响应
+    // 3508/舵机在调试窗口中仍然禁用，避免和自动换弹流程混用
 }
 
 /**
@@ -412,14 +448,23 @@ static void UpdateControlTargets(float dt)
  */
 static void SendMotorCommands(void)
 {
-    // YAW电机（DM4310 MIT模式）
-    // DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT);
+    // YAW 通过 6020 控制任务下发，避免手动和自动流程各自直接发包
+    // 6020 yaw axis is not connected now.
+    // Motor6020_SetTarget(g_ControlState.yaw_target);
+    // Motor6020_EnableControl(true);
+
+    // 扳机通过 2006 控制任务下发，调试时也走统一控制层
+    Motor2006_SetTarget(g_ControlState.trigger_target);
+    Motor2006_EnableControl(true);
 
     // 储能电机（DM3519 位置速度模式）
-    DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED);
-    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, g_ControlState.energy_right_target, 5.0f, DM_LOCATION_SPEED);
+    // 通过储能 M3508 兼容控制层下发左右储能目标
+    StoreMotor_SetTarget(RM_3508_STORE_LEFT, g_ControlState.energy_left_target);
+    StoreMotor_SetTarget(RM_3508_STORE_RIGHT, g_ControlState.energy_right_target);
+    StoreMotor_EnableControl(RM_3508_STORE_LEFT, true);
+    StoreMotor_EnableControl(RM_3508_STORE_RIGHT, true);
 
-    // 左摇杆功能已禁用，扳机2006和3508不在调试窗口中控制
+    // 3508/舵机仍不在调试窗口中控制
 }
 
 /*============================== API函数实现 ==============================*/
@@ -459,7 +504,7 @@ void ControlState_StartDebugWindow(uint32_t duration_ms)
  */
 void ControlState_SetYawTarget(float target)
 {
-    g_ControlState.yaw_target = ControlState_Clamp(target, YAW_MIN, YAW_MAX);
+    // g_ControlState.yaw_target = ControlState_Clamp(target, YAW_MIN, YAW_MAX);
 }
 
 /**

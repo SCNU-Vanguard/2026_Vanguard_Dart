@@ -72,8 +72,6 @@ typedef enum
 #define ENERGY_LEFT_MAX (0.0f)
 #define ENERGY_RIGHT_MIN (0.0f)
 #define ENERGY_RIGHT_MAX (910.0f)
-#define LOAD3508_MIN -10000.0f
-#define LOAD3508_MAX 0.0f
 
 /*============================== 数据结构 ==============================*/
 

@@ -14,14 +14,16 @@
 
 /* 舵机包队列深度 */
 #define SERVO_PACKET_QUEUE_SIZE 2
+#define REFEREE_PACKET_QUEUE_SIZE 4
+#define REFEREE_FRAME_MAX_SIZE 128
 
 /* UART编号枚举 */
 typedef enum
 {
-    BSP_UART3 = 0,
-    BSP_UART6,
+    BSP_UART3 = 0, // 控制总线舵机
+    BSP_UART6,     // IBUS通信口
     BSP_UART7,
-    BSP_UART8,
+    BSP_UART8, // 裁判系统串口接收数据
     BSP_UART_MAX
 } BSP_UART_NUM_e;
 
@@ -43,7 +45,8 @@ typedef enum
     PROTOCOL_SERVO_MCU = 0,    // 有MCU控制板协议 (0x55 0x55 | Length | Cmd | Params) - 无CRC
     PROTOCOL_SERVO_NO_MCU = 1, // 无MCU驱动板协议 (0x55 0x55 | ID | Length | Cmd | Params | CRC) - 有CRC
     PROTOCOL_IBUS = 2,         // IBUS协议 (0x20 0x40 | ... | CRC16)
-    PROTOCOL_OTHER = 3         // 其他协议
+    PROTOCOL_OTHER = 3,        // 其他协议
+    PROTOCOL_REFEREE = 4       // 裁判系统协议
 } PROTOCOL_TYPE_e;
 
 // 为了兼容性，保留PROTOCOL_SERVO别名
@@ -67,8 +70,15 @@ typedef struct
 typedef struct
 {
     uint8_t data[IBUS_FRAME_LEN];
-    bool is_valid;     // 数据包是否有效
+    bool is_valid; // 数据包是否有效
 } IbusPacket_t;
+
+typedef struct
+{
+    uint8_t data[REFEREE_FRAME_MAX_SIZE];
+    uint16_t length;
+    bool is_valid;
+} RefereePacket_t;
 #pragma pack(pop)
 
 /* 协议解析状态 */
@@ -80,7 +90,7 @@ typedef enum
     PARSE_SERVO_CMD,    // 解析指令
     PARSE_SERVO_PARAMS, // 解析参数
     PARSE_SERVO_CRC,    // 解析CRC
-    PARSE_COMPLETE     // 解析完成
+    PARSE_COMPLETE      // 解析完成
 } ParseState_e;
 
 #pragma pack(push, 1)
@@ -97,16 +107,16 @@ typedef struct
     UART_HandleTypeDef *huart;           // 关联的UART句柄
 
     // 协议解析相关
-    PROTOCOL_TYPE_e protocol_type; // 协议类型（由SERVO_COM决定）
-    ParseState_e parse_state;      // 解析状态
-    uint16_t parse_index;          // 解析索引
-    ServoPacket_t servo_packet_temp;  // 解析临时包（状态机逐字节填充）
+    PROTOCOL_TYPE_e protocol_type;   // 协议类型（由SERVO_COM决定）
+    ParseState_e parse_state;        // 解析状态
+    uint16_t parse_index;            // 解析索引
+    ServoPacket_t servo_packet_temp; // 解析临时包（状态机逐字节填充）
 
     // 舵机包队列（ISR写入，任务读取）
     ServoPacket_t servo_packet_queue[SERVO_PACKET_QUEUE_SIZE];
-    uint8_t servo_pkt_head;   // ISR 写入位置
-    uint8_t servo_pkt_tail;   // 任务读取位置
-    uint8_t servo_pkt_count;  // 队列中包数量
+    uint8_t servo_pkt_head;  // ISR 写入位置
+    uint8_t servo_pkt_tail;  // 任务读取位置
+    uint8_t servo_pkt_count; // 队列中包数量
 
     // IBUS协议数据包
     IbusPacket_t ibus_packet;
@@ -114,10 +124,28 @@ typedef struct
     uint32_t ibus_error_count;
     uint8_t ibus_stream[IBUS_STREAM_BUFFER_LEN];
     uint16_t ibus_stream_len;
+
+    // 裁判系统协议数据包
+    RefereePacket_t referee_packet_queue[REFEREE_PACKET_QUEUE_SIZE];
+    uint8_t referee_pkt_head;
+    uint8_t referee_pkt_tail;
+    uint8_t referee_pkt_count;
+    uint8_t referee_frame[REFEREE_FRAME_MAX_SIZE];
+    uint16_t referee_frame_len;
+    uint16_t referee_expected_len;
 } UartRxRingBuffer;
 #pragma pack(pop)
 
 /* ========== 用户API接口 ========== */
+
+extern volatile uint32_t Uart8RxDebug_ByteCount;
+extern volatile uint8_t Uart8RxDebug_LastByte;
+extern volatile uint32_t Uart8RxDebug_LastTick;
+extern volatile uint32_t Uart8RxDebug_RestartCount;
+extern volatile uint32_t Uart8RxDebug_ReceiveItFailCount;
+extern volatile uint32_t Uart8RxDebug_LastReceiveStatus;
+extern volatile uint32_t Uart8RxDebug_ErrorCount;
+extern volatile uint32_t Uart8RxDebug_LastErrorCode;
 
 // 初始化BSP UART模块（初始化所有UART的缓冲区，自动启动接收）
 void BSP_UART_Init(void);
@@ -168,6 +196,15 @@ bool UART_GetIbusPacket(BSP_UART_NUM_e uart_num, IbusPacket_t *packet);
 
 // 清除IBUS数据包标志
 void UART_ClearIbusPacket(BSP_UART_NUM_e uart_num);
+
+// 检查是否有完整的裁判系统数据包
+bool UART_HasRefereePacket(BSP_UART_NUM_e uart_num);
+
+// 获取裁判系统数据包
+bool UART_GetRefereePacket(BSP_UART_NUM_e uart_num, RefereePacket_t *packet);
+
+// 清除裁判系统数据包标志
+void UART_ClearRefereePacket(BSP_UART_NUM_e uart_num);
 
 /* ========== 工具函数 ========== */
 

@@ -61,7 +61,7 @@ const DM_MotorIdConfig_t *DM_GetIdConfig(can_motor_cfg motor_cfg)
 
 /*============================== 静态函数声明（私有方法） ==============================*/
 // 达妙电机通用函数
-void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
 
 // J3519专用函数
 static void DM_J3519_InitInternal(MotorTypeDef *motor, uint8_t id);
@@ -72,7 +72,7 @@ static void DM_J4310_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void DM_J4310_CalculateInternal(MotorTypeDef *motor);
 
 // 通用发送控制
-static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *motor);
+static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
 
 /*============================== 电机类静态实例定义 ==============================*/
 
@@ -85,15 +85,15 @@ const DM_MotorClass_t DM_J3519_Class = {
     .kp_min = 0.0f,
     .kd_max = 5.0f,
     .kd_min = 0.0f,
-    .pos_max = 1000.0f,
-    .pos_min = -1000.0f,
+    .pos_max = 1500.0f,
+    .pos_min = -1500.0f,
     .vel_max = 40.0f,
     .vel_min = -40.0f,
     .torque_max = 10.0f,
     .torque_min = -10.0f,
     // 默认控制参数
-    .default_kp = 0.0f,
-    .default_kd = 0.0f,
+    .default_kp = 1.0f,
+    .default_kd = 1.0f,
     .default_torque_ff = 0.2f,
     // 虚函数表
     .init = DM_J3519_InitInternal,
@@ -313,7 +313,7 @@ void DM_Motor_Calculate(MotorTypeDef *motor)
 }
 
 /// @brief 调用电机的发送控制函数
-uint8_t DM_Motor_SendControl(MotorTypeDef *motor)
+uint8_t DM_Motor_SendControl(MotorTypeDef *motor, CAN_TxRetryMode retry_mode)
 {
     if (motor == NULL)
         return 0;
@@ -321,13 +321,13 @@ uint8_t DM_Motor_SendControl(MotorTypeDef *motor)
     // 优先使用类的虚函数表
     if (motor->motor_class.dm_motor_class != NULL && motor->motor_class.dm_motor_class->send_control != NULL)
     {
-        return motor->motor_class.dm_motor_class->send_control(motor);
+        return motor->motor_class.dm_motor_class->send_control(motor, retry_mode);
     }
 
     // 兼容旧接口
     if (motor->SendMotorControl != NULL)
     {
-        return motor->SendMotorControl(motor);
+        return motor->SendMotorControl(motor, retry_mode);
     }
 
     return 0;
@@ -585,13 +585,13 @@ float DM_Motor_GetTorqueFF(MotorTypeDef *motor)
 
 /*============================== 使能/失能函数 ==============================*/
 
-uint8_t DM_Motor_Enable(MotorTypeDef *motor)
+uint8_t DM_Motor_Enable(MotorTypeDef *motor, CAN_TxRetryMode retry_mode)
 {
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
-    if (hal->can_send(&motor->g_TxHeader, (uint8_t *)DM_MOTOR_ENABLE))
+    if (hal->can_send(&motor->g_TxHeader, (uint8_t *)DM_MOTOR_ENABLE, retry_mode))
     {
         if (motor->MotorID > 0 && motor->MotorID <= 4)
         {
@@ -603,13 +603,13 @@ uint8_t DM_Motor_Enable(MotorTypeDef *motor)
     return 0;
 }
 
-uint8_t DM_Motor_Disable(MotorTypeDef *motor)
+uint8_t DM_Motor_Disable(MotorTypeDef *motor, CAN_TxRetryMode retry_mode)
 {
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
-    if (hal->can_send(&motor->g_TxHeader, (uint8_t *)DM_MOTOR_DISABLE))
+    if (hal->can_send(&motor->g_TxHeader, (uint8_t *)DM_MOTOR_DISABLE, retry_mode))
     {
         if (motor->MotorID > 0 && motor->MotorID <= 4)
         {
@@ -621,14 +621,14 @@ uint8_t DM_Motor_Disable(MotorTypeDef *motor)
     return 0;
 }
 
-uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
+uint8_t DM_MotorDisable(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return 0;
 
     const MotorHAL_t *hal = Motor_GetHAL();
-    if (hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE))
+    if (hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_DISABLE, retry_mode))
     {
         if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
         {
@@ -640,52 +640,37 @@ uint8_t DM_MotorDisable(can_motor_cfg motor_cfg)
     return 0;
 }
 
-uint8_t DM_MotorEnable(can_motor_cfg motor_cfg)
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode)
 {
-    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor_cfg < DM_3519_STRENTH_LEFT || motor_cfg > DM_4310_YAW)
         return 0;
 
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    if (motor->MotorInf.band != DM_MOTOR_BAND)
+        return 0;
     const MotorHAL_t *hal = Motor_GetHAL();
-
-    while (1)
+    if (!hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE, retry_mode))
     {
-        // 发送使能命令
-        if (!hal->can_send(&(motor->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
-        {
-            // CAN发送失败，继续重试
-            vTaskDelay(3);
-            continue;
-        }
-
-        vTaskDelay(3);
-
-        // 检查反馈帧的使能状态（byte0高4位为状态：0=失能，1=使能）
-        uint8_t state = (motor->ReceiveMotorData[0] >> 4) & 0x0F;
-        if (state == 0x01)
-        {
-            // 使能成功
-            if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
-            {
-                DM_ENABLE_ARR[motor->MotorID - 1] = true;
-            }
-            return 1;
-        }
-        // 未使能，继续循环重试
+        return 0;
     }
+    if (motor->MotorID > 0 && motor->MotorID <= g_DM_MOTOR_NUM)
+    {
+        DM_ENABLE_ARR[motor->MotorID - 1] = true;
+    }
+    hal->delay_ms(1);
+    return 1;
 }
 
-/*============================== 刷新数据函数 ==============================*/
-void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode)
 {
     MotorTypeDef *st = &MotorManager.MotorList[motor_cfg - 1];
-    if (st == NULL)
+    if (st == NULL || st->MotorInf.band != DM_MOTOR_BAND)
     {
         return;
     }
 
     const MotorHAL_t *hal = Motor_GetHAL();
-    if (hal->can_send(&(st->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE))
+    if (hal->can_send(&(st->g_TxHeader), (uint8_t *)DM_MOTOR_ENABLE, retry_mode))
     {
         if (st->MotorID > 0 && st->MotorID <= g_DM_MOTOR_NUM)
         {
@@ -700,7 +685,7 @@ void DM_Motor_RefreshData(can_motor_cfg motor_cfg)
 // 记录上次发送结束时间，防止连续调用导致CAN帧丢失
 static uint32_t s_DM_LastSendTick = 0;
 
-static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
+static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st, CAN_TxRetryMode retry_mode)
 {
     if (st == NULL)
         return 0;
@@ -715,11 +700,11 @@ static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
     // 自动使能（合并条件判断）
     if (st->MotorID > 0 && st->MotorID <= 4 && !DM_ENABLE_ARR[st->MotorID - 1])
     {
-        DM_Motor_Enable(st);
+        DM_Motor_Enable(st, retry_mode);
     }
 
     // 使用Fast版本（内联，零开销）
-    uint8_t result = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, st->SendMotorData) ? 1 : 0;
+    uint8_t result = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, st->SendMotorData, retry_mode) ? 1 : 0;
 
     // 更新上次发送结束时间
     s_DM_LastSendTick = HAL_GetTick();
@@ -735,7 +720,7 @@ static uint8_t DM_Motor_SendControlInternal(MotorTypeDef *st)
  * 返回值: 无
  * todo:   当前还需要加上各个电机的模式选择,不同的模式调用不同的发送函数
  **********************************/
-void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
+void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode retry_mode)
 {
     if (data == NULL)
     {
@@ -750,7 +735,7 @@ void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 
     memset(motor->SendMotorData, 0x00, CtrlMotorLen);
     memcpy(motor->SendMotorData, data, CtrlMotorLen);
-    motor->SendMotorControl(motor); // 这里调用发送函数
+    motor->SendMotorControl(motor, retry_mode);
 }
 
 /*============================== 电机解算函数 ==============================*/
@@ -870,11 +855,11 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor)
 }
 
 // 通用电机使用，可以是J4310也可以是J3519电机
-void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode)
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode, CAN_TxRetryMode retry_mode)
 {
     // 获取电机结构体并使用其配置参数（使用接口函数，解耦）
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != DM_MOTOR_BAND)
         return;
     const DM_MotorClass_t *cls = motor->motor_class.dm_motor_class;
     if (cls == NULL)
@@ -939,7 +924,7 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
         // TODO: 实现PVT模式
         return;
     }
-    DM_MotorSetTxData(motor_cfg, data);
+    DM_MotorSetTxData(motor_cfg, data, retry_mode);
 }
 
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target)

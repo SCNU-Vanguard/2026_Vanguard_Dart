@@ -24,8 +24,16 @@ float RmMotorAngleData = 0.0f;
 float RmMotorSpeedData = 0.0f;
 float target_loc = 0.0f;
 static float offset_angle;
+static DeadzoneState_t g_LoadReturnZeroDeadzoneState = {0};
+static DeadzoneState_t g_LoadPresetDeadzoneState = {0};
+static DeadzoneState_t g_LoadTargetDeadzoneState = {0};
 // #endif
 
+#undef LOAD_TASK_TRAP_VMAX_DEG_S
+#undef LOAD_TASK_TRAP_AMAX_DEG_S2
+#undef LOAD_TASK_TRAP_JERK_FACTOR
+#undef LOAD_TASK_TRAP_DISABLE_JERK
+#undef LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE
 #define LOAD_TASK_TRAP_VMAX_DEG_S 10000.0f
 #define LOAD_TASK_TRAP_AMAX_DEG_S2 100000.0f
 #define LOAD_TASK_TRAP_JERK_FACTOR 30.0f
@@ -59,8 +67,9 @@ static inline void LoadMotor_RunTrapTo(float target_pos_deg)
     }
     LoadTrapDtData = dt_s;
     LoadTrapFinalTargetData = target_pos_deg;
+    g_LoadTrapProfile.target_pos = target_pos_deg;
 
-    float cmd_pos = Motor_TrapPos_Update(&g_LoadTrapProfile, target_pos_deg, dt_s);
+    float cmd_pos = Motor_TrapPos_Update(&g_LoadTrapProfile, dt_s);
     LoadTrapCmdPosData = cmd_pos;
     LoadTrapCmdVelData = g_LoadTrapProfile.cmd_vel;
     LoadTrapCmdAccData = g_LoadTrapProfile.cmd_acc;
@@ -95,6 +104,7 @@ void Module_Init(void)
     CanFilterCfg();
     BSP_UART_Init();
     ServoInit();
+    Servo_RegisterDartProfiles();
     HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
     HAL_TIM_Base_Start(&htim8);
     HAL_Delay(100);
@@ -141,7 +151,7 @@ static inline void LoadDart_ReturnToZero(uint8_t dart_num)
     // vTaskDelay(500);                                                          // 这里是上电后的绝对位置
     while (!des_yes) // 先移动到一个安全角度防止肘击
     {
-        des_yes = IsInDeadzoneF(Motor_GetTotalAngle(RM_3508_GRIPPER), PresetLoc + offset_angle, MOTOR_DEAD_ZONE);
+        des_yes = IsInDeadzoneF(Motor_GetTotalAngle(RM_3508_GRIPPER), PresetLoc + offset_angle, MOTOR_DEAD_ZONE, &g_LoadReturnZeroDeadzoneState, false);
         LoadMotor_RunTrapTo(PresetLoc + offset_angle);
         osDelay(1);
     }
@@ -170,13 +180,11 @@ static inline void LoadDart_ReturnToZero(uint8_t dart_num)
  **********************************/
 void LoadTaskFunc(void *argument)
 {
-    uint8_t servo_ids[3] = {0x01, 0x02, 0x03};
-    uint16_t servo_angles[3] = {0x0000, 0x0000, 0x0000};
     uint8_t dart_num = 0;
     float pre_loc = 0.0f;
 
-    // 初始化舵机到0°位置
-    ServoControlMulti(3, servo_ids, servo_angles, 300);
+    // 初始化舵机到机械零点
+    Servo_MoveAllToZero(300);
     vTaskDelay(500); // 等待舵机到位
 
     TaskHandle_t Load3508TaskHandle = NULL;
@@ -199,7 +207,7 @@ void LoadTaskFunc(void *argument)
         RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
         while (!des_yes)
         {
-            des_yes = IsInDeadzoneF(RmMotorAngleData, pre_loc, MOTOR_DEAD_ZONE);
+            des_yes = IsInDeadzoneF(RmMotorAngleData, pre_loc, MOTOR_DEAD_ZONE, &g_LoadPresetDeadzoneState, false);
             LoadMotor_RunTrapTo(pre_loc);
             RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
             vTaskDelay(1);
@@ -215,7 +223,7 @@ void LoadTaskFunc(void *argument)
 
             if (dart_num != 0)
             {
-                des_yes = IsInDeadzoneF(RmMotorAngleData, target_loc, MOTOR_DEAD_ZONE);
+                des_yes = IsInDeadzoneF(RmMotorAngleData, target_loc, MOTOR_DEAD_ZONE, &g_LoadTargetDeadzoneState, false);
                 if (des_yes)
                 {
                     LoadDart_ReturnToZero(dart_num);
@@ -264,9 +272,9 @@ void LoadMotorTaskFunc(void *argument)
 
         if (fQueueDartNum >= 1 && fQueueDartNum <= 3)
         {
-            ServoControlPos(fQueueDartNum, SeperationAngle, SERVO_MOVE_TIME_MS);
+            (void)Servo_ReleaseDartGroup(fQueueDartNum, SERVO_MOVE_TIME_MS);
             HAL_Delay(SERVO_MOVE_TIME_MS);
-            ServoControlPos(fQueueDartNum, 0x0000, SERVO_MOVE_TIME_MS);
+            (void)Servo_MoveDartGroupToZero(fQueueDartNum, SERVO_MOVE_TIME_MS);
             vTaskDelay(SERVO_MOVE_TIME_MS);
         }
     }

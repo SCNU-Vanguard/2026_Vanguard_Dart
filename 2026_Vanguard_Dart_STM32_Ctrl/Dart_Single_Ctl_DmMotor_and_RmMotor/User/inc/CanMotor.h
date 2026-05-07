@@ -128,7 +128,8 @@ typedef enum
     RM_2006_TRIGGER,
     DM_3519_STRENTH_LEFT,
     DM_3519_STRENTH_RIGHT,
-    DM_4310_YAW
+    DM_4310_YAW,
+    RM_6020_YAW = 5
 } can_motor_cfg;
 
 #pragma pack(push, 1)

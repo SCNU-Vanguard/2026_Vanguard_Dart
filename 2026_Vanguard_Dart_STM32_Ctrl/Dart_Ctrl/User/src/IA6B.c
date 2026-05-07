@@ -38,7 +38,19 @@
  *
  * SWB对应1且SWC对应1则处于正常单发发射模式,这时候过程中无法调节
  *
- * 中间20S调试
+ * SWD（两段开关）
+ * RawChannel 6 : 位置1对应1000，位置2对应2000
+ *
+ * SWA（两段开关）
+ * RawChannel 7 : 位置1对应1000，位置2对应2000
+ *
+ * VRA（旋钮）
+ * RawChannel 8 : 位置1为最左端对应1000，位置2为最右端对应2000
+ *
+ * VRB（旋钮）
+ * RawChannel 9 : 位置1为最左端对应1000，位置2为最右端对应2000
+ *
+ * 中间90S调试
  * SWB对应1不动
  * SWB对应2且SWC对应0则2006上
  * SWB对应2且SWC对应-1则2006下
@@ -83,11 +95,11 @@ void IA6B_HandleData2Channel(uint8_t *data)
     {
         if (RawChannel[4] < 1500)
         {
-            Channel[4] = 1;  // SWB位置1（默认）
+            Channel[4] = 1; // SWB位置1（默认）
         }
         else
         {
-            Channel[4] = 0;  // SWB位置2（手动调节）
+            Channel[4] = 0; // SWB位置2（手动调节）
         }
     }
     // 如果数据无效则保持之前的值
@@ -97,15 +109,15 @@ void IA6B_HandleData2Channel(uint8_t *data)
     {
         if (RawChannel[5] < 1250)
         {
-            Channel[5] = 1;   // SWC位置1
+            Channel[5] = 1; // SWC位置1
         }
         else if (RawChannel[5] < 1750)
         {
-            Channel[5] = 0;   // SWC位置2（中间）
+            Channel[5] = 0; // SWC位置2（中间）
         }
         else
         {
-            Channel[5] = -1;  // SWC位置3
+            Channel[5] = -1; // SWC位置3
         }
     }
     // 如果数据无效则保持之前的值

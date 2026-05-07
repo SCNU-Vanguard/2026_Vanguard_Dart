@@ -38,7 +38,7 @@ typedef struct
     /// @param hdr CAN报文头指针
     /// @param data 数据指针
     /// @return 1-成功，0-失败
-    uint8_t (*can_send)(CAN_TxHeaderTypeDef *hdr, uint8_t *data);
+    uint8_t (*can_send)(CAN_TxHeaderTypeDef *hdr, uint8_t *data, CAN_TxRetryMode retry_mode);
 
     /// @brief 延时函数（毫秒）
     /// @param ms 延时时间（毫秒）
@@ -131,7 +131,8 @@ typedef enum
     RM_2006_TRIGGER,
     DM_3519_STRENTH_LEFT,
     DM_3519_STRENTH_RIGHT,
-    DM_4310_YAW
+    DM_4310_YAW,
+    RM_6020_YAW = 5
 } can_motor_cfg;
 
 #pragma pack(push, 1)
@@ -189,7 +190,7 @@ typedef struct _MotorTypeDef
     // ==================== 兼容性接口 (保留旧代码) ====================
     // 以下函数指针保留用于向后兼容，新代码请使用 motor_class 虚函数表
     // @deprecated 使用 RM_Motor_SendControl() 或 DM_Motor_SendControl() 代替
-    uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);
+    uint8_t (*SendMotorControl)(struct _MotorTypeDef *st, CAN_TxRetryMode retry_mode);
     // @deprecated 使用 RM_Motor_Calculate() 或 DM_Motor_Calculate() 代替
     void (*calculate)(struct _MotorTypeDef *self);
 
@@ -244,7 +245,7 @@ void CanFilterCfg(void);
 void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
 
 /// @brief 获取电机管理器指针
-/// @return 电机管理器结构体
+/// @return 电机管理器结构体指针
 MotorManager_t *GetPtrMotorManager(void);
 
 /// @brief 获取电机句柄（内联版本，零开销）

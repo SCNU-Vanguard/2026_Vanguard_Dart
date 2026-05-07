@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F427xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../User;../Bsp;../Bsp/inc;../User/inc;D:\KEIL\Pack\ARM\CMSIS-DSP\1.17.0\Include</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../User;../Bsp;../Bsp/inc;../User/inc;D:/KEIL/Pack/ARM/CMSIS-DSP/1.17.0/Include;../Application</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -680,6 +680,16 @@
               <FileType>1</FileType>
               <FilePath>..\Bsp\src\UartProtocol.c</FilePath>
             </File>
+            <File>
+              <FileName>CRC.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Bsp\src\CRC.c</FilePath>
+            </File>
+            <File>
+              <FileName>UserLib.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Bsp\src\UserLib.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -711,19 +721,9 @@
               <FilePath>..\User\src\RM_Motor.c</FilePath>
             </File>
             <File>
-              <FileName>UserTask.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\User\src\UserTask.c</FilePath>
-            </File>
-            <File>
               <FileName>IA6B.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\src\IA6B.c</FilePath>
-            </File>
-            <File>
-              <FileName>ControlState.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\User\src\ControlState.c</FilePath>
             </File>
             <File>
               <FileName>motor_algrothim.c</FileName>
@@ -734,6 +734,96 @@
               <FileName>referee.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\src\referee.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Application</GroupName>
+          <Files>
+            <File>
+              <FileName>ControlState.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\ControlState.c</FilePath>
+            </File>
+            <File>
+              <FileName>ControlState.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\ControlState.h</FilePath>
+            </File>
+            <File>
+              <FileName>FireControl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\FireControl.c</FilePath>
+            </File>
+            <File>
+              <FileName>FireControl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\FireControl.h</FilePath>
+            </File>
+            <File>
+              <FileName>UserTask.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\UserTask.c</FilePath>
+            </File>
+            <File>
+              <FileName>UserTask.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\UserTask.h</FilePath>
+            </File>
+            <File>
+              <FileName>MotorControlTask.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\MotorControlTask.c</FilePath>
+            </File>
+            <File>
+              <FileName>MotorControlTask.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\MotorControlTask.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>TaskFunc</GroupName>
+          <Files>
+            <File>
+              <FileName>StateSetFunc.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\StateSetFunc.h</FilePath>
+            </File>
+            <File>
+              <FileName>StateSetFunc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\StateSetFunc.c</FilePath>
+            </File>
+            <File>
+              <FileName>StoreEnergyTaskFunc.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\StoreEnergyTaskFunc.h</FilePath>
+            </File>
+            <File>
+              <FileName>StoreEnergyTaskFunc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\StoreEnergyTaskFunc.c</FilePath>
+            </File>
+            <File>
+              <FileName>LoadTaskFunc.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\LoadTaskFunc.h</FilePath>
+            </File>
+            <File>
+              <FileName>LoadTaskFunc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\LoadTaskFunc.c</FilePath>
+            </File>
+            <File>
+              <FileName>RefereeTaskFunc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\RefereeTaskFunc.c</FilePath>
+            </File>
+            <File>
+              <FileName>RefereeTaskFunc.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\RefereeTaskFunc.h</FilePath>
             </File>
           </Files>
         </Group>

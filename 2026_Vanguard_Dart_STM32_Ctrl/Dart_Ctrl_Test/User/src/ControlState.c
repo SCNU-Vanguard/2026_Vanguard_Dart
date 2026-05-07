@@ -99,7 +99,7 @@ void ControlState_Init(void)
     if (g_xMotorCtrlSemHandle != NULL)
     {
         xSemaphoreGive(g_xMotorCtrlSemHandle);
-        xSemaphoreGive(g_xDebugFinishedSemHandle); // 初始给出，让第一发的调试等待直接通过
+        // g_xDebugFinishedSemHandle 保持空状态，等待真正进入调试窗口后再释放
     }
     else
     {
@@ -254,8 +254,8 @@ static CtrlMode_e DetermineMode(int8_t swb, int8_t swc)
 static void SyncTargetsWithMotorFeedback(void)
 {
     // 同步YAW目标（DM4310）
-    DM_Motor_RefreshData(DM_4310_YAW);
-    g_ControlState.yaw_target = Motor_GetTotalAngle(DM_4310_YAW);
+    // DM_Motor_RefreshData(DM_4310_YAW, CAN_TX_RETRY_ENABLE);
+    // g_ControlState.yaw_target = Motor_GetTotalAngle(DM_4310_YAW);
 
     // 同步扳机目标（RM2006）
     g_ControlState.trigger_target = Motor_GetTotalAngle(RM_2006_TRIGGER);
@@ -425,9 +425,9 @@ static void UpdateControlTargets(float dt)
         {
             servo_action_pending = true;
             // 舵机0x02分离动作：转到分离角度，等待，再回零
-            ServoControlPos(0x02, ServoAngleMax, SERVO_MOVE_TIME_MS);
-            vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
-            ServoControlPos(0x02, ServoAngleMin, SERVO_MOVE_TIME_MS);
+            // ServoControlPos(0x02, ServoAngleMax, SERVO_MOVE_TIME_MS);
+            // vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
+            // ServoControlPos(0x02, ServoAngleMin, SERVO_MOVE_TIME_MS);
             vTaskDelay(pdMS_TO_TICKS(SERVO_MOVE_TIME_MS + 5));
         }
     }
@@ -447,17 +447,17 @@ static void SendMotorCommands(void)
 {
     // TODO:输出全部给0不动，全部提升为全局变量，看看整体数值变化如何
     // YAW电机（DM4310 MIT模式）
-    DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT);
+    // DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT, CAN_TX_RETRY_ENABLE);
 
     // 扳机电机（RM2006 PID控制）
-    // RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target);
+    // RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target, CAN_TX_RETRY_DISABLE);
 
     // 储能电机（DM3519 位置速度模式）
-    DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED);
-    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, g_ControlState.energy_right_target, 5.0f, DM_LOCATION_SPEED);
+    DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, g_ControlState.energy_right_target, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
 
     // 3508电机（RM3508 PID控制）
-    // RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target);
+    // RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target, CAN_TX_RETRY_DISABLE);
 }
 
 /*============================== API函数实现 ==============================*/

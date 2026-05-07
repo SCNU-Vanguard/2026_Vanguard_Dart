@@ -19,7 +19,7 @@
 #define g_RM_MOTOR_NUM 2
 #define g_RM_M3508_NUM 1
 #define g_RM_M2006_NUM 1
-#define g_RM_GM6020_NUM 0
+#define g_RM_GM6020_NUM 4
 
 #define RM_TestUse 0U
 
@@ -38,7 +38,7 @@
 
 // GM6020电机参数
 #define RM_GM6020_GEAR_RATIO 1.0f                 // 减速比
-#define RM_GM6020_MAX_CURRENT 30000               // 最大电流（电压控制）
+#define RM_GM6020_MAX_CURRENT 16384               // 最大电流（电流控制）
 #define RM_GM6020_CURRENT_RATIO (16384.0f / 3.0f) // 16384对应3A
 
 /*============================== 前向声明 ==============================*/
@@ -70,7 +70,7 @@ typedef struct _RM_MotorClass
     void (*calculate)(struct _MotorTypeDef *self);
 
     /// @brief 发送电机控制数据
-    uint8_t (*send_control)(struct _MotorTypeDef *self);
+    uint8_t (*send_control)(struct _MotorTypeDef *self, CAN_TxRetryMode retry_mode);
 
 } RM_MotorClass_t;
 #pragma pack(pop)
@@ -111,7 +111,7 @@ void RM_Motor_Calculate(MotorTypeDef *motor);
 /// @brief 调用电机的发送控制函数（通过类虚函数表）
 /// @param motor 电机结构体指针
 /// @return 发送成功返回1，失败返回0
-uint8_t RM_Motor_SendControl(MotorTypeDef *motor);
+uint8_t RM_Motor_SendControl(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
 
 /// @brief 调用电机的PID计算函数（通过类虚函数表）
 /// @param motor 电机结构体指针
@@ -175,7 +175,7 @@ void RM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
 /// @brief 设置对应RM电机的发送数据
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 发送数据指针（必须8字节）
-void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data);
+void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode retry_mode);
 
 /// @brief RM电机接收数据解算
 /// @param motor 电机结构体指针
@@ -196,7 +196,7 @@ void RM_Motor_Reset_All(void);
 /// @brief 用于设置发送RM电机数据
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param TargetCurrent 电流大小
-void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent);
+void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent, CAN_TxRetryMode retry_mode);
 
 /// @brief 去除电机偏移对电机目标数值影响（绝对式）
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
@@ -210,11 +210,11 @@ float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel);
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param target 目标值，单环时候为速度，串级为位置
 /// @retval 无
-void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
+void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target, CAN_TxRetryMode retry_mode);
 
 /// @brief RM电机速度环PID计算并发送（目标单位：rpm）
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param target_speed_rpm 目标速度（rpm）
-void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm);
+void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm, CAN_TxRetryMode retry_mode);
 
 #endif

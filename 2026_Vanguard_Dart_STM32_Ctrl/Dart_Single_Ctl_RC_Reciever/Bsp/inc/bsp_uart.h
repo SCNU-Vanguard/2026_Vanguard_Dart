@@ -17,10 +17,14 @@ typedef enum
 {
     BSP_UART3 = 0,
     BSP_UART6,
+    BSP_UART1,
     BSP_UART7,
     BSP_UART8,
     BSP_UART_MAX
 } BSP_UART_NUM_e;
+
+#define BSP_UART_IBUS BSP_UART6
+#define BSP_UART_SBUS BSP_UART1
 
 /* 循环发送缓冲区结构体 */
 typedef struct

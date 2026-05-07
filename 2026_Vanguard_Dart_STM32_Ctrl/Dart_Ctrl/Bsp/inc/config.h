@@ -14,6 +14,16 @@
 #include <stdint.h>
 #include <arm_math.h>
 
+// 每发飞镖对应的 YAW 和 Trigger 微调偏置映射表
+// 最终目标 = 当前目标类型基础值(Base/Outpost) + 当前发序偏置
+// 索引: [0]=Dart4(第1发), [1]=Dart3(第2发), [2]=Dart2(第3发), [3]=Dart1(第4发)
+
+#define TRIGGER_2006_SETUP_TIMEOUT_MS 2500U
+#define STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS 12000U
+#define STATE_SET_GRIPPER_OWNER_EXTRA_MS 500U
+#define STATE_SET_SETUP_GATE_TIMEOUT_MS 1000U
+#define STATE_SET_REQUEST_TIMEOUT_MS (TRIGGER_2006_SETUP_TIMEOUT_MS + STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS + STATE_SET_GRIPPER_OWNER_EXTRA_MS + STATE_SET_SETUP_GATE_TIMEOUT_MS)
+
 /* ==================== BSP层：协议常量 ==================== */
 
 // IBUS 协议参数
@@ -33,7 +43,7 @@
 #define SERVO_MOVE_TIME_MS 315          // 舵机转动时间（毫秒）
 #define POWER_ON_DELAY_MS 100           // 上电延迟时间（毫秒）
 #define RELOAD_BUFFER_MS 1000           // 换弹缓冲时间（毫秒）
-#define LOAD_DEADZONE_TIMEOUT_MS 2000U  // 换弹电机缓冲时间
+#define LOAD_DEADZONE_TIMEOUT_MS 1500U  // 换弹电机缓冲时间
 
 /* ==================== 控制层：遥控器配置 ==================== */
 
@@ -58,47 +68,133 @@
 #define EVENT_TRIGGER_LOC_READY (1 << 3) // 0x08 - 扳机位置就绪
 #define EVENT_ALL_READY 0x4C             // 0x4C - 全部就绪
 
+// 裁判系统飞镖舱门状态的本地超时判定
+#define REFEREE_GATE_FRESH_TIMEOUT_MS 2000U
+
 /* ==================== 业务层：机械结构参数 ==================== */
 
 // 换弹结构相关
 #define ConveyorBeltLength 20673
-#define SeperationAngle 250
-#define DART_SERVO_ID1 0x01
-#define DART_SERVO_ID2 0x02
-#define DART_SERVO_ID3 0x03
-#define DART_SERVO1_RAW_ZERO 0
-#define DART_SERVO1_RAW_RELEASE 250
-#define DART_SERVO2_RAW_ZERO 210
-#define DART_SERVO2_RAW_RELEASE 390
-#define DART_SERVO3_RAW_ZERO 80
-#define DART_SERVO3_RAW_RELEASE 250
-#define PresetLoc (6700.0f)
-#define FirstServoLoc (1688.0f)
-#define SecondServoLoc (-4658.0f)
-#define ThirdServoLoc (-11240.0f)
-// 当前单独测试工程标定值：
-// Preset = 6427，First = 1688，Second = -4658，Third = -11240
+#define SeperationAngle 500
+#define PresetLoc (0.0f)
+#define LOAD3508_DART_FIRST_STEP_DEG (1152.0f)
+#define LOAD3508_DART_STEP_DEG (2304.0f)
+#define LOAD3508_DART_STEP_DIR (-1.0f)
+#define FirstServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * LOAD3508_DART_FIRST_STEP_DEG))
+#define SecondServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * (LOAD3508_DART_FIRST_STEP_DEG + LOAD3508_DART_STEP_DEG)))
+#define ThirdServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * (LOAD3508_DART_FIRST_STEP_DEG + (2.0f * LOAD3508_DART_STEP_DEG))))
+// LOAD3508 targets are computed from PresetLoc: first 1152, then +2304, +2304.
+#define LOAD3508_STILL_OVERCURRENT_LIMIT_A (2.0f)
+#define LOAD3508_STILL_OVERCURRENT_CLEAR_A (1.0f)
+#define LOAD3508_STILL_OVERCURRENT_RETURN_MS 2500U
+#define LOAD3508_STALL_OVERCURRENT_LIMIT_A (LOAD3508_STILL_OVERCURRENT_LIMIT_A)
+#define LOAD3508_STALL_OVERCURRENT_CLEAR_A (LOAD3508_STILL_OVERCURRENT_CLEAR_A)
+#define LOAD3508_STALL_OVERCURRENT_RETURN_MS 2500U
+#define LOAD3508_STALL_SPEED_RPM (8.0f)
+#define LOAD3508_STALL_POS_DELTA_DEG (1.0f)
+#define LOAD3508_STALL_POS_SAMPLE_MS 100U
+#define LOAD3508_OVERCURRENT_TARGET_BLANK_MS 800U
+#define LOAD3508_OVERCURRENT_FILTER_ALPHA (0.08f)
+#if 0
+
+// 换弹 M3508 的相对零点位置限位，底层电机注册直接使用这组宏。
+#define LOAD3508_MIN (-10000.0f)
+#define LOAD3508_MAX (0.0f)
+#define LOAD3508_MAX (0.0f)      // 换弹 M3508 相对零点的最大允许位置
+#define LOAD3508_MIN (-10000.0f) // 换弹 M3508 相对零点的最小允许位置
+#define LOAD3508_MAX (0.0f)      // 换弹 M3508 相对零点的最大允许位置
+
+// 两个储能 M3508 各自独立保护/S 型规划参数
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
+// 两个储能 M3508 各自独立保护/S 型规划参数
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
+#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
+#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
+#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
+#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
+#define STORE3508_STALL_CONFIRM_MS 1500U
+#endif
+
+#if 0
+
+// 换弹 M3508 的相对零点位置限位，电机注册时直接使用这组范围。
+#define LOAD3508_MIN (-10000.0f)
+#define LOAD3508_MAX (0.0f)
+
+// 两个储能 M3508 各自独立使用的异常电流参数。
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
+#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
+#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
+#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
+#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
+#define STORE3508_STALL_CONFIRM_MS 1500U
+
+// 换弹 M3508 的相对零点位置限位，电机注册时直接使用这组范围。
+#define LOAD3508_MIN (-10000.0f)
+#define LOAD3508_MAX (0.0f)
+
+// 两个储能 M3508 各自独立使用的异常电流参数。
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
+#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
+#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
+#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
+#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
+#define STORE3508_STALL_CONFIRM_MS 1500U
+#endif
+
+#undef LOAD3508_MIN
+#undef LOAD3508_MAX
+#undef STORE3508_STILL_OVERCURRENT_LIMIT_A
+#undef STORE3508_STILL_OVERCURRENT_CLEAR_A
+#undef STORE3508_STILL_OVERCURRENT_CONFIRM_MS
+#undef STORE3508_STALL_OVERCURRENT_LIMIT_A
+#undef STORE3508_STALL_OVERCURRENT_CLEAR_A
+#undef STORE3508_STALL_CONFIRM_MS
+// 换弹夹爪 M3508 的相对零点位置限位。
+#define LOAD3508_MIN (-10000.0f)
+#define LOAD3508_MAX (0.0f)
+
+// 储能 M3508 在“已接近目标位置”时的异常电流保护参数。
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
+#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
+#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
+
+// 储能 M3508 在“运动途中疑似堵转”时的异常电流保护参数。
+#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
+#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
+#define STORE3508_STALL_CONFIRM_MS 1500U
+#define STORE3508_STALL_SPEED_RPM (8.0f)
+#define STORE3508_STALL_POS_DELTA_DEG (1.0f)
+#define STORE3508_STALL_POS_SAMPLE_MS 100U
+#define STORE3508_OVERCURRENT_TARGET_BLANK_MS 400U
+#define STORE3508_OVERCURRENT_FILTER_ALPHA (0.08f)
+#define STORE3508_TEMP_LIMIT_C (60.0f)
+#define STORE3508_TRAP_VMAX_DEG_S (1800.0f)
+#define STORE3508_TRAP_AMAX_DEG_S2 (9000.0f)
+#define STORE3508_TRAP_JERK_FACTOR (1.0f)
+#define STORE3508_TRAP_DISABLE_JERK 0
+#define STORE3508_TRAP_BRAKE_GAIN (0.95f)
+#define STORE3508_TRAP_ARRIVE_ZONE (1.0f)
+#define STORE3508_TRAP_DECEL_ZONE (30.0f)
 
 // 储能电机相关
-#define LeftStoreLoad (-850.0f)   // 换弹位置
-#define RightStoreLoad (850.0f)   // 换弹位置
-#define LeftStoreBottom (-860.0f) // 左侧滑台底部
-#define RightStoreBottom (860.0f) // 右侧滑台底部
+#define LeftStoreLoad (-540.0f)   // 换弹位置
+#define RightStoreLoad (540.0f)   // 换弹位置
+#define LeftStoreBottom (-100.0f) // 左侧滑台底部
+#define RightStoreBottom (100.0f) // 右侧滑台底部
 #define LeftStoreTop (0.0f)       // 左侧滑台叉上滑顶部
 #define RightStoreTop (0.0f)      // 右侧滑台叉上滑顶部
+#define LeftSafe (-100.0f)        // 左侧滑台叉上滑顶部
+#define RightSafe (1000.0f)       // 右侧滑台叉上滑顶部
 #define LimitStore 930.0f         // 电机的位置限制
 #define StoreSpeed (6.0f)         // 储能电机移动速度
 
 // 扳机射程相关
-#define MG996R_store 2500   // 发射扳机待机状态。
-#define MG996R_shoot 1200   // 发射扳机发射状态
-#define MG996R_initial 2500 // 飞镖支架初始状态，向前摆，方便安装飞镖体
-#define MG996R_extend 1750  // 飞镖支架伸出状态
-#define MG996R_shrink 900   // 飞镖支架收回状态，向后摆，让SG90的线距离C板短点
-#define MG995_initial 2500  // 飞镖支架初始状态，向前摆，方便安装飞镖体
-#define MG995_extend 2000   // 飞镖支架伸出状态
-#define MG995_shrink 1500   // 飞镖支架收回状态，向后摆，让SG90的线距离C板短点
+#define MG996R_store 2500 // 发射扳机待机状态
+#define MG996R_shoot 1200 // 发射扳机发射状态
 
+// 换弹电机斜坡
 #define LOAD_TASK_TRAP_VMAX_DEG_S (3500.0f)
 #define LOAD_TASK_TRAP_AMAX_DEG_S2 (24000.0f)
 #define LOAD_TASK_TRAP_JERK_FACTOR (1.2f)
@@ -109,7 +205,7 @@
 #define LOAD_TASK_TRAP_DECEL_ZONE (40.0f) /* 线性减速区(°)，进入后速度线性压低 */
 
 // 云台转轴相关
-// 每发飞镖对应的 YAW(DM4310) 和 Trigger(RM2006) 预设位置
+// 每发飞镖对应的 YAW(RM6020) 和 Trigger(RM2006) 预设位置
 // 索引: [0]=Dart4(第1发), [1]=Dart3(第2发), [2]=Dart2(第3发), [3]=Dart1(第4发)
 #define SETUP_YAW_DART4 0.0f
 #define SETUP_YAW_DART3 0.0f
@@ -117,11 +213,34 @@
 #define SETUP_YAW_DART1 0.0f
 
 #define SETUP_TRIGGER_DART4 (0.0f) // 3
-#define SETUP_TRIGGER_DART3 (20000.0f) // 2
-#define SETUP_TRIGGER_DART2 (20000.0f) // 1
-#define SETUP_TRIGGER_DART1 (15000.0f) // 0
+#define SETUP_TRIGGER_DART3 (0.0f) // 2
+#define SETUP_TRIGGER_DART2 (0.0f) // 1
+#define SETUP_TRIGGER_DART1 (0.0f) // 0
 
-// 调试开关：1=跳过“每发前4310/2006到位等待”，直接进入3519流程；0=按原流程等待
+// 6020 Yaw 到位等待开关：1=在任务层等待进入±deadzone；0=下发目标后直接继续流程
+#define ENABLE_6020_YAW_WAIT 1U
+#define YAW_6020_DEAD_ZONE 5.0f
+
+// 调试开关：1=跳过“每发前6020/2006到位等待”，直接进入3519流程；0=按原流程等待
 #define STORE_BYPASS_SETUP_WAIT 0U
+
+// 裁判系统飞镖发射站闸门相关参数
+#define REFEREE_DART_OPEN 0
+#define REFEREE_DART_CLOSE 1
+#define REFEREE_DART_MID 2
+#define REFEREE_DART_FIRE_MIN_REMAIN_TIME_S 2U
+
+// 前哨站和基地对应的Yaw角度
+#define OutpostYawAngle 10.0f
+#define BaseYawAngle -10.0f
+
+// 前哨站和基地对应的扳机位置
+#define OutpostTrigger 10.0f
+#define BaseTrigger -10.0f
+
+static const float g_SetupYaw[4] = {
+    SETUP_YAW_DART4, SETUP_YAW_DART3, SETUP_YAW_DART2, SETUP_YAW_DART1};
+static const float g_SetupTrigger[4] = {
+    SETUP_TRIGGER_DART4, SETUP_TRIGGER_DART3, SETUP_TRIGGER_DART2, SETUP_TRIGGER_DART1};
 
 #endif

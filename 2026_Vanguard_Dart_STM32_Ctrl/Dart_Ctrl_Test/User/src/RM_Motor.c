@@ -58,7 +58,8 @@ static void RM_GM6020_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void RM_GM6020_CalculateInternal(MotorTypeDef *motor);
 
 // 通用发送控制和PID计算
-static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor);
+static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
+static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
 static float RM_Motor_PIDCalcInternal(MotorTypeDef *motor, float target);
 static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output);
 static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle);
@@ -151,7 +152,7 @@ void RM_Motor_Calculate(MotorTypeDef *motor)
 }
 
 /// @brief 调用电机的发送控制函数
-uint8_t RM_Motor_SendControl(MotorTypeDef *motor)
+uint8_t RM_Motor_SendControl(MotorTypeDef *motor, CAN_TxRetryMode retry_mode)
 {
     if (motor == NULL)
         return 0;
@@ -159,13 +160,13 @@ uint8_t RM_Motor_SendControl(MotorTypeDef *motor)
     // 优先使用类的虚函数表
     if (motor->motor_class.rm_motor_class != NULL && motor->motor_class.rm_motor_class->send_control != NULL)
     {
-        return motor->motor_class.rm_motor_class->send_control(motor);
+        return motor->motor_class.rm_motor_class->send_control(motor, retry_mode);
     }
 
     // 兼容旧接口
     if (motor->SendMotorControl != NULL)
     {
-        return motor->SendMotorControl(motor);
+        return motor->SendMotorControl(motor, retry_mode);
     }
 
     return 0;
@@ -301,9 +302,9 @@ void RM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
 
 /*============================== 发送电机数据专用函数 ==============================*/
 
-static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
+static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st, CAN_TxRetryMode retry_mode)
 {
-    if (st == NULL)
+    if (st == NULL || st->MotorInf.band != RM_MOTOR_BAND)
         return 0;
 
     // 发送之前必须先获取互斥量
@@ -312,10 +313,19 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
         return 0;
     }
 
-    // 获取发送缓冲区（直接访问，零开销）
+    uint8_t res = RM_Motor_SendControlLocked(st, retry_mode);
+    xSemaphoreGive(g_xRmBufferMutexHandle);
+    return res;
+}
+
+static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *st, CAN_TxRetryMode retry_mode)
+{
     uint8_t *send_buffer = MotorManager.RM_MOTOR_DATA_ARRAY;
 
-    // 将RM3508电机的数据进行拼接（使用Fast版本，无边界检查）
+    // 共享发送缓冲区每次重组前都清零，避免残留旧分组数据。
+    memset(send_buffer, 0x00, CtrlMotorLen);
+
+    // 将RM3508电机的数据进行拼接
     if (st->MotorInf.model == RmM3508)
     {
         for (uint8_t a = st->MotorID - 1; a < g_RM_M3508_NUM; a++)
@@ -351,12 +361,11 @@ static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st)
         }
     }
 
-    uint8_t res = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer);
-    xSemaphoreGive(g_xRmBufferMutexHandle);
+    uint8_t res = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer, retry_mode);
     return res;
 }
 
-void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
+void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode retry_mode)
 {
     if (data == NULL)
     {
@@ -364,14 +373,20 @@ void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
     }
 
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
+    if (motor == NULL || motor->MotorInf.band != RM_MOTOR_BAND)
+    {
+        return;
+    }
+
+    if (xSemaphoreTake(g_xRmBufferMutexHandle, pdMS_TO_TICKS(2)) != pdTRUE)
     {
         return;
     }
 
     memset(motor->SendMotorData, 0x00, CtrlMotorLen);
     memcpy(motor->SendMotorData, data, CtrlMotorLen);
-    motor->SendMotorControl(motor);
+    (void)RM_Motor_SendControlLocked(motor, retry_mode);
+    xSemaphoreGive(g_xRmBufferMutexHandle);
 }
 
 /*============================== 电机数据解算函数 ==============================*/
@@ -528,7 +543,7 @@ void RM_Motor_Reset_All(void)
 
 /*============================== 暴露接口 ==============================*/
 
-void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent)
+void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent, CAN_TxRetryMode retry_mode)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
@@ -547,7 +562,7 @@ void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent)
     uint8_t data[8] = {0x00};
     data[0] = (uint8_t)(TargetCurrent >> 8);
     data[1] = (uint8_t)TargetCurrent;
-    RM_MotorSetTxData(motor_cfg, data);
+    RM_MotorSetTxData(motor_cfg, data, retry_mode);
 }
 
 float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel)
@@ -653,7 +668,7 @@ static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, 
 #endif
 }
 
-void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
+void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target, CAN_TxRetryMode retry_mode)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
@@ -664,10 +679,10 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 
     output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
     // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
-    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, output));
+    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, output), retry_mode);
 }
 
-void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
+void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm, CAN_TxRetryMode retry_mode)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
@@ -679,5 +694,5 @@ void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
 
     output = PID_Calculate(&motor->inner_pid, target_speed_rpm, pData->solved_data[1]);
     output = RM_Motor_ApplyOutputLimit(motor_cfg, motor, output);
-    RmMotorSendCfg(motor_cfg, output);
+    RmMotorSendCfg(motor_cfg, output, retry_mode);
 }

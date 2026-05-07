@@ -5,6 +5,7 @@
  */
 
 #include "UartProtocol.h"
+#include "CRC.h"
 #include <string.h>
 #include "FreeRTOS.h"
 #include "task.h"
@@ -13,6 +14,148 @@
 
 /* 外部变量声明（在bsp_uart.c中定义） */
 extern UartRxRingBuffer *BSP_UART_GetRxBuffer(BSP_UART_NUM_e uart_num);
+
+#define REFEREE_SOF_BYTE 0xA5U
+#define REFEREE_HEADER_LEN 5U
+#define REFEREE_CMD_ID_LEN 2U
+#define REFEREE_TAIL_LEN 2U
+
+volatile uint32_t RefereeProtocolDebug_SofCount = 0U;
+volatile uint32_t RefereeProtocolDebug_HeaderCrcFailCount = 0U;
+volatile uint32_t RefereeProtocolDebug_FrameCrcFailCount = 0U;
+volatile uint32_t RefereeProtocolDebug_InvalidLengthCount = 0U;
+volatile uint32_t RefereeProtocolDebug_FrameOverflowCount = 0U;
+volatile uint32_t RefereeProtocolDebug_FrameOkCount = 0U;
+volatile uint32_t RefereeProtocolDebug_QueuePushCount = 0U;
+volatile uint32_t RefereeProtocolDebug_QueueFullDropCount = 0U;
+volatile uint32_t RefereeProtocolDebug_QueuePopCount = 0U;
+volatile uint32_t RefereeProtocolDebug_ClearCount = 0U;
+volatile uint16_t RefereeProtocolDebug_LastDataLen = 0U;
+volatile uint16_t RefereeProtocolDebug_LastFrameLen = 0U;
+volatile uint16_t RefereeProtocolDebug_LastCmdID = 0U;
+
+static void Protocol_ResetRefereeStream(UartRxRingBuffer *rb)
+{
+    if (rb == NULL)
+        return;
+
+    rb->referee_frame_len = 0;
+    rb->referee_expected_len = 0;
+}
+
+static void Protocol_StartRefereeFrame(UartRxRingBuffer *rb, uint8_t byte)
+{
+    if (rb == NULL)
+        return;
+
+    RefereeProtocolDebug_SofCount++;
+    rb->referee_frame[0] = byte;
+    rb->referee_frame_len = 1;
+    rb->referee_expected_len = 0;
+}
+
+static void Protocol_ResyncReferee(UartRxRingBuffer *rb, uint8_t byte)
+{
+    if (rb == NULL)
+        return;
+
+    if (byte == REFEREE_SOF_BYTE)
+    {
+        Protocol_StartRefereeFrame(rb, byte);
+    }
+    else
+    {
+        Protocol_ResetRefereeStream(rb);
+    }
+}
+
+static void Protocol_QueueRefereePacket(UartRxRingBuffer *rb)
+{
+    RefereePacket_t *packet;
+
+    if (rb == NULL)
+        return;
+
+    if (rb->referee_pkt_count >= REFEREE_PACKET_QUEUE_SIZE)
+    {
+        RefereeProtocolDebug_QueueFullDropCount++;
+        return;
+    }
+
+    packet = &rb->referee_packet_queue[rb->referee_pkt_head];
+    memcpy(packet->data, rb->referee_frame, rb->referee_expected_len);
+    packet->length = rb->referee_expected_len;
+    packet->is_valid = true;
+    rb->referee_pkt_head = (rb->referee_pkt_head + 1) % REFEREE_PACKET_QUEUE_SIZE;
+    rb->referee_pkt_count++;
+    RefereeProtocolDebug_QueuePushCount++;
+}
+
+static void Protocol_ParseRefereeByte(UartRxRingBuffer *rb, uint8_t byte)
+{
+    if (rb == NULL)
+        return;
+
+    if (rb->referee_frame_len == 0)
+    {
+        if (byte == REFEREE_SOF_BYTE)
+        {
+            Protocol_StartRefereeFrame(rb, byte);
+        }
+        return;
+    }
+
+    if (rb->referee_frame_len >= REFEREE_FRAME_MAX_SIZE)
+    {
+        RefereeProtocolDebug_FrameOverflowCount++;
+        Protocol_ResyncReferee(rb, byte);
+        return;
+    }
+
+    rb->referee_frame[rb->referee_frame_len++] = byte;
+
+    if (rb->referee_frame_len == REFEREE_HEADER_LEN)
+    {
+        uint16_t data_len;
+        uint16_t total_len;
+
+        if (!Verify_CRC8_Check_Sum(rb->referee_frame, REFEREE_HEADER_LEN))
+        {
+            RefereeProtocolDebug_HeaderCrcFailCount++;
+            Protocol_ResyncReferee(rb, byte);
+            return;
+        }
+
+        data_len = (uint16_t)rb->referee_frame[1] | ((uint16_t)rb->referee_frame[2] << 8);
+        total_len = (uint16_t)(data_len + REFEREE_HEADER_LEN + REFEREE_CMD_ID_LEN + REFEREE_TAIL_LEN);
+        RefereeProtocolDebug_LastDataLen = data_len;
+        RefereeProtocolDebug_LastFrameLen = total_len;
+        if (total_len < (REFEREE_HEADER_LEN + REFEREE_CMD_ID_LEN + REFEREE_TAIL_LEN) ||
+            total_len > REFEREE_FRAME_MAX_SIZE)
+        {
+            RefereeProtocolDebug_InvalidLengthCount++;
+            Protocol_ResyncReferee(rb, byte);
+            return;
+        }
+
+        rb->referee_expected_len = total_len;
+    }
+
+    if (rb->referee_expected_len > 0 && rb->referee_frame_len == rb->referee_expected_len)
+    {
+        if (Verify_CRC16_Check_Sum(rb->referee_frame, rb->referee_expected_len))
+        {
+            RefereeProtocolDebug_FrameOkCount++;
+            RefereeProtocolDebug_LastCmdID = (uint16_t)rb->referee_frame[5] | ((uint16_t)rb->referee_frame[6] << 8);
+            Protocol_QueueRefereePacket(rb);
+        }
+        else
+        {
+            RefereeProtocolDebug_FrameCrcFailCount++;
+        }
+        Protocol_ResetRefereeStream(rb);
+    }
+}
 
 /**
  * @brief CRC校验生成（公开函数，供所有模块使用）
@@ -63,6 +206,13 @@ void Protocol_ResetParser(UartRxRingBuffer *rb)
     rb->ibus_error_count = 0;
     rb->ibus_stream_len = 0;
     memset(rb->ibus_stream, 0, sizeof(rb->ibus_stream));
+    memset(rb->referee_packet_queue, 0, sizeof(rb->referee_packet_queue));
+    memset(rb->referee_frame, 0, sizeof(rb->referee_frame));
+    rb->referee_pkt_head = 0;
+    rb->referee_pkt_tail = 0;
+    rb->referee_pkt_count = 0;
+    rb->referee_frame_len = 0;
+    rb->referee_expected_len = 0;
 }
 
 /**
@@ -74,6 +224,12 @@ void Protocol_ParseByte(UartRxRingBuffer *rb, uint8_t byte)
 {
     if (rb == NULL || rb->protocol_type == PROTOCOL_IBUS)
         return;
+
+    if (rb->protocol_type == PROTOCOL_REFEREE)
+    {
+        Protocol_ParseRefereeByte(rb, byte);
+        return;
+    }
 
     if (rb->protocol_type == PROTOCOL_SERVO_MCU)
     {
@@ -511,6 +667,68 @@ void Protocol_ClearIbusPacket(BSP_UART_NUM_e uart_num)
     {
         rb->ibus_ready = false;
         rb->ibus_packet.is_valid = false;
+    }
+}
+
+/**
+ * @brief 检查是否有完整的裁判系统数据包
+ */
+bool Protocol_HasRefereePacket(BSP_UART_NUM_e uart_num)
+{
+    if (uart_num >= BSP_UART_MAX)
+        return false;
+
+    UartRxRingBuffer *rb = BSP_UART_GetRxBuffer(uart_num);
+    if (rb == NULL)
+        return false;
+
+    return (rb->protocol_type == PROTOCOL_REFEREE && rb->referee_pkt_count > 0);
+}
+
+/**
+ * @brief 获取裁判系统数据包
+ */
+bool Protocol_GetRefereePacket(BSP_UART_NUM_e uart_num, RefereePacket_t *packet)
+{
+    if (uart_num >= BSP_UART_MAX || packet == NULL)
+        return false;
+
+    UartRxRingBuffer *rb = BSP_UART_GetRxBuffer(uart_num);
+    if (rb == NULL)
+        return false;
+
+    if (rb->protocol_type == PROTOCOL_REFEREE && rb->referee_pkt_count > 0)
+    {
+        taskENTER_CRITICAL();
+        memcpy(packet, &rb->referee_packet_queue[rb->referee_pkt_tail], sizeof(RefereePacket_t));
+        rb->referee_pkt_tail = (rb->referee_pkt_tail + 1) % REFEREE_PACKET_QUEUE_SIZE;
+        rb->referee_pkt_count--;
+        RefereeProtocolDebug_QueuePopCount++;
+        taskEXIT_CRITICAL();
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * @brief 清除裁判系统数据包标志
+ */
+void Protocol_ClearRefereePacket(BSP_UART_NUM_e uart_num)
+{
+    if (uart_num >= BSP_UART_MAX)
+        return;
+
+    UartRxRingBuffer *rb = BSP_UART_GetRxBuffer(uart_num);
+    if (rb != NULL)
+    {
+        taskENTER_CRITICAL();
+        rb->referee_pkt_head = 0;
+        rb->referee_pkt_tail = 0;
+        rb->referee_pkt_count = 0;
+        taskEXIT_CRITICAL();
+        RefereeProtocolDebug_ClearCount++;
+        Protocol_ResetRefereeStream(rb);
     }
 }
 

@@ -2,6 +2,7 @@
 #define MOTOR_ALGROTHIM_H
 
 #include "config.h"
+#include "UserLib.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -41,22 +42,6 @@ extern "C"
         uint8_t initialized; /**< 是否已初始化 */
     } MotorTrapPosProfile_t;
 
-    typedef struct
-    {
-        uint32_t start_tick;
-        float last_target;
-        float last_zone;
-        bool active;
-    } DeadzoneTimer_t;
-
-    typedef struct
-    {
-        uint32_t start_tick;
-        float last_target;
-        float last_zone;
-        bool active;
-    } DeadzoneState_t;
-
     /* 调试用全局变量 */
     extern volatile float g_MotorTrapPosLastOutput;
 
@@ -64,60 +49,19 @@ extern "C"
     /*  API                                                                 */
     /* ------------------------------------------------------------------ */
 
-    // 浮点死区判定函数：使用独立状态结构体，避免多处调用互相干扰
-    // enable_timeout_pass=true  : 超时后按到位处理（用于RM等需要防卡死场景）
-    // enable_timeout_pass=false : 仅真实进入死区才算到位（用于DM等可死等场景）
-    static inline bool IsInDeadzoneF(float value, float target, float zone, DeadzoneState_t *state, bool enable_timeout_pass)
-    {
-        if (state == NULL)
-        {
-            return false;
-        }
-
-        if (!isfinite(value) || !isfinite(target) || !isfinite(zone))
-        {
-            state->active = false;
-            return false;
-        }
-
-        const float abs_zone = fabsf(zone);
-        const bool in_deadzone = (fabsf(value - target) <= abs_zone);
-        if (in_deadzone)
-        {
-            state->active = false;
-            state->last_target = target;
-            state->last_zone = abs_zone;
-            return true;
-        }
-
-        uint32_t now_tick = HAL_GetTick();
-        const bool target_or_zone_changed =
-            (!state->active) ||
-            (fabsf(target - state->last_target) > (abs_zone + 1e-3f)) ||
-            (fabsf(abs_zone - state->last_zone) > 1e-3f);
-
-        if (target_or_zone_changed)
-        {
-            state->start_tick = now_tick;
-            state->active = true;
-            state->last_target = target;
-            state->last_zone = abs_zone;
-            return false;
-        }
-
-        if (enable_timeout_pass &&
-            state->active &&
-            ((uint32_t)(now_tick - state->start_tick) >= MOTOR_DEADZONE_TIMEOUT_MS))
-        {
-            state->active = false;
-            state->last_target = target;
-            state->last_zone = abs_zone;
-            return true;
-        }
-
-        return false;
-    }
-    
+    /**
+     * @brief 估算梯形/三角速度曲线从起点走到目标点所需的超时时间
+     * @param start_pos   起始位置
+     * @param target_pos  目标位置
+     * @param vmax        最大速度，函数内部按绝对值处理
+     * @param amax        最大加速度，函数内部按绝对值处理
+     * @param min_ms      允许返回的最小超时值
+     * @param max_ms      允许返回的最大超时值
+     * @return 估算后的超时时间（毫秒）
+     */
+    uint32_t CalcTrapMoveTimeoutMs(float start_pos, float target_pos,
+                                   float vmax, float amax,
+                                   uint32_t min_ms, uint32_t max_ms);
 
     /**
      * @brief 初始化规划器

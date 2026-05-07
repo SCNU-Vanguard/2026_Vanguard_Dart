@@ -214,6 +214,7 @@ typedef struct
     uint8_t id;           // 舵机ID
     uint16_t raw_zero;    // 机械归零位置原始值
     uint16_t raw_release; // 机械释放位置原始值
+    ServoAlarmCode_t AlarmData;
 } ServoRegistryItem_t;
 
 /// @brief 清空舵机注册表
@@ -229,6 +230,25 @@ bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count
 /// @param id 舵机ID
 /// @return 内部注册项指针，未找到返回NULL
 const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id);
+
+/// @brief 注册飞镖机构舵机配置表
+void Servo_RegisterDartProfiles(void);
+
+/// @brief 控制飞镖机构所有舵机同时回到机械零位
+/// @param time_ms 转动时间（ms）
+void Servo_MoveAllToZero(uint16_t time_ms);
+
+/// @brief 控制指定弹位对应的一组舵机回到机械零位
+/// @param dart_num 当前飞镖编号，支持1-3
+/// @param time_ms 转动时间（ms）
+/// @retval true 指令已下发，false 弹位或舵机配置无效
+bool Servo_MoveDartGroupToZero(uint8_t dart_num, uint16_t time_ms);
+
+/// @brief 释放指定弹位对应的一组舵机
+/// @param dart_num 当前飞镖编号，支持1-3
+/// @param time_ms 转动时间（ms）
+/// @retval true 指令已下发，false 弹位或舵机配置无效
+bool Servo_ReleaseDartGroup(uint8_t dart_num, uint16_t time_ms);
 
 /// @brief 运行动作组
 /// @param group_num 动作组编号

@@ -57,16 +57,26 @@ int16_t yaw;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+static void RC_UpdateChannels(void)
+{
+  throttle = IA6B_ReadChannel(1); // 油门
+  roll = IA6B_ReadChannel(2);     // 横滚
+  pitch = IA6B_ReadChannel(3);    // 俯仰
+  yaw = IA6B_ReadChannel(4);      // 偏航
+}
+
+static void RC_ProcessPort(BSP_UART_NUM_e uart_num)
+{
+  if (IA6B_ProcessIbusPacket(uart_num))
+  {
+    RC_UpdateChannels();
+  }
+}
+
 void RC_Task(void)
 {
-  if (IA6B_ProcessIbusPacket(BSP_UART6))
-  {
-    // 成功解析，读取通道值
-    throttle = IA6B_ReadChannel(1); // 油门
-    roll = IA6B_ReadChannel(2);     // 横滚
-    pitch = IA6B_ReadChannel(3);    // 俯仰
-    yaw = IA6B_ReadChannel(4);      // 偏航
-  }
+  RC_ProcessPort(BSP_UART_IBUS);
+  RC_ProcessPort(BSP_UART_SBUS);
 }
 /* USER CODE END PFP */
 
@@ -115,7 +125,8 @@ int main(void)
   MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
   BSP_UART_Init();
-  UART_SetProtocolType(BSP_UART6, PROTOCOL_IBUS);
+  UART_SetProtocolType(BSP_UART_IBUS, PROTOCOL_IBUS);
+  UART_SetProtocolType(BSP_UART_SBUS, PROTOCOL_IBUS);
   HAL_Delay(200);
   /* USER CODE END 2 */
 
@@ -124,7 +135,7 @@ int main(void)
   while (1)
   {
     RC_Task();
-		HAL_Delay(10);
+    HAL_Delay(10);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

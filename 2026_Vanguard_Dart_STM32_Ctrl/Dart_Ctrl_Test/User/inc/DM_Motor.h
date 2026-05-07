@@ -129,10 +129,10 @@ typedef struct _DM_MotorClass
     void (*calculate)(struct _MotorTypeDef *self);
 
     /// @brief 发送电机控制数据
-    uint8_t (*send_control)(struct _MotorTypeDef *self);
+    uint8_t (*send_control)(struct _MotorTypeDef *self, CAN_TxRetryMode retry_mode);
 
     /// @brief 电机数据刷新函数(只刷新数据)
-    void (*refresh_data)(can_motor_cfg motor_cfg);
+    void (*refresh_data)(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
 
 } DM_MotorClass_t;
 #pragma pack(pop)
@@ -228,7 +228,7 @@ void DM_Motor_Calculate(MotorTypeDef *motor);
 /// @brief 调用电机的发送控制函数（通过类虚函数表）
 /// @param motor 电机结构体指针
 /// @return 发送成功返回1，失败返回0
-uint8_t DM_Motor_SendControl(MotorTypeDef *motor);
+uint8_t DM_Motor_SendControl(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
 
 /// @brief 获取电机所属的类指针
 /// @param motor 电机结构体指针
@@ -312,27 +312,27 @@ float DM_Motor_GetTorqueFF(MotorTypeDef *motor);
 /// @brief 用于使能达妙电机
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorEnable(can_motor_cfg motor_cfg);
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
 
 /// @brief 用于失能达妙电机
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorDisable(can_motor_cfg motor_cfg);
+uint8_t DM_MotorDisable(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
 
 /// @brief 用于使能达妙电机
 /// @param motor 电机结构体指针
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_Motor_Enable(MotorTypeDef *motor);
+uint8_t DM_Motor_Enable(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
 
 /// @brief 用于失能达妙电机
 /// @param motor 电机结构体指针
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_Motor_Disable(MotorTypeDef *motor);
+uint8_t DM_Motor_Disable(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
 
 /// @brief 设置达妙电机发送的数据
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 数据所在数组的指针
-void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data);
+void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode retry_mode);
 
 /// @brief DM电机的解算
 /// @param motor 电机结构体指针
@@ -348,7 +348,7 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor);
 /// @param TargetPos 目标位置
 /// @param TargetVel 目标速度
 /// @param workmode  达妙电机的工作模式
-void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode);
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode, CAN_TxRetryMode retry_mode);
 
 /// @brief DM电机MIT模式控制
 /// @param motor 电机结构体指针
@@ -363,6 +363,6 @@ void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
 /// @brief 电机数据刷新函数(只刷新数据)
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
 
 #endif
