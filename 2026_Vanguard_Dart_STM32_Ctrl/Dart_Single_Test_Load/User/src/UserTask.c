@@ -15,7 +15,6 @@
 //  ***********************************************************************************************************************/
 #include "UserTask.h"
 #include "PID.h"
-#include <math.h>
 
 /************************全局或静态作用域*********************/
 static bool des_yes = false;
@@ -23,57 +22,19 @@ static bool des_yes = false;
 float RmMotorAngleData = 0.0f;
 float RmMotorSpeedData = 0.0f;
 float target_loc = 0.0f;
-static float offset_angle;
 static DeadzoneState_t g_LoadReturnZeroDeadzoneState = {0};
 static DeadzoneState_t g_LoadPresetDeadzoneState = {0};
 static DeadzoneState_t g_LoadTargetDeadzoneState = {0};
 // #endif
 
-#undef LOAD_TASK_TRAP_VMAX_DEG_S
-#undef LOAD_TASK_TRAP_AMAX_DEG_S2
-#undef LOAD_TASK_TRAP_JERK_FACTOR
-#undef LOAD_TASK_TRAP_DISABLE_JERK
-#undef LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE
-#define LOAD_TASK_TRAP_VMAX_DEG_S 10000.0f
-#define LOAD_TASK_TRAP_AMAX_DEG_S2 100000.0f
-#define LOAD_TASK_TRAP_JERK_FACTOR 30.0f
-#define LOAD_TASK_TRAP_DISABLE_JERK 1
-#define LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE 0
-
-static MotorTrapPosProfile_t g_LoadTrapProfile = {0};
-static uint32_t g_LoadTrapCntLast = 0U;
-float LoadTrapFinalTargetData = 0.0f;
-float LoadTrapCmdPosData = 0.0f;
-float LoadTrapCmdVelData = 0.0f;
-float LoadTrapCmdAccData = 0.0f;
-float LoadTrapDtData = 0.0f;
-
 static inline void LoadMotor_SetFinalTarget(float new_target_pos_deg)
 {
     target_loc = new_target_pos_deg;
-    LoadTrapFinalTargetData = new_target_pos_deg;
-#if LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE
-    RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-    Motor_TrapPos_Reset(&g_LoadTrapProfile, RmMotorAngleData);
-#endif
 }
 
-static inline void LoadMotor_RunTrapTo(float target_pos_deg)
+static inline void LoadMotor_RunTarget(float target_pos_deg)
 {
-    float dt_s = DWT_GetDeltaT(&g_LoadTrapCntLast);
-    if (!isfinite(dt_s) || dt_s <= 0.0f || dt_s > 0.02f)
-    {
-        dt_s = 0.001f;
-    }
-    LoadTrapDtData = dt_s;
-    LoadTrapFinalTargetData = target_pos_deg;
-    g_LoadTrapProfile.target_pos = target_pos_deg;
-
-    float cmd_pos = Motor_TrapPos_Update(&g_LoadTrapProfile, dt_s);
-    LoadTrapCmdPosData = cmd_pos;
-    LoadTrapCmdVelData = g_LoadTrapProfile.cmd_vel;
-    LoadTrapCmdAccData = g_LoadTrapProfile.cmd_acc;
-    RmMotorPID_Calc(RM_3508_GRIPPER, cmd_pos);
+    RmMotorPID_Calc(RM_3508_GRIPPER, target_pos_deg);
 }
 
 static inline void LoadMotor_HoldTargetMs(float hold_target_pos_deg, uint32_t hold_ms)
@@ -82,7 +43,7 @@ static inline void LoadMotor_HoldTargetMs(float hold_target_pos_deg, uint32_t ho
     while ((uint32_t)(HAL_GetTick() - start_tick) < hold_ms)
     {
         RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-        LoadMotor_RunTrapTo(hold_target_pos_deg);
+        LoadMotor_RunTarget(hold_target_pos_deg);
         vTaskDelay(1);
     }
 }
@@ -148,11 +109,12 @@ void TaskInitFunc(void)
 static inline void LoadDart_ReturnToZero(uint8_t dart_num)
 {
     xQueueSend(g_xLoad3508QueueHandler, (const void *)&dart_num, 0);
+    des_yes = false;
     // vTaskDelay(500);                                                          // 这里是上电后的绝对位置
     while (!des_yes) // 先移动到一个安全角度防止肘击
     {
-        des_yes = IsInDeadzoneF(Motor_GetTotalAngle(RM_3508_GRIPPER), PresetLoc + offset_angle, MOTOR_DEAD_ZONE, &g_LoadReturnZeroDeadzoneState, false);
-        LoadMotor_RunTrapTo(PresetLoc + offset_angle);
+        des_yes = IsInDeadzoneF(Motor_GetTotalAngle(RM_3508_GRIPPER), PresetLoc, MOTOR_DEAD_ZONE, &g_LoadReturnZeroDeadzoneState, false);
+        LoadMotor_RunTarget(PresetLoc);
         osDelay(1);
     }
     des_yes = false;
@@ -190,16 +152,8 @@ void LoadTaskFunc(void *argument)
     TaskHandle_t Load3508TaskHandle = NULL;
     xTaskCreate(LoadMotorTaskFunc, "LoadMotor", 64 * 4, NULL, osPriorityBelowNormal7, &Load3508TaskHandle);
 
-    // 获取电机偏移角度，用于目标值补偿
-    offset_angle = MotorManager.MotorList[RM_3508_GRIPPER - 1].motor_data.offset_ecd_angle;
-    pre_loc = 6427.0f + offset_angle;
+    pre_loc = -6427.0f;
     RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-    Motor_TrapPos_Init(&g_LoadTrapProfile, RmMotorAngleData, LOAD_TASK_TRAP_VMAX_DEG_S, LOAD_TASK_TRAP_AMAX_DEG_S2);
-#if LOAD_TASK_TRAP_DISABLE_JERK
-    Motor_TrapPos_SetJerk(&g_LoadTrapProfile, 0.0f);
-#else
-    Motor_TrapPos_SetJerk(&g_LoadTrapProfile, LOAD_TASK_TRAP_AMAX_DEG_S2 * LOAD_TASK_TRAP_JERK_FACTOR);
-#endif
 
     while (1)
     {
@@ -208,18 +162,18 @@ void LoadTaskFunc(void *argument)
         while (!des_yes)
         {
             des_yes = IsInDeadzoneF(RmMotorAngleData, pre_loc, MOTOR_DEAD_ZONE, &g_LoadPresetDeadzoneState, false);
-            LoadMotor_RunTrapTo(pre_loc);
+            LoadMotor_RunTarget(pre_loc);
             RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
             vTaskDelay(1);
         }
         des_yes = false;
         dart_num = g_ucTestDartNum;
-        LoadMotor_SetFinalTarget(FirstServoLoc + offset_angle);
+        LoadMotor_SetFinalTarget(FirstServoLoc);
         LoadMotor_HoldTargetMs(target_loc, 2500);
         while (1)
         {
             RmMotorAngleData = Motor_GetTotalAngle(RM_3508_GRIPPER);
-            LoadMotor_RunTrapTo(target_loc);
+            LoadMotor_RunTarget(target_loc);
 
             if (dart_num != 0)
             {
@@ -227,24 +181,24 @@ void LoadTaskFunc(void *argument)
                 if (des_yes)
                 {
                     LoadDart_ReturnToZero(dart_num);
-                    LoadMotor_HoldTargetMs(PresetLoc + offset_angle, 2500);
+                    LoadMotor_HoldTargetMs(PresetLoc, 2500);
                     dart_num--;
                     if (dart_num == 0)
                     {
-                        LoadMotor_SetFinalTarget(PresetLoc + offset_angle);
+                        LoadMotor_SetFinalTarget(PresetLoc);
                         des_yes = false;
                         LoadMotor_HoldTargetMs(target_loc, 2500);
                         break;
                     }
                     else if (dart_num == 2)
                     {
-                        LoadMotor_SetFinalTarget(offset_angle + SecondServoLoc);
+                        LoadMotor_SetFinalTarget(SecondServoLoc);
                         des_yes = false;
                         LoadMotor_HoldTargetMs(target_loc, 2500);
                     }
                     else if (dart_num == 1)
                     {
-                        LoadMotor_SetFinalTarget(ThirdServoLoc + offset_angle);
+                        LoadMotor_SetFinalTarget(ThirdServoLoc);
                         des_yes = false;
                         LoadMotor_HoldTargetMs(target_loc, 2500);
                     }

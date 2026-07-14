@@ -1,5 +1,18 @@
+/***********************************
+ * 通用电机控制（统一 Motor_* API）
+ *
+ * 业务层使用 Motor_SetTarget / Motor_GetTarget / Motor_EnableControl /
+ * Motor_SetUseSCurve；保护状态直接查询 angle_motor。
+ * 策略（S 型规划、同步 PID、过流保护）由注册时写入 MotorTypeDef 的字段
+ * 决定，运行时控制任务统一遍历所有电机 tick。
+ *
+ * 夹爪 M3508 的多 owner 抢占 + 命令 stream 仍保留 LoadMotor_* 薄封装，
+ * 内部最终调 Motor_SetTarget(RM_3508_GRIPPER, ...)。
+ **********************************/
+
 #include "./MotorControlTask.h"
-#include "../User/inc/motor_algrothim.h"
+#include "../User/inc/angle_motor.h"
+#include "../User/inc/DM_Motor.h"
 #include "bsp_dwt.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -9,1287 +22,726 @@
 #include <stdbool.h>
 #include <string.h>
 
-extern MotorManager_t MotorManager;
-float MotorData = 0.0f;
-float gripper_offset = 0.0f;
-float trigger_offset = 0.0f;
-float target_loc = 0.0f;
-float Load3508CurrentFilteredData = 0.0f;
-float Load3508CurrentAbsFilteredData = 0.0f;
-float Load3508StillOverCurrentData = 0.0f;
-volatile uint8_t Load3508OverCurrentProtected = 0U;
+extern MotorManager_t MotorManager; /* 声明外部变量 MotorManager。 */
 
-static float g_GripperTarget = 0.0f;
-static float g_GripperPrevTarget = 0.0f;
-static float g_TriggerTarget = 0.0f;
-static float g_Yaw6020Target = 0.0f;
+/* 调试用全局（保留给 JLink/SWV watch） */
+float MotorData = 0.0f; /* 初始化 MotorData。 */
+float gripper_offset = 0.0f; /* 初始化 gripper_offset。 */
+float trigger_offset = 0.0f; /* 初始化 trigger_offset。 */
+float target_loc = 0.0f; /* 初始化 target_loc。 */
+float Load3508CurrentFilteredData = 0.0f; /* 初始化 Load3508CurrentFilteredData。 */
+float Load3508CurrentAbsFilteredData = 0.0f; /* 初始化 Load3508CurrentAbsFilteredData。 */
+float Load3508StillOverCurrentData = 0.0f; /* 初始化 Load3508StillOverCurrentData。 */
 
-static StaticSemaphore_t g_x3508MtxBuf;
-static SemaphoreHandle_t g_x3508Mtx = NULL;
+#define MOTOR_TARGET_EPS_DEG (1e-3f) /* 定义 MOTOR_TARGET_EPS_DEG。 */
 
-static StaticSemaphore_t g_x2006MtxBuf;
-static SemaphoreHandle_t g_x2006Mtx = NULL;
+static MotorRuntimeState_t s_runtime[g_CanMotorNum]; /* 保存 s_runtime。 */
 
-static StaticSemaphore_t g_x6020MtxBuf;
-static SemaphoreHandle_t g_x6020Mtx = NULL;
+/// @brief 获取运行时长
+/// @param cfg 电机别名
+/// @return 运行状态结构体
+static inline MotorRuntimeState_t *Motor_GetRuntime(can_motor_cfg cfg); /* 声明 Motor_GetRuntime 接口。 */
 
-#define LOAD_MOTOR_CMD_MAGIC 0x4C443508UL
-#define LOAD_MOTOR_CMD_SIGNATURE_KEY 0xA53C3508UL
-#define LOAD_MOTOR_CMD_STREAM_DEPTH 8U
-#define LOAD_MOTOR_CMD_MAX_AGE_MS 100U
-#define LOAD_MOTOR_DEFAULT_HOLD_MS 500U
+/// @brief 获取互斥量操作句柄
+/// @param cfg 电机别名
+/// @return 互斥量操作句柄
+static inline SemaphoreHandle_t Motor_GetMutex(can_motor_cfg cfg); /* 声明 Motor_GetMutex 接口。 */
 
-typedef struct
+/// @brief 获取电机转动的角度
+/// @param cfg 电机别名
+/// @return 对应电机角度
+static inline float Motor_GetPosRaw(can_motor_cfg cfg); /* 声明 Motor_GetPosRaw 接口。 */
+
+/* ------------------------------------------------------------------
+ * LoadMotor_* 命令 stream（夹爪 M3508 专用）
+ * 确认通信过程的密钥,根据密钥进行确认目标值
+ * ------------------------------------------------------------------ */
+#define LOAD_MOTOR_CMD_MAGIC 0x4C443508UL /* 定义 LOAD_MOTOR_CMD_MAGIC。 */
+#define LOAD_MOTOR_CMD_SIGNATURE_KEY 0xA53C3508UL /* 定义 LOAD_MOTOR_CMD_SIGNATURE_KEY。 */
+#define LOAD_MOTOR_CMD_STREAM_DEPTH 8U /* 定义 LOAD_MOTOR_CMD_STREAM_DEPTH。 */
+#define LOAD_MOTOR_CMD_MAX_AGE_MS 100U /* 定义 LOAD_MOTOR_CMD_MAX_AGE_MS。 */
+#define LOAD_MOTOR_DEFAULT_HOLD_MS 500U /* 定义 LOAD_MOTOR_DEFAULT_HOLD_MS。 */
+
+/* Stream流的相关定义 */
+static StaticStreamBuffer_t g_GripperCmdStreamBuffer; /* 保存 g_GripperCmdStreamBuffer。 */
+static uint8_t g_GripperCmdStreamStorage[LOAD_MOTOR_CMD_STREAM_DEPTH * sizeof(LoadMotorCommand_t)]; /* 保存 g_GripperCmdStreamStorage。 */
+static StreamBufferHandle_t g_GripperCmdStream = NULL; /* 初始化 g_GripperCmdStream。 */
+
+/* LoadMotor的相关数值 */
+static volatile uint32_t g_GripperCmdSeq = 0U; /* 初始化 g_GripperCmdSeq。 */
+static LoadMotorOwner_e g_GripperActiveOwner = LOAD_MOTOR_OWNER_NONE; /* 初始化 g_GripperActiveOwner。 */
+static uint8_t g_GripperActivePriority = 0U; /* 初始化 g_GripperActivePriority。 */
+static uint32_t g_GripperActiveOwnerExpireMs = 0U; /* 初始化 g_GripperActiveOwnerExpireMs。 */
+
+/* ------------------------------------------------------------------ */
+static void Motor_TickOne(can_motor_cfg cfg, float sync_offset_deg); /* 声明 Motor_TickOne 接口。 */
+static void Motor_HandleOffline(can_motor_cfg cfg, MotorRuntimeState_t *rt); /* 声明 Motor_HandleOffline 接口。 */
+static void Motor_ResetTrap(MotorRuntimeState_t *rt, can_motor_cfg cfg, float seed_raw_deg); /* 声明 Motor_ResetTrap 接口。 */
+// static void Motor_ResetState(MotorRuntimeState_t *rt, can_motor_cfg cfg);
+static void LoadMotor_ProcessCommandStream(void); /* 声明 LoadMotor_ProcessCommandStream 接口。 */
+
+/// @brief 初始化控制结构体
+/// @param void
+/// @note  这个只是整个电机控制结构体初始化用到的，不是电机信息初始化用到的
+static SemaphoreHandle_t s_mtx[g_CanMotorNum]; /* 保存 s_mtx。 */
+void MotorControl_Init(void) /* 实现 MotorControl_Init。 */
 {
-    uint32_t magic;
-    uint32_t signature;
-    uint32_t seq;
-    uint32_t timestamp_ms;
-    uint32_t max_age_ms;
-    uint32_t owner_hold_ms;
-    uint8_t owner;
-    uint8_t priority;
-    uint16_t reserved;
-    float target_pos_deg;
-} LoadMotorCommand_t;
+    uint8_t i; /* 保存 i。 */
+    static StaticSemaphore_t s_mtx_buf[g_CanMotorNum]; /* 保存 s_mtx_buf。 */
 
-static StaticStreamBuffer_t g_x3508CmdStreamBuffer;
-static uint8_t g_uc3508CmdStreamStorage[LOAD_MOTOR_CMD_STREAM_DEPTH * sizeof(LoadMotorCommand_t)];
-static StreamBufferHandle_t g_x3508CmdStream = NULL;
-static volatile uint32_t g_ul3508CmdSeq = 0U;
-static LoadMotorOwner_e g_Active3508Owner = LOAD_MOTOR_OWNER_NONE;
-static uint8_t g_Active3508Priority = 0U;
-static uint32_t g_Active3508OwnerExpireMs = 0U;
-
-static MotorTrapPosProfile_t g_LoadTrapProfile = {0};
-static uint32_t g_LoadTrapCntLast = 0U;
-static float g_GripperCurrentFilteredA = 0.0f;
-static uint8_t g_GripperCurrentFilterReady = 0U;
-static uint32_t g_GripperLastTargetChangeMs = 0U;
-static uint32_t g_GripperOverCurrentStartMs = 0U;
-static uint32_t g_GripperStallOverCurrentStartMs = 0U;
-static uint32_t g_GripperStallSampleMs = 0U;
-static float g_GripperStallSamplePosDeg = 0.0f;
-static bool g_GripperOverCurrentReturning = false;
-
-typedef struct
-{
-    can_motor_cfg motor_cfg;
-    float target;
-    float filtered_current_a;
-    uint8_t filter_ready;
-    uint32_t last_target_change_ms;
-    uint32_t over_current_start_ms;
-    uint32_t stall_over_current_start_ms;
-    uint32_t stall_sample_ms;
-    float stall_sample_pos_deg;
-    bool ctrl_enabled;
-    bool use_scurve;
-    bool protected_flag;
-    MotorTrapPosProfile_t trap_profile;
-    uint32_t trap_cnt_last;
-    uint8_t trap_initialized;
-} StoreMotorCtrlState_t;
-
-static StaticSemaphore_t g_xStore3508MtxBuf;
-static SemaphoreHandle_t g_xStore3508Mtx = NULL;
-static StoreMotorCtrlState_t g_LeftStoreMotor = {.motor_cfg = RM_3508_STORE_LEFT};
-static StoreMotorCtrlState_t g_RightStoreMotor = {.motor_cfg = RM_3508_STORE_RIGHT};
-
-static volatile bool g_b3508CtrlEnabled = false;
-static volatile bool g_b2006CtrlEnabled = false;
-static volatile bool g_b6020CtrlEnabled = false;
-
-static void Motor3508_SetTargetAndRemember(float target);
-static void Motor3508_CheckOverCurrent(uint32_t now_ms, float target_pos_deg);
-static StoreMotorCtrlState_t *StoreMotor_GetState(can_motor_cfg motor_cfg);
-static void StoreMotor_ClearProtectionState(StoreMotorCtrlState_t *state);
-static void StoreMotor_ResetState(StoreMotorCtrlState_t *state);
-static void StoreMotor_ResetTrap(StoreMotorCtrlState_t *state, float current_pos_deg);
-static float StoreMotor_GetRawAngle(const StoreMotorCtrlState_t *state);
-static float StoreMotor_GetRelativeAngle(const StoreMotorCtrlState_t *state);
-static void StoreMotor_CheckProtection(StoreMotorCtrlState_t *state, uint32_t now_ms, float target_pos_deg);
-static void StoreMotor_RunControl(StoreMotorCtrlState_t *state);
-
-#if 0
-static inline float LoadMotor_GetRawAngleInternal(void)
-{
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-    // 业务层统一使用相对零点角度，避免夹爪 3508 的目标坐标系不一致。
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-    // 对业务层统一使用相对零点角度，避免和 RM 位置环坐标系不一致
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-}
-
-#endif
-#if 0
-static inline float LoadMotor_GetRawAngleInternal(void)
-{
-    // 业务层统一读取夹爪 M3508 的相对零点角度，避免目标坐标系不一致。
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-}
-
-#endif
-static inline float LoadMotor_GetRawAngleInternal(void)
-{
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-    // 业务层统一读取夹爪 M3508 的相对零点角度，避免目标坐标系不一致。
-    return Motor_GetTotalAngle(RM_3508_GRIPPER);
-}
-
-static bool LoadMotor_TimeReached(uint32_t now_ms, uint32_t target_ms)
-{
-    return ((int32_t)(now_ms - target_ms) >= 0);
-}
-
-static uint32_t LoadMotor_FloatBits(float value)
-{
-    uint32_t bits = 0U;
-    memcpy(&bits, &value, sizeof(bits));
-    return bits;
-}
-
-static uint32_t LoadMotor_CalcSignature(const LoadMotorCommand_t *cmd)
-{
-    if (cmd == NULL)
+    for (i = 0U; i < (uint8_t)g_CanMotorNum; i++) /* 遍历当前数据集合。 */
     {
-        return 0U;
-    }
-
-    return LOAD_MOTOR_CMD_SIGNATURE_KEY ^
-           cmd->magic ^
-           cmd->seq ^
-           cmd->timestamp_ms ^
-           cmd->max_age_ms ^
-           cmd->owner_hold_ms ^
-           ((uint32_t)cmd->owner << 24) ^
-           ((uint32_t)cmd->priority << 16) ^
-           LoadMotor_FloatBits(cmd->target_pos_deg);
-}
-
-static bool LoadMotor_CommandIsValid(const LoadMotorCommand_t *cmd, uint32_t now_ms)
-{
-    if (cmd == NULL ||
-        cmd->magic != LOAD_MOTOR_CMD_MAGIC ||
-        cmd->signature != LoadMotor_CalcSignature(cmd) ||
-        !isfinite(cmd->target_pos_deg))
-    {
-        return false;
-    }
-
-    if (cmd->max_age_ms > 0U &&
-        (uint32_t)(now_ms - cmd->timestamp_ms) > cmd->max_age_ms)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-static bool LoadMotor_ShouldAcceptCommand(const LoadMotorCommand_t *cmd, uint32_t now_ms)
-{
-    bool accepted;
-
-    if (cmd == NULL)
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    if (g_Active3508Owner != LOAD_MOTOR_OWNER_NONE &&
-        LoadMotor_TimeReached(now_ms, g_Active3508OwnerExpireMs))
-    {
-        g_Active3508Owner = LOAD_MOTOR_OWNER_NONE;
-        g_Active3508Priority = 0U;
-    }
-
-    accepted = (g_Active3508Owner == LOAD_MOTOR_OWNER_NONE ||
-                g_Active3508Owner == (LoadMotorOwner_e)cmd->owner ||
-                cmd->priority >= g_Active3508Priority);
-    taskEXIT_CRITICAL();
-
-    return accepted;
-}
-
-static void LoadMotor_AcceptCommand(const LoadMotorCommand_t *cmd, uint32_t now_ms)
-{
-    uint32_t hold_ms;
-    MotorTypeDef *motor = Motor_GetHandleFast(RM_3508_GRIPPER);
-    const MotorTrapConfig_t *trap_cfg = &motor->trap_config;
-
-    if (cmd == NULL)
-    {
-        return;
-    }
-
-    hold_ms = (cmd->owner_hold_ms == 0U) ? LOAD_MOTOR_DEFAULT_HOLD_MS : cmd->owner_hold_ms;
-    Motor3508_SetTargetAndRemember(cmd->target_pos_deg);
-    if (trap_cfg->registered != 0U && trap_cfg->resync_on_target_change != 0U)
-    {
-        MotorData = LoadMotor_GetRawAngleInternal();
-        Motor_TrapPos_Resync(&g_LoadTrapProfile, MotorData);
-    }
-    taskENTER_CRITICAL();
-    g_Active3508Owner = (LoadMotorOwner_e)cmd->owner;
-    g_Active3508Priority = cmd->priority;
-    g_Active3508OwnerExpireMs = now_ms + hold_ms;
-    taskEXIT_CRITICAL();
-}
-
-static void LoadMotor_ProcessCommandStream(void)
-{
-    LoadMotorCommand_t cmd;
-    size_t received;
-    uint32_t now_ms = HAL_GetTick();
-
-    if (g_x3508CmdStream == NULL)
-    {
-        return;
-    }
-
-    while ((received = xStreamBufferReceive(g_x3508CmdStream, &cmd, sizeof(cmd), 0)) > 0U)
-    {
-        if (received != sizeof(cmd))
+        if (s_mtx[i] == NULL) /* 检查当前执行条件。 */
         {
-            (void)xStreamBufferReset(g_x3508CmdStream);
-            break;
+            s_mtx[i] = xSemaphoreCreateMutexStatic(&s_mtx_buf[i]); // 创建各个电机的互斥量
+        }
+        memset(&s_runtime[i], 0, sizeof(s_runtime[i])); /* 调用 memset。 */
+        s_runtime[i].target = Motor_GetTotalAngle((can_motor_cfg)(i + 1U)); // 根据当前位置进行初始化
+        AngleMotor_ResetRuntime((can_motor_cfg)(i + 1U));                   /* 同步复位 angle_motor 判断/保护运行时 */
+    }
+
+    if (g_GripperCmdStream == NULL) /* 检查当前执行条件。 */
+    {
+        // 夹爪电机命令流
+        g_GripperCmdStream = xStreamBufferCreateStatic(sizeof(g_GripperCmdStreamStorage), /* 传入下一项参数或数据。 */
+                                                       sizeof(LoadMotorCommand_t), /* 传入下一项参数或数据。 */
+                                                       g_GripperCmdStreamStorage, /* 传入下一项参数或数据。 */
+                                                       &g_GripperCmdStreamBuffer); /* 完成本行操作。 */
+    }
+
+    /* 之前调试换弹的M3508电机用的 */
+    // target_loc = 0.0f;
+    // Load3508CurrentFilteredData = 0.0f; // 保存滤波后的夹爪电流
+    // Load3508CurrentAbsFilteredData = 0.0f; // 保存滤波电流的绝对值
+    // Load3508StillOverCurrentData = 0.0f; // 保存持续过流相关数据
+
+    // 换弹夹爪电机命令信息流相关参数
+    g_GripperActiveOwner = LOAD_MOTOR_OWNER_NONE; /* 更新 g_GripperActiveOwner。 */
+    g_GripperActivePriority = 0U; /* 更新 g_GripperActivePriority。 */
+    g_GripperActiveOwnerExpireMs = 0U; /* 更新 g_GripperActiveOwnerExpireMs。 */
+    g_GripperCmdSeq = 0U; /* 更新 g_GripperCmdSeq。 */
+}
+
+/* ------------------------------------------------------------------
+ * 通用 Setter / Getter
+ * ------------------------------------------------------------------ */
+
+/// @brief 设置电机目标值
+/// @param cfg
+/// @param target_deg
+void Motor_SetTarget(can_motor_cfg cfg, float target_deg) /* 实现 Motor_SetTarget。 */
+{
+    // 拿状态和句柄
+    MotorRuntimeState_t *rt = Motor_GetRuntime(cfg); /* 初始化 rt。 */
+    SemaphoreHandle_t mtx = Motor_GetMutex(cfg); /* 初始化 mtx。 */
+    bool same_target = false; /* 初始化 same_target。 */
+
+    if (rt == NULL || !isfinite(target_deg)) /* 检查当前执行条件。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+    if (mtx != NULL) /* 检查当前执行条件。 */
+    {
+        xSemaphoreTake(mtx, portMAX_DELAY); // 直接使用互斥量防止被其他线程操作
+    }
+
+    // 当前目标有效 && 新旧目标角度误差小于阈值
+    same_target = isfinite(rt->target) && (fabsf(rt->target - target_deg) <= MOTOR_TARGET_EPS_DEG); /* 更新 same_target。 */
+    if (same_target) /* 检查当前执行条件。 */
+    {
+        if (!rt->ctrl_enabled) /* 检查当前执行条件。 */
+        {
+            rt->target_set_while_disabled = 1U; /* 更新 target_set_while_disabled。 */
+        }
+        if (mtx != NULL) /* 检查当前执行条件。 */
+        {
+            xSemaphoreGive(mtx); /* 调用 xSemaphoreGive。 */
         }
 
-        now_ms = HAL_GetTick();
-        if (LoadMotor_CommandIsValid(&cmd, now_ms) &&
-            LoadMotor_ShouldAcceptCommand(&cmd, now_ms))
+        return; /* 结束当前函数。 */
+    }
+
+    rt->target = target_deg; /* 更新 target。 */
+    rt->target_set_while_disabled = rt->ctrl_enabled ? 0U : 1U; // 电机处于禁用状态时，外部是否设置过新的目标位置
+    rt->last_target_change_ms = HAL_GetTick(); /* 更新 last_target_change_ms。 */
+
+    /* 换目标：复位 angle_motor 的过流计时与到位标志（防跨目标误判）*/
+    /* 注意：不清故障闩锁——故障必须显式 AngleMotor_ClearFault()。 */
+    /* 注意：不建议乱清除，遇到错误一般铁定都是死了 */
+    AngleMotor_NotifyTargetChanged(cfg); /* 调用 AngleMotor_NotifyTargetChanged。 */
+
+    /* 对于是否使用S形规划器进行分类 */
+    if (rt->use_scurve) /* 检查当前执行条件。 */
+    {
+        Motor_ResetTrap(rt, cfg, Motor_GetPosRaw(cfg)); /* 调用 Motor_ResetTrap。 */
+    }
+    if (mtx != NULL) /* 检查当前执行条件。 */
+    {
+        xSemaphoreGive(mtx); /* 调用 xSemaphoreGive。 */
+    }
+}
+
+/// @brief 获取电机目标值
+/// @param cfg
+/// @return
+float Motor_GetTarget(can_motor_cfg cfg) /* 实现 Motor_GetTarget。 */
+{
+    MotorRuntimeState_t *rt = Motor_GetRuntime(cfg); /* 初始化 rt。 */
+    SemaphoreHandle_t mtx = Motor_GetMutex(cfg); /* 初始化 mtx。 */
+    float target; /* 保存 target。 */
+
+    if (rt == NULL) /* 检查当前执行条件。 */
+    {
+        return 0.0f; /* 返回当前计算结果。 */
+    }
+    if (mtx == NULL) /* 检查当前执行条件。 */
+    {
+        return rt->target; /* 返回当前计算结果。 */
+    }
+    xSemaphoreTake(mtx, portMAX_DELAY); /* 调用 xSemaphoreTake。 */
+    target = rt->target; /* 更新 target。 */
+    xSemaphoreGive(mtx); /* 调用 xSemaphoreGive。 */
+    return target; /* 返回当前计算结果。 */
+}
+
+/// @brief 使能电机控制
+/// @param cfg
+/// @param enable
+void Motor_EnableControl(can_motor_cfg cfg, bool enable) /* 实现 Motor_EnableControl。 */
+{
+    MotorRuntimeState_t *rt = Motor_GetRuntime(cfg); /* 初始化 rt。 */
+    MotorTypeDef *motor; /* 保存 motor。 */
+    if (rt == NULL || (uint32_t)cfg < 1U || /* 检查当前执行条件。 */
+        (uint32_t)cfg > (uint32_t)MotorManager.registered_count) /* 继续当前语句。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+    motor = Motor_GetHandleFast(cfg); /* 更新 motor。 */
+
+    // 电机控制使能，需要进行目标更新
+    if (enable) /* 检查当前执行条件。 */
+    {
+        if (!Motor_IsOnline(cfg)) /* 离线电机不能直接开放控制。 */
         {
-            LoadMotor_AcceptCommand(&cmd, now_ms);
-        }
-    }
-}
-
-static inline void LoadMotor_RunTrapTo(float target_pos_deg)
-{
-    MotorTypeDef *motor = Motor_GetHandleFast(RM_3508_GRIPPER);
-    const MotorTrapConfig_t *trap_cfg = &motor->trap_config;
-    float dt_s;
-    float cmd_pos;
-
-    if (trap_cfg->registered == 0U)
-    {
-        // 没给夹爪注册 S 型规划时，直接走原有位置 PID。
-        RmMotorPID_Calc(RM_3508_GRIPPER, target_pos_deg);
-        return;
-    }
-
-    g_LoadTrapProfile.target_pos = target_pos_deg;
-    dt_s = DWT_GetDeltaT(&g_LoadTrapCntLast);
-    if (!isfinite(dt_s) || dt_s <= 0.0f)
-    {
-        dt_s = 0.001f;
-    }
-    else if (dt_s > 0.02f)
-    {
-        dt_s = 0.02f;
-    }
-
-    cmd_pos = Motor_TrapPos_Update(&g_LoadTrapProfile, dt_s);
-    RmMotorPID_Calc(RM_3508_GRIPPER, cmd_pos);
-}
-
-void MotorControl_Init(void)
-{
-    if (g_x3508Mtx == NULL)
-    {
-        g_x3508Mtx = xSemaphoreCreateMutexStatic(&g_x3508MtxBuf);
-    }
-    if (g_x2006Mtx == NULL)
-    {
-        g_x2006Mtx = xSemaphoreCreateMutexStatic(&g_x2006MtxBuf);
-    }
-    if (g_x6020Mtx == NULL)
-    {
-        g_x6020Mtx = xSemaphoreCreateMutexStatic(&g_x6020MtxBuf);
-    }
-    if (g_xStore3508Mtx == NULL)
-    {
-        g_xStore3508Mtx = xSemaphoreCreateMutexStatic(&g_xStore3508MtxBuf);
-    }
-    if (g_x3508CmdStream == NULL)
-    {
-        g_x3508CmdStream = xStreamBufferCreateStatic(sizeof(g_uc3508CmdStreamStorage),
-                                                     sizeof(LoadMotorCommand_t),
-                                                     g_uc3508CmdStreamStorage,
-                                                     &g_x3508CmdStreamBuffer);
-    }
-
-    g_GripperTarget = 0.0f;
-    g_GripperPrevTarget = 0.0f;
-    g_TriggerTarget = 0.0f;
-    g_Yaw6020Target = 0.0f;
-    target_loc = 0.0f;
-    Load3508CurrentFilteredData = 0.0f;
-    Load3508CurrentAbsFilteredData = 0.0f;
-    Load3508StillOverCurrentData = 0.0f;
-    Load3508OverCurrentProtected = 0U;
-    g_GripperCurrentFilteredA = 0.0f;
-    g_GripperCurrentFilterReady = 0U;
-    g_GripperLastTargetChangeMs = 0U;
-    g_GripperOverCurrentStartMs = 0U;
-    g_GripperStallOverCurrentStartMs = 0U;
-    g_GripperStallSampleMs = 0U;
-    g_GripperStallSamplePosDeg = 0.0f;
-    g_GripperOverCurrentReturning = false;
-    g_b3508CtrlEnabled = false;
-    g_b2006CtrlEnabled = false;
-    g_b6020CtrlEnabled = false;
-    g_Active3508Owner = LOAD_MOTOR_OWNER_NONE;
-    g_Active3508Priority = 0U;
-    g_Active3508OwnerExpireMs = 0U;
-    StoreMotor_ResetState(&g_LeftStoreMotor);
-    StoreMotor_ResetState(&g_RightStoreMotor);
-}
-
-void Motor3508_SetTarget(float target)
-{
-    if (g_x3508Mtx != NULL)
-    {
-        xSemaphoreTake(g_x3508Mtx, portMAX_DELAY);
-        g_GripperTarget = target;
-        xSemaphoreGive(g_x3508Mtx);
-    }
-    else
-    {
-        g_GripperTarget = target;
-    }
-    target_loc = target;
-    g_GripperLastTargetChangeMs = HAL_GetTick();
-}
-
-static void Motor3508_SetTargetAndRemember(float target)
-{
-    if (g_x3508Mtx != NULL)
-    {
-        xSemaphoreTake(g_x3508Mtx, portMAX_DELAY);
-        g_GripperPrevTarget = g_GripperTarget;
-        g_GripperTarget = target;
-        xSemaphoreGive(g_x3508Mtx);
-    }
-    else
-    {
-        g_GripperPrevTarget = g_GripperTarget;
-        g_GripperTarget = target;
-    }
-    target_loc = target;
-    g_GripperLastTargetChangeMs = HAL_GetTick();
-    g_GripperOverCurrentReturning = false;
-    g_GripperOverCurrentStartMs = 0U;
-    g_GripperStallOverCurrentStartMs = 0U;
-    g_GripperStallSampleMs = 0U;
-    g_GripperStallSamplePosDeg = LoadMotor_GetRawAngleInternal();
-    Load3508OverCurrentProtected = 0U;
-}
-
-float Motor3508_GetTarget(void)
-{
-    float target;
-
-    if (g_x3508Mtx != NULL)
-    {
-        xSemaphoreTake(g_x3508Mtx, portMAX_DELAY);
-        target = g_GripperTarget;
-        xSemaphoreGive(g_x3508Mtx);
-        return target;
-    }
-
-    return g_GripperTarget;
-}
-
-void Motor3508_EnableControl(bool enable)
-{
-    g_b3508CtrlEnabled = enable;
-}
-
-bool LoadMotor_IsOverCurrentProtected(void)
-{
-    return (Load3508OverCurrentProtected != 0U);
-}
-
-void LoadMotor_ClearOverCurrentProtection(void)
-{
-    taskENTER_CRITICAL();
-    Load3508OverCurrentProtected = 0U;
-    g_GripperOverCurrentReturning = false;
-    g_GripperOverCurrentStartMs = 0U;
-    g_GripperStallOverCurrentStartMs = 0U;
-    g_GripperStallSampleMs = 0U;
-    g_GripperStallSamplePosDeg = LoadMotor_GetRawAngleInternal();
-    taskEXIT_CRITICAL();
-}
-
-static void Motor3508_CheckOverCurrent(uint32_t now_ms, float target_pos_deg)
-{
-    float current_a = Motor_GetCurrent(RM_3508_GRIPPER);
-    float abs_filtered_current_a;
-    float current_pos_deg;
-    float pos_error_deg;
-    float speed_rpm;
-    bool near_target;
-    bool stall_like = false;
-
-    if (!isfinite(current_a))
-    {
-        g_GripperOverCurrentStartMs = 0U;
-        g_GripperStallOverCurrentStartMs = 0U;
-        return;
-    }
-
-    if (g_GripperCurrentFilterReady == 0U)
-    {
-        g_GripperCurrentFilteredA = current_a;
-        g_GripperCurrentFilterReady = 1U;
-        g_GripperStallSamplePosDeg = LoadMotor_GetRawAngleInternal();
-        g_GripperStallSampleMs = now_ms;
-        return;
-    }
-
-    g_GripperCurrentFilteredA +=
-        (current_a - g_GripperCurrentFilteredA) * LOAD3508_OVERCURRENT_FILTER_ALPHA;
-    abs_filtered_current_a = fabsf(g_GripperCurrentFilteredA);
-    current_pos_deg = LoadMotor_GetRawAngleInternal();
-    speed_rpm = Motor_GetSpeedRPM(RM_3508_GRIPPER);
-
-    Load3508CurrentFilteredData = g_GripperCurrentFilteredA;
-    Load3508CurrentAbsFilteredData = abs_filtered_current_a;
-    Load3508StillOverCurrentData = abs_filtered_current_a;
-
-    pos_error_deg = fabsf(target_pos_deg - current_pos_deg);
-    near_target = (pos_error_deg <= MOTOR_DEAD_ZONE);
-
-    if ((uint32_t)(now_ms - g_GripperLastTargetChangeMs) < LOAD3508_OVERCURRENT_TARGET_BLANK_MS)
-    {
-        g_GripperOverCurrentStartMs = 0U;
-        g_GripperStallOverCurrentStartMs = 0U;
-        g_GripperStallSamplePosDeg = current_pos_deg;
-        g_GripperStallSampleMs = now_ms;
-        return;
-    }
-
-    if (g_GripperStallSampleMs == 0U ||
-        (uint32_t)(now_ms - g_GripperStallSampleMs) >= LOAD3508_STALL_POS_SAMPLE_MS)
-    {
-        float pos_delta_deg = fabsf(current_pos_deg - g_GripperStallSamplePosDeg);
-        stall_like = (pos_delta_deg <= LOAD3508_STALL_POS_DELTA_DEG);
-        g_GripperStallSamplePosDeg = current_pos_deg;
-        g_GripperStallSampleMs = now_ms;
-    }
-    else
-    {
-        stall_like = (fabsf(speed_rpm) <= LOAD3508_STALL_SPEED_RPM);
-    }
-
-    if (near_target)
-    {
-        g_GripperStallOverCurrentStartMs = 0U;
-    }
-    else
-    {
-        g_GripperOverCurrentStartMs = 0U;
-    }
-
-    if (near_target && abs_filtered_current_a <= LOAD3508_STILL_OVERCURRENT_CLEAR_A)
-    {
-        g_GripperOverCurrentStartMs = 0U;
-        return;
-    }
-
-    if (!near_target && abs_filtered_current_a <= LOAD3508_STALL_OVERCURRENT_CLEAR_A)
-    {
-        g_GripperStallOverCurrentStartMs = 0U;
-        return;
-    }
-
-    if (near_target && abs_filtered_current_a > LOAD3508_STILL_OVERCURRENT_LIMIT_A)
-    {
-        if (g_GripperOverCurrentStartMs == 0U)
-        {
-            g_GripperOverCurrentStartMs = now_ms;
-            return;
-        }
-
-        if (!g_GripperOverCurrentReturning &&
-            (uint32_t)(now_ms - g_GripperOverCurrentStartMs) >= LOAD3508_STILL_OVERCURRENT_RETURN_MS)
-        {
-            Motor_TrapPos_Resync(&g_LoadTrapProfile, current_pos_deg);
-            g_GripperOverCurrentReturning = true;
-            Load3508OverCurrentProtected = 1U;
-            g_GripperOverCurrentStartMs = 0U;
-            g_GripperStallOverCurrentStartMs = 0U;
-        }
-    }
-
-    if (!near_target && stall_like && abs_filtered_current_a > LOAD3508_STALL_OVERCURRENT_LIMIT_A)
-    {
-        if (g_GripperStallOverCurrentStartMs == 0U)
-        {
-            g_GripperStallOverCurrentStartMs = now_ms;
-            return;
-        }
-
-        if (!g_GripperOverCurrentReturning &&
-            (uint32_t)(now_ms - g_GripperStallOverCurrentStartMs) >= LOAD3508_STALL_OVERCURRENT_RETURN_MS)
-        {
-            Motor_TrapPos_Resync(&g_LoadTrapProfile, current_pos_deg);
-            g_GripperOverCurrentReturning = true;
-            Load3508OverCurrentProtected = 1U;
-            g_GripperOverCurrentStartMs = 0U;
-            g_GripperStallOverCurrentStartMs = 0U;
-        }
-    }
-    else if (!near_target)
-    {
-        g_GripperStallOverCurrentStartMs = 0U;
-    }
-}
-
-bool LoadMotor_SubmitTarget(LoadMotorOwner_e owner, uint8_t priority, float target_pos_deg, uint32_t owner_hold_ms)
-{
-    LoadMotorCommand_t cmd = {0};
-    size_t sent;
-    uint32_t now_ms;
-
-    if (g_x3508CmdStream == NULL || !isfinite(target_pos_deg))
-    {
-        return false;
-    }
-
-    if (owner == LOAD_MOTOR_OWNER_NONE || priority == 0U)
-    {
-        return false;
-    }
-
-    now_ms = HAL_GetTick();
-    taskENTER_CRITICAL();
-    if (g_Active3508Owner != LOAD_MOTOR_OWNER_NONE &&
-        LoadMotor_TimeReached(now_ms, g_Active3508OwnerExpireMs))
-    {
-        g_Active3508Owner = LOAD_MOTOR_OWNER_NONE;
-        g_Active3508Priority = 0U;
-    }
-    if (g_Active3508Owner != LOAD_MOTOR_OWNER_NONE &&
-        g_Active3508Owner != owner &&
-        priority < g_Active3508Priority)
-    {
-        taskEXIT_CRITICAL();
-        return false;
-    }
-    taskEXIT_CRITICAL();
-
-    cmd.magic = LOAD_MOTOR_CMD_MAGIC;
-    cmd.timestamp_ms = now_ms;
-    cmd.max_age_ms = LOAD_MOTOR_CMD_MAX_AGE_MS;
-    cmd.owner_hold_ms = owner_hold_ms;
-    cmd.owner = (uint8_t)owner;
-    cmd.priority = priority;
-    cmd.target_pos_deg = target_pos_deg;
-
-    if (g_x3508Mtx != NULL)
-    {
-        xSemaphoreTake(g_x3508Mtx, portMAX_DELAY);
-    }
-    g_ul3508CmdSeq++;
-    cmd.seq = g_ul3508CmdSeq;
-    cmd.signature = LoadMotor_CalcSignature(&cmd);
-
-    if (xStreamBufferSpacesAvailable(g_x3508CmdStream) < sizeof(cmd))
-    {
-        (void)xStreamBufferReset(g_x3508CmdStream);
-    }
-    sent = xStreamBufferSend(g_x3508CmdStream, &cmd, sizeof(cmd), 0);
-    if (g_x3508Mtx != NULL)
-    {
-        xSemaphoreGive(g_x3508Mtx);
-    }
-
-    return (sent == sizeof(cmd));
-}
-
-void LoadMotor_ReleaseOwner(LoadMotorOwner_e owner)
-{
-    taskENTER_CRITICAL();
-    if (g_Active3508Owner == owner)
-    {
-        g_Active3508Owner = LOAD_MOTOR_OWNER_NONE;
-        g_Active3508Priority = 0U;
-        g_Active3508OwnerExpireMs = 0U;
-    }
-    taskEXIT_CRITICAL();
-}
-
-void Motor2006_SetTarget(float target)
-{
-    if (g_x2006Mtx != NULL)
-    {
-        xSemaphoreTake(g_x2006Mtx, portMAX_DELAY);
-        g_TriggerTarget = target;
-        xSemaphoreGive(g_x2006Mtx);
-    }
-    else
-    {
-        g_TriggerTarget = target;
-    }
-}
-
-float Motor2006_GetTarget(void)
-{
-    float target;
-
-    if (g_x2006Mtx != NULL)
-    {
-        xSemaphoreTake(g_x2006Mtx, portMAX_DELAY);
-        target = g_TriggerTarget;
-        xSemaphoreGive(g_x2006Mtx);
-        return target;
-    }
-
-    return g_TriggerTarget;
-}
-
-void Motor2006_EnableControl(bool enable)
-{
-    g_b2006CtrlEnabled = enable;
-}
-
-void Motor6020_SetTarget(float target)
-{
-    if (g_x6020Mtx != NULL)
-    {
-        xSemaphoreTake(g_x6020Mtx, portMAX_DELAY);
-        g_Yaw6020Target = target;
-        xSemaphoreGive(g_x6020Mtx);
-    }
-    else
-    {
-        g_Yaw6020Target = target;
-    }
-}
-
-float Motor6020_GetTarget(void)
-{
-    float target;
-
-    if (g_x6020Mtx != NULL)
-    {
-        xSemaphoreTake(g_x6020Mtx, portMAX_DELAY);
-        target = g_Yaw6020Target;
-        xSemaphoreGive(g_x6020Mtx);
-        return target;
-    }
-
-    return g_Yaw6020Target;
-}
-
-void Motor6020_EnableControl(bool enable)
-{
-    g_b6020CtrlEnabled = enable;
-    if (!enable)
-    {
-        RmMotorSendCfg(RM_6020_YAW, 0);
-    }
-}
-
-/**
- * @brief 根据电机配置枚举获取对应的储能电机控制状态
- * @param motor_cfg 储能电机枚举
- * @return 控制状态指针，非储能电机返回 NULL
- */
-static StoreMotorCtrlState_t *StoreMotor_GetState(can_motor_cfg motor_cfg)
-{
-    if (motor_cfg == RM_3508_STORE_LEFT || motor_cfg == DM_3519_STRENTH_LEFT)
-    {
-        return &g_LeftStoreMotor;
-    }
-    if (motor_cfg == RM_3508_STORE_RIGHT || motor_cfg == DM_3519_STRENTH_RIGHT)
-    {
-        return &g_RightStoreMotor;
-    }
-    return NULL;
-}
-
-/**
- * @brief 获取储能电机当前原始总角度（带零点偏置）
- * @param state 储能电机控制状态
- * @return 原始总角度，单位为度
- */
-static float StoreMotor_GetRawAngle(const StoreMotorCtrlState_t *state)
-{
-    if (state == NULL)
-    {
-        return 0.0f;
-    }
-
-    // 原始总角度保留编码器零点偏移，主要给 S 型规划器做轨迹同步使用。
-    MotorTypeDef *motor = Motor_GetHandleFast(state->motor_cfg);
-    return motor->motor_data.solved_data[3];
-}
-
-/**
- * @brief 获取储能电机当前相对角度（业务层统一使用该坐标系）
- * @param state 储能电机控制状态
- * @return 相对零点角度，单位为度
- */
-static float StoreMotor_GetRelativeAngle(const StoreMotorCtrlState_t *state)
-{
-    if (state == NULL)
-    {
-        return 0.0f;
-    }
-
-    // 业务层统一使用相对零点角度，目标值、限位和保护都基于这套坐标系。
-    return Motor_GetTotalAngle(state->motor_cfg);
-}
-
-/**
- * @brief 重新初始化单个储能电机的 S 型规划器
- * @param state 储能电机控制状态
- * @param current_pos_deg 当前原始角度
- */
-static void StoreMotor_ResetTrap(StoreMotorCtrlState_t *state, float current_pos_deg)
-{
-    MotorTypeDef *motor;
-    const MotorTrapConfig_t *trap_cfg;
-
-    if (state == NULL)
-    {
-        return;
-    }
-
-    // 这里不再直接读 STORE3508_TRAP_* 宏，而是统一读取电机注册时写入的规划参数。
-    motor = Motor_GetHandleFast(state->motor_cfg);
-    trap_cfg = &motor->trap_config;
-    if (trap_cfg->registered == 0U)
-    {
-        state->trap_initialized = 0U;
-        return;
-    }
-
-    // 每个储能电机各自维护一套 S 型规划器，互不影响。
-    Motor_TrapPos_Init(&state->trap_profile,
-                       current_pos_deg,
-                       trap_cfg->vmax_deg_s,
-                       trap_cfg->amax_deg_s2);
-    state->trap_profile.brake_gain = trap_cfg->brake_gain;
-    state->trap_profile.arrive_zone = trap_cfg->arrive_zone;
-    state->trap_profile.decel_zone = trap_cfg->decel_zone;
-    Motor_TrapPos_SetJerk(&state->trap_profile, trap_cfg->jmax_deg_s3);
-    DWT_GetDeltaT(&state->trap_cnt_last);
-    state->trap_initialized = 1U;
-}
-
-/**
- * @brief 重置储能电机控制/保护状态
- * @param state 储能电机控制状态
- */
-static void StoreMotor_ClearProtectionState(StoreMotorCtrlState_t *state)
-{
-    if (state == NULL)
-    {
-        return;
-    }
-
-    // 这里只清当前电机自己的保护状态，不连带另一侧储能电机。
-    state->protected_flag = false;
-    state->over_current_start_ms = 0U;
-    state->stall_over_current_start_ms = 0U;
-    state->stall_sample_ms = 0U;
-    state->filter_ready = 0U;
-}
-
-static void StoreMotor_ResetState(StoreMotorCtrlState_t *state)
-{
-    if (state == NULL)
-    {
-        return;
-    }
-
-    // 初始化目标时先锁定当前位置，避免任务启动瞬间发生大步进。
-    state->target = Motor_GetTotalAngle(state->motor_cfg);
-    state->filtered_current_a = 0.0f;
-    state->filter_ready = 0U;
-    state->last_target_change_ms = 0U;
-    state->over_current_start_ms = 0U;
-    state->stall_over_current_start_ms = 0U;
-    state->stall_sample_ms = 0U;
-    state->stall_sample_pos_deg = StoreMotor_GetRelativeAngle(state);
-    state->ctrl_enabled = false;
-    state->use_scurve = false;
-    state->protected_flag = false;
-    memset(&state->trap_profile, 0, sizeof(state->trap_profile));
-    state->trap_cnt_last = 0U;
-    state->trap_initialized = 0U;
-}
-
-/**
- * @brief 检查单个储能 M3508 的独立异常保护
- * @param state 储能电机控制状态
- * @param now_ms 当前时刻
- * @param target_pos_deg 当前目标相对角度
- */
-static void StoreMotor_CheckProtection(StoreMotorCtrlState_t *state, uint32_t now_ms, float target_pos_deg)
-{
-    float current_a;
-    float abs_filtered_current_a;
-    float current_pos_deg;
-    float pos_error_deg;
-    float speed_rpm;
-    float temperature_c;
-    bool near_target;
-    bool stall_like = false;
-
-    if (state == NULL)
-    {
-        return;
-    }
-
-    current_a = Motor_GetCurrent(state->motor_cfg);
-    current_pos_deg = StoreMotor_GetRelativeAngle(state);
-    speed_rpm = Motor_GetSpeedRPM(state->motor_cfg);
-    temperature_c = Motor_GetHandleFast(state->motor_cfg)->motor_data.solved_data[5];
-
-    if (!isfinite(current_a) || !isfinite(current_pos_deg) || !isfinite(speed_rpm))
-    {
-        // 反馈异常时不立即误判保护，先清本轮计时。
-        state->over_current_start_ms = 0U;
-        state->stall_over_current_start_ms = 0U;
-        return;
-    }
-
-    if (isfinite(temperature_c) && temperature_c > STORE3508_TEMP_LIMIT_C)
-    {
-        // 储能 3508 额外带温度保护，温度超限直接锁保护。
-        state->protected_flag = true;
-        return;
-    }
-
-    if (state->filter_ready == 0U)
-    {
-        state->filtered_current_a = current_a;
-        state->filter_ready = 1U;
-        state->stall_sample_pos_deg = current_pos_deg;
-        state->stall_sample_ms = now_ms;
-        return;
-    }
-
-    state->filtered_current_a +=
-        (current_a - state->filtered_current_a) * STORE3508_OVERCURRENT_FILTER_ALPHA;
-    abs_filtered_current_a = fabsf(state->filtered_current_a);
-    pos_error_deg = fabsf(target_pos_deg - current_pos_deg);
-    near_target = (pos_error_deg <= MOTOR_DEAD_ZONE);
-
-    // 目标刚切换时给一个空白时间，避免起步电流造成误判。
-    if ((uint32_t)(now_ms - state->last_target_change_ms) < STORE3508_OVERCURRENT_TARGET_BLANK_MS)
-    {
-        state->over_current_start_ms = 0U;
-        state->stall_over_current_start_ms = 0U;
-        state->stall_sample_pos_deg = current_pos_deg;
-        state->stall_sample_ms = now_ms;
-        return;
-    }
-
-    if (state->stall_sample_ms == 0U ||
-        (uint32_t)(now_ms - state->stall_sample_ms) >= STORE3508_STALL_POS_SAMPLE_MS)
-    {
-        float pos_delta_deg = fabsf(current_pos_deg - state->stall_sample_pos_deg);
-        stall_like = (pos_delta_deg <= STORE3508_STALL_POS_DELTA_DEG);
-        state->stall_sample_pos_deg = current_pos_deg;
-        state->stall_sample_ms = now_ms;
-    }
-    else
-    {
-        stall_like = (fabsf(speed_rpm) <= STORE3508_STALL_SPEED_RPM);
-    }
-
-    if (near_target)
-    {
-        // 已经接近目标：
-        // 此时持续大电流更像是“到位后顶死机构”，按 still 规则判断。
-        state->stall_over_current_start_ms = 0U;
-        if (abs_filtered_current_a <= STORE3508_STILL_OVERCURRENT_CLEAR_A)
-        {
-            state->over_current_start_ms = 0U;
-            return;
-        }
-
-        if (abs_filtered_current_a > STORE3508_STILL_OVERCURRENT_LIMIT_A)
-        {
-            if (state->over_current_start_ms == 0U)
+            if (motor->band != DM_MOTOR_BAND || motor->drive_enabled != 0U || /* 检查当前执行条件。 */
+                DM_MotorEnable(cfg) == 0U || !Motor_IsOnline(cfg)) /* 继续更新 目标值。 */
             {
-                state->over_current_start_ms = now_ms;
-                return;
-            }
-
-            if ((uint32_t)(now_ms - state->over_current_start_ms) >= STORE3508_STILL_OVERCURRENT_CONFIRM_MS)
-            {
-                state->protected_flag = true;
+                return; /* 结束当前函数。 */
             }
         }
-    }
-    else
-    {
-        // 尚未到目标：
-        // 此时高电流且位置/速度变化很小，更像是运动过程堵转，按 stall 规则判断。
-        state->over_current_start_ms = 0U;
-        if (abs_filtered_current_a <= STORE3508_STALL_OVERCURRENT_CLEAR_A || !stall_like)
+        if (rt->ctrl_enabled) /* 检查当前执行条件。 */
         {
-            state->stall_over_current_start_ms = 0U;
-            return;
+            /* 软件控制已开放但 DM 驱动被单独失能时，允许重新补发使能。 */
+            if (motor->band == DM_MOTOR_BAND && motor->drive_enabled == 0U) /* 检查当前执行条件。 */
+            {
+                (void)DM_MotorEnable(cfg); /* 调用 DM_MotorEnable。 */
+            }
+            return; /* 结束当前函数。 */
         }
 
-        if (abs_filtered_current_a > STORE3508_STALL_OVERCURRENT_LIMIT_A)
+        /* DM 电调有独立使能协议；发送失败则不能开放软件控制。 */
+        if (motor->band == DM_MOTOR_BAND && motor->drive_enabled == 0U) /* 检查当前执行条件。 */
         {
-            if (state->stall_over_current_start_ms == 0U)
+            if (DM_MotorEnable(cfg) == 0U) /* 检查当前执行条件。 */
             {
-                state->stall_over_current_start_ms = now_ms;
-                return;
-            }
-
-            if ((uint32_t)(now_ms - state->stall_over_current_start_ms) >= STORE3508_STALL_CONFIRM_MS)
-            {
-                state->protected_flag = true;
+                return; /* 结束当前函数。 */
             }
         }
-    }
-}
 
-/**
- * @brief 执行单个储能电机控制
- * @param state 储能电机控制状态
- */
-static void StoreMotor_RunControl(StoreMotorCtrlState_t *state)
-{
-    float target_relative_deg;
-    float target_raw_deg;
-
-    if (state == NULL || !state->ctrl_enabled)
-    {
-        return;
-    }
-
-    target_relative_deg = state->target;
-    StoreMotor_CheckProtection(state, HAL_GetTick(), target_relative_deg);
-    if (state->protected_flag)
-    {
-        // 一旦当前电机进入保护，立即断输出，但不影响另一侧储能电机继续工作。
-        RmMotorSendCfg(state->motor_cfg, 0);
-        return;
-    }
-
-    if (!state->use_scurve)
-    {
-        // 不启用 S 型规划时，目标直接送位置环。
-        RmMotorPID_Calc(state->motor_cfg, target_relative_deg);
-        return;
-    }
-
-    target_raw_deg = target_relative_deg + Motor_GetHandleFast(state->motor_cfg)->motor_data.offset_ecd_angle;
-    if (state->trap_initialized == 0U)
-    {
-        StoreMotor_ResetTrap(state, StoreMotor_GetRawAngle(state));
-        if (state->trap_initialized == 0U)
+        /* “安全启用”：仅在 disabled -> enabled 时清保护；
+         * 若禁用期间已经设置过目标，则保留该目标。 */
+        AngleMotor_ResetRuntime(cfg); /* 清 angle_motor 故障闩锁+过流计时+到位标志 */
+        if (rt->target_set_while_disabled == 0U) /* 检查当前执行条件。 */
         {
-            // 没有为该电机注册 S 型规划参数时，自动回退为普通位置 PID，避免使用未初始化规划器。
-            RmMotorPID_Calc(state->motor_cfg, target_relative_deg);
-            return;
+            rt->target = Motor_GetTotalAngle(cfg); /* 更新 target。 */
+        }
+        rt->target_set_while_disabled = 0U; /* 更新 target_set_while_disabled。 */
+        rt->ctrl_enabled = true; /* 更新 ctrl_enabled。 */
+    }
+
+    /* 未使能，不控制 */
+    else /* 处理其余情况。 */
+    {
+        rt->ctrl_enabled = false; /* 更新 ctrl_enabled。 */
+        rt->trap_initialized = false; /* 更新 trap_initialized。 */
+        rt->target_set_while_disabled = 0U; /* 更新 target_set_while_disabled。 */
+        if (motor->band == DM_MOTOR_BAND) /* 检查当前执行条件。 */
+        {
+            (void)DM_MotorDisable(cfg); /* 调用 DM_MotorDisable。 */
+        }
+        else /* 处理其余情况。 */
+        {
+            RmMotorSendCfg(cfg, 0); /* 调用 RmMotorSendCfg。 */
         }
     }
-    state->trap_profile.target_pos = target_raw_deg;
+}
 
+/// @brief 是否使用S形规划器
+/// @param cfg
+/// @return
+void Motor_SetUseSCurve(can_motor_cfg cfg, bool enable) /* 实现 Motor_SetUseSCurve。 */
+{
+    MotorRuntimeState_t *rt = Motor_GetRuntime(cfg); /* 初始化 rt。 */
+    if (rt == NULL) /* 检查当前执行条件。 */
     {
-        float dt_s = DWT_GetDeltaT(&state->trap_cnt_last);
-        float cmd_pos;
+        return; /* 结束当前函数。 */
+    }
+    rt->use_scurve = enable; /* 更新 use_scurve。 */
+    rt->trap_initialized = false; /* 更新 trap_initialized。 */
+}
 
-        if (!isfinite(dt_s) || dt_s <= 0.0f)
+/// @brief 确认是否有拉簧拉力电机寄寄
+/// @param
+/// @return
+bool Motor_IsAnyStoreProtected(void) /* 实现 Motor_IsAnyStoreProtected。 */
+{
+    /* 任一储能电机离线或保护锁存都进入安全返回。 */
+    return !Motor_IsOnline(RM_3508_STORE_LEFT) || /* 继续组合表达式。 */
+           !Motor_IsOnline(RM_3508_STORE_RIGHT) || /* 继续组合表达式。 */
+           AngleMotor_IsFaulted(RM_3508_STORE_LEFT) || /* 开始调用 AngleMotor_IsFaulted。 */
+           AngleMotor_IsFaulted(RM_3508_STORE_RIGHT); /* 调用 AngleMotor_IsFaulted。 */
+}
+
+static void Motor_HandleOffline(can_motor_cfg cfg, MotorRuntimeState_t *rt) /* 实现 Motor_HandleOffline。 */
+{
+    MotorTypeDef *motor; /* 当前离线电机。 */
+
+    if (rt == NULL) /* 检查当前执行条件。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+
+    motor = Motor_GetHandleFast(cfg); /* 获取电机运行状态。 */
+    if (!rt->ctrl_enabled && motor->watchdog_lost_pending == 0U) /* 检查当前执行条件。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+    motor->watchdog_lost_pending = 0U; /* 消费一次 LostCallback 事件。 */
+    rt->ctrl_enabled = false;          /* 禁止继续计算输出。 */
+    rt->trap_initialized = false;      /* 清轨迹规划状态。 */
+    rt->target_set_while_disabled = 0U;/* 清离线期间目标标志。 */
+    CASCADE_PID_Clear(&motor->cascade_pid); /* 清串级 PID 历史量。 */
+    PID_Clear(&motor->inner_pid);            /* 清单环 PID 历史量。 */
+
+    if (motor->MotorInf.band == DM_MOTOR_BAND) /* 检查当前执行条件。 */
+    {
+        if (motor->drive_enabled != 0U) /* 检查当前执行条件。 */
         {
-            dt_s = 0.001f;
+            (void)DM_MotorDisable(cfg); /* DM 已使能时发送一次失能帧。 */
         }
-        else if (dt_s > 0.02f)
+    }
+    else /* 处理其余情况。 */
+    {
+        RmMotorSendCfg(cfg, 0); /* RM 电机立即发送零电流。 */
+    }
+}
+
+/* ------------------------------------------------------------------
+ * S 型规划
+ * ------------------------------------------------------------------ */
+static void Motor_ResetTrap(MotorRuntimeState_t *rt, can_motor_cfg cfg, float seed_raw_deg) /* 实现 Motor_ResetTrap。 */
+{
+    MotorTypeDef *motor = Motor_GetHandleFast(cfg); /* 初始化 motor。 */
+    const MotorTrapConfig_t *trap_cfg = &motor->trap_config; /* 初始化 trap_cfg。 */
+
+    if (trap_cfg->registered == 0U) /* 检查当前执行条件。 */
+    {
+        rt->trap_initialized = false; /* 更新 trap_initialized。 */
+        return; /* 结束当前函数。 */
+    }
+
+    Motor_TrapPos_Init(&rt->trap_profile, seed_raw_deg, /* 传入下一项参数或数据。 */
+                       trap_cfg->vmax_deg_s, trap_cfg->amax_deg_s2); /* 完成本行操作。 */
+
+    rt->trap_profile.brake_gain = trap_cfg->brake_gain; /* 更新 brake_gain。 */
+    rt->trap_profile.arrive_zone = trap_cfg->arrive_zone; /* 更新 arrive_zone。 */
+    rt->trap_profile.decel_zone = trap_cfg->decel_zone; /* 更新 decel_zone。 */
+    Motor_TrapPos_SetJerk(&rt->trap_profile, trap_cfg->jmax_deg_s3); /* 调用 Motor_TrapPos_SetJerk。 */
+
+    DWT_GetDeltaT(&rt->trap_cnt_last); /* 调用 DWT_GetDeltaT。 */
+    rt->trap_initialized = true; /* 更新 trap_initialized。 */
+}
+
+/* ------------------------------------------------------------------
+ * 单电机 tick（四层）：
+ *  1) 规划器：trap/S 型生成参考位置 ref（未启用则直通目标）
+ *  2~5) 控制器→状态判断器→限幅器→输出：统一交给 AngleMotor_Drive
+ *
+ * sync_offset_deg 专给储能同步 PID 使用，其他电机传 0。
+ * ------------------------------------------------------------------ */
+static void Motor_TickOne(can_motor_cfg cfg, float sync_offset_deg) /* 实现 Motor_TickOne。 */
+{
+    MotorRuntimeState_t *rt = Motor_GetRuntime(cfg); /* 初始化 rt。 */
+    MotorTypeDef *motor = Motor_GetHandleFast(cfg); /* 初始化 motor。 */
+    float target_relative_deg; /* 保存 target_relative_deg。 */
+    float ref_relative_deg; /* 保存 ref_relative_deg。 */
+    float target_raw_deg; /* 保存 target_raw_deg。 */
+    float dt_s; /* 保存 dt_s。 */
+    float cmd_pos; /* 保存 cmd_pos。 */
+
+    if (rt == NULL) /* 检查当前执行条件。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+
+    if (motor->watchdog_lost_pending != 0U) /* 丢失事件优先于在线恢复处理。 */
+    {
+        Motor_HandleOffline(cfg, rt); /* 调用 Motor_HandleOffline。 */
+        return; /* 结束当前函数。 */
+    }
+    if (!Motor_IsOnline(cfg)) /* 检查当前执行条件。 */
+    {
+        Motor_HandleOffline(cfg, rt); /* 调用 Motor_HandleOffline。 */
+        return; /* 结束当前函数。 */
+    }
+    if (!rt->ctrl_enabled) /* 检查当前执行条件。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+
+    target_relative_deg = rt->target + sync_offset_deg; /* 更新 target_relative_deg。 */
+    /* ---------------- 第 1 层：规划器 ----------------
+     * 有 S 型规划则由 trap 生成参考位置，否则参考位置=目标位置(直通)。
+     * RM 工作在编码器 raw 度域；S3519 经反馈适配后工作在逻辑度域。 */
+    if (rt->use_scurve && motor->trap_config.registered != 0U) /* 检查当前执行条件。 */
+    {
+        target_raw_deg = target_relative_deg; /* 更新 target_raw_deg。 */
+        if (motor->MotorInf.band == RM_MOTOR_BAND) /* 检查当前执行条件。 */
         {
-            dt_s = 0.02f;
-        }
-
-        // 启用 S 型规划时，先生成平滑位置，再交给底层 PID 去跟踪。
-        cmd_pos = Motor_TrapPos_Update(&state->trap_profile, dt_s);
-        RmMotorPID_Calc(state->motor_cfg,
-                        cmd_pos - Motor_GetHandleFast(state->motor_cfg)->motor_data.offset_ecd_angle);
-    }
-}
-
-bool StoreMotor_Enable(can_motor_cfg motor_cfg)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return false;
-    }
-
-    StoreMotor_ClearProtectionState(state);
-    StoreMotor_SetTarget(motor_cfg, Motor_GetTotalAngle(state->motor_cfg));
-    return true;
-}
-
-void StoreMotor_Disable(can_motor_cfg motor_cfg)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return;
-    }
-
-    state->ctrl_enabled = false;
-    RmMotorSendCfg(state->motor_cfg, 0);
-}
-
-void StoreMotor_EnableControl(can_motor_cfg motor_cfg, bool enable)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return;
-    }
-
-    state->ctrl_enabled = enable;
-    if (!enable)
-    {
-        state->trap_initialized = 0U;
-        RmMotorSendCfg(state->motor_cfg, 0);
-    }
-}
-
-void StoreMotor_SetTarget(can_motor_cfg motor_cfg, float target)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL || !isfinite(target))
-    {
-        return;
-    }
-
-    if (g_xStore3508Mtx != NULL)
-    {
-        xSemaphoreTake(g_xStore3508Mtx, portMAX_DELAY);
-    }
-    state->target = target;
-    state->last_target_change_ms = HAL_GetTick();
-    state->over_current_start_ms = 0U;
-    state->stall_over_current_start_ms = 0U;
-    state->stall_sample_ms = 0U;
-    state->stall_sample_pos_deg = StoreMotor_GetRelativeAngle(state);
-    if (state->use_scurve)
-    {
-        StoreMotor_ResetTrap(state, StoreMotor_GetRawAngle(state));
-    }
-    if (g_xStore3508Mtx != NULL)
-    {
-        xSemaphoreGive(g_xStore3508Mtx);
-    }
-}
-
-float StoreMotor_GetTarget(can_motor_cfg motor_cfg)
-{
-    float target = 0.0f;
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return 0.0f;
-    }
-
-    if (g_xStore3508Mtx != NULL)
-    {
-        xSemaphoreTake(g_xStore3508Mtx, portMAX_DELAY);
-        target = state->target;
-        xSemaphoreGive(g_xStore3508Mtx);
-        return target;
-    }
-
-    return state->target;
-}
-
-void StoreMotor_RefreshData(can_motor_cfg motor_cfg)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return;
-    }
-
-    MotorTypeDef *motor = Motor_GetHandleFast(state->motor_cfg);
-    if (motor->calculate != NULL)
-    {
-        motor->calculate(motor);
-    }
-}
-
-void StoreMotor_SetUseSCurve(can_motor_cfg motor_cfg, bool enable)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return;
-    }
-
-    state->use_scurve = enable;
-    state->trap_initialized = 0U;
-}
-
-bool StoreMotor_IsProtected(can_motor_cfg motor_cfg)
-{
-    StoreMotorCtrlState_t *state = StoreMotor_GetState(motor_cfg);
-    if (state == NULL)
-    {
-        return false;
-    }
-
-    return state->protected_flag;
-}
-
-bool StoreMotor_IsAnyProtected(void)
-{
-    return g_LeftStoreMotor.protected_flag || g_RightStoreMotor.protected_flag;
-}
-
-void StoreMotor_ClearProtection(void)
-{
-    StoreMotor_ClearProtectionState(&g_LeftStoreMotor);
-    StoreMotor_ClearProtectionState(&g_RightStoreMotor);
-}
-
-/***********************************
- * 函数名: Motor3508CtrlTask
- * 作用:   3508电机独立控制任务，固定2ms周期
- *         只负责梯形规划 + PID，不做任何状态逻辑
- **********************************/
-void Motor3508CtrlTask(void *argument)
-{
-    TickType_t xLastWake;
-    MotorTypeDef *motor = Motor_GetHandleFast(RM_3508_GRIPPER);
-    const MotorTrapConfig_t *trap_cfg = &motor->trap_config;
-
-    (void)argument;
-
-    MotorData = LoadMotor_GetRawAngleInternal();
-    if (trap_cfg->registered != 0U)
-    {
-        // 夹爪 3508 的 S 型规划参数同样由 MotorRegister() 统一注册，这里只做一次运行时初始化。
-        Motor_TrapPos_Init(&g_LoadTrapProfile, MotorData,
-                           trap_cfg->vmax_deg_s, trap_cfg->amax_deg_s2);
-        g_LoadTrapProfile.brake_gain = trap_cfg->brake_gain;
-        g_LoadTrapProfile.arrive_zone = trap_cfg->arrive_zone;
-        g_LoadTrapProfile.decel_zone = trap_cfg->decel_zone;
-        Motor_TrapPos_SetJerk(&g_LoadTrapProfile, trap_cfg->jmax_deg_s3);
-    }
-    (void)LoadMotor_SubmitTarget(LOAD_MOTOR_OWNER_HOME,
-                                 LOAD_MOTOR_PRIORITY_HOME,
-                                 MotorData,
-                                 LOAD_MOTOR_DEFAULT_HOLD_MS);
-    DWT_GetDeltaT(&g_LoadTrapCntLast);
-
-    xLastWake = xTaskGetTickCount();
-    for (;;)
-    {
-        LoadMotor_ProcessCommandStream();
-        if (g_b3508CtrlEnabled)
-        {
-            float target_pos_deg = Motor3508_GetTarget();
-            Motor3508_CheckOverCurrent(HAL_GetTick(), target_pos_deg);
-            LoadMotor_RunTrapTo(Motor3508_GetTarget());
-        }
-        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(2));
-    }
-}
-
-/***********************************
- * 函数名: Motor2006CtrlTask
- * 作用:   2006扳机电机独立控制任务，固定2ms周期
- *         只负责PID位置跟踪
- **********************************/
-void Motor2006CtrlTask(void *argument)
-{
-    TickType_t xLastWake;
-
-    (void)argument;
-
-    xLastWake = xTaskGetTickCount();
-    for (;;)
-    {
-        if (g_b2006CtrlEnabled)
-        {
-            RmMotorPID_Calc(RM_2006_TRIGGER, Motor2006_GetTarget());
-        }
-        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(2));
-    }
-}
-
-/***********************************
- * 函数名: MotorLeftStore3508CtrlTask
- * 作用:   左侧储能 M3508 独立控制任务，固定 2ms 周期
- **********************************/
-void MotorLeftStore3508CtrlTask(void *argument)
-{
-    TickType_t xLastWake;
-    StoreMotorCtrlState_t *state = &g_LeftStoreMotor;
-
-    (void)argument;
-
-    StoreMotor_ResetState(state);
-    StoreMotor_SetTarget(state->motor_cfg, Motor_GetTotalAngle(state->motor_cfg));
-
-    xLastWake = xTaskGetTickCount();
-    for (;;)
-    {
-        StoreMotor_RunControl(state);
-        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(2));
-    }
-}
-
-/***********************************
- * 函数名: MotorRightStore3508CtrlTask
- * 作用:   右侧储能 M3508 独立控制任务，固定 2ms 周期
- **********************************/
-void MotorRightStore3508CtrlTask(void *argument)
-{
-    TickType_t xLastWake;
-    StoreMotorCtrlState_t *state = &g_RightStoreMotor;
-
-    (void)argument;
-
-    StoreMotor_ResetState(state);
-    StoreMotor_SetTarget(state->motor_cfg, Motor_GetTotalAngle(state->motor_cfg));
-
-    xLastWake = xTaskGetTickCount();
-    for (;;)
-    {
-        StoreMotor_RunControl(state);
-        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(2));
-    }
-}
-
-/***********************************
- * 函数名: Motor6020CtrlTask
- * 作用:   控制yaw角的6020电机独立控制任务，固定2ms周期
- *         逻辑与2006类似，位置环持续跟踪
- **********************************/
-void Motor6020CtrlTask(void *argument)
-{
-    TickType_t xLastWake;
-
-    (void)argument;
-
-    xLastWake = xTaskGetTickCount();
-    for (;;)
-    {
-        if (g_b6020CtrlEnabled)
-        {
-            MotorTypeDef *motor = &MotorManager.MotorList[RM_6020_YAW - 1];
-            float target_yaw = Motor6020_GetTarget();
-            RmMotorPID_Calc(RM_6020_YAW, target_yaw);
+            target_raw_deg += motor->motor_data.offset_ecd_angle; /* 更新 target_raw_deg。 */
         }
 
-        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(2));
+        // 未初始化规划器
+        if (rt->trap_initialized == false) /* 检查当前执行条件。 */
+        {
+            Motor_ResetTrap(rt, cfg, Motor_GetPosRaw(cfg)); /* 调用 Motor_ResetTrap。 */
+        }
+
+        // 已经初始化规划器
+        if (rt->trap_initialized != false) /* 检查当前执行条件。 */
+        {
+            // 更新目标
+            rt->trap_profile.target_pos = target_raw_deg; /* 更新 target_pos。 */
+
+            // 确认时间间隔
+            dt_s = DWT_GetDeltaT(&rt->trap_cnt_last); /* 更新 dt_s。 */
+
+            // 防止异常浮点数进入控制
+            if (!isfinite(dt_s) || dt_s <= 0.0f) /* 检查当前执行条件。 */
+            {
+                dt_s = 0.001f; /* 更新 dt_s。 */
+            }
+
+            // 给控制周期设置上限
+            // 如果任务因为阻塞、调试断点或调度延迟，导致 dt_s 突然变成 0.5s，这一步就会产生很大的位置或速度跳变。限制后就会截断控制到20ms的步进效果
+            else if (dt_s > 0.02f) /* 继续判断下一条件。 */
+            {
+                dt_s = 0.02f; /* 更新 dt_s。 */
+            }
+
+            // 更新规划后的控制位置
+            cmd_pos = Motor_TrapPos_Update(&rt->trap_profile, dt_s); /* 更新 cmd_pos。 */
+            ref_relative_deg = cmd_pos; /* 更新 ref_relative_deg。 */
+            if (motor->MotorInf.band == RM_MOTOR_BAND) /* 检查当前执行条件。 */
+            {
+                ref_relative_deg -= motor->motor_data.offset_ecd_angle; /* 更新 ref_relative_deg。 */
+            }
+        }
+
+        else /* 处理其余情况。 */
+        {
+            ref_relative_deg = target_relative_deg; // 未注册规划器，直接把大幅度阶跃目标给出去
+        }
     }
+
+    else /* 处理其余情况。 */
+    {
+        ref_relative_deg = target_relative_deg; // 未注册规划器，直接把大幅度阶跃目标给出去
+    }
+
+    /* ---------------- 第 2~5 层：控制器→判断器→限幅器→输出 ----------------
+     * 全部由 angle_motor 统一 tick 完成（数据驱动，无按电机的特殊分支）。 */
+    if (AngleMotor_IsManaged(cfg)) /* 检查当前执行条件。 */
+    {
+        (void)AngleMotor_Drive(cfg, ref_relative_deg, target_relative_deg); /* 调用 AngleMotor_Drive。 */
+        return; /* 结束当前函数。 */
+    }
+
+    /* 未纳入 angle_motor 的电机（理论上不会走到，YAW 由 StateSet 直控）：*/
+    /* 退回旧串级 PID，保证兼容不炸。 */
+    RmMotorPID_Calc(cfg, ref_relative_deg); /* 调用 RmMotorPID_Calc。 */
+}
+
+/* ------------------------------------------------------------------
+ * 统一电机控制任务（2ms 周期）
+ *   - 先跑储能左右同步 PID，得到 correction
+ *   - 遍历所有已注册电机 tick
+ *   - 储能两侧在遍历时带入 ±correction 偏置
+ * ------------------------------------------------------------------ */
+void MotorCtrlTask(void *argument) /* 实现 MotorCtrlTask。 */
+{
+    TickType_t xLastWake; /* 保存 xLastWake。 */
+    (void)argument; /* 显式忽略参数 argument。 */
+
+    /* 启动时先把夹爪目标拉到当前位置（原 3508 任务的初始 home 行为） */
+    {
+        float home_deg = Motor_GetTotalAngle(RM_3508_GRIPPER); /* 初始化 home_deg。 */
+        MotorData = home_deg; /* 定义 MotorData 枚举项。 */
+        (void)LoadMotor_SubmitTarget(LOAD_MOTOR_OWNER_HOME, /* 开始调用 LoadMotor_SubmitTarget。 */
+                                     LOAD_MOTOR_PRIORITY_HOME, /* 定义 LOAD_MOTOR_PRIORITY_HOME 枚举项。 */
+                                     home_deg, /* 传入下一项参数或数据。 */
+                                     LOAD_MOTOR_DEFAULT_HOLD_MS); /* 完成本行操作。 */
+    }
+
+    xLastWake = xTaskGetTickCount(); /* 更新 xLastWake。 */
+    for (;;) /* 遍历当前数据集合。 */
+    {
+        uint8_t i; /* 保存 i。 */
+        float correction = 0.0f; /* 初始化 correction。 */
+        MotorRuntimeState_t *left = Motor_GetRuntime(RM_3508_STORE_LEFT); /* 初始化 left。 */
+        MotorRuntimeState_t *right = Motor_GetRuntime(RM_3508_STORE_RIGHT); /* 初始化 right。 */
+
+        /* 先处理夹爪命令流（stream-buffer） */
+        LoadMotor_ProcessCommandStream(); /* 调用 LoadMotor_ProcessCommandStream。 */
+
+        /* 左右储能同步 PID：两侧都 enable 且未故障时才介入 */
+        if (left != NULL && right != NULL && /* 检查当前执行条件。 */
+            left->ctrl_enabled && right->ctrl_enabled && /* 继续组合表达式。 */
+            !AngleMotor_IsFaulted(RM_3508_STORE_LEFT) && /* 继续组合表达式。 */
+            !AngleMotor_IsFaulted(RM_3508_STORE_RIGHT)) /* 继续当前语句。 */
+        {
+            float left_pos = Motor_GetTotalAngle(RM_3508_STORE_LEFT); /* 初始化 left_pos。 */
+            float right_pos = Motor_GetTotalAngle(RM_3508_STORE_RIGHT); /* 初始化 right_pos。 */
+            correction = AngleMotor_UpdateStoreSync(left_pos, right_pos); /* 更新 correction。 */
+            if (!isfinite(correction)) /* 检查当前执行条件。 */
+            {
+                correction = 0.0f; /* 更新 correction。 */
+            }
+        }
+
+        for (i = 1U; i <= (uint8_t)MotorManager.registered_count && i <= (uint8_t)g_CanMotorNum; i++) /* 遍历当前数据集合。 */
+        {
+            can_motor_cfg cfg = (can_motor_cfg)i; /* 初始化 cfg。 */
+            float sync_offset = 0.0f; /* 初始化 sync_offset。 */
+
+            if (cfg == RM_3508_STORE_LEFT) /* 检查当前执行条件。 */
+            {
+                sync_offset = correction; /* 更新 sync_offset。 */
+            }
+            else if (cfg == RM_3508_STORE_RIGHT) /* 继续判断下一条件。 */
+            {
+                sync_offset = -correction; /* 更新 sync_offset。 */
+            }
+
+            Motor_TickOne(cfg, sync_offset); /* 调用 Motor_TickOne。 */
+        }
+
+        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(2)); /* 调用 vTaskDelayUntil。 */
+    }
+}
+
+/* ------------------------------------------------------------------
+ * LoadMotor_* 业务层封装（夹爪 M3508 专用）
+ *   - 多 owner 优先级抢占
+ *   - stream-buffer 命令流，带 magic+签名校验
+ *   - 内部最终 Motor_SetTarget(RM_3508_GRIPPER, ...)
+ * ------------------------------------------------------------------ */
+static bool LoadMotor_TimeReached(uint32_t now_ms, uint32_t target_ms) /* 实现 LoadMotor_TimeReached。 */
+{
+    return ((int32_t)(now_ms - target_ms) >= 0); /* 返回当前计算结果。 */
+}
+
+static uint32_t LoadMotor_CalcSignature(const LoadMotorCommand_t *cmd) /* 实现 LoadMotor_CalcSignature。 */
+{
+    uint32_t target_bits = 0U; /* 初始化 target_bits。 */
+
+    if (cmd == NULL) /* 检查当前执行条件。 */
+    {
+        return 0U; /* 返回状态值 0U。 */
+    }
+    memcpy(&target_bits, &cmd->target_pos_deg, sizeof(target_bits)); /* 调用 memcpy。 */
+    return LOAD_MOTOR_CMD_SIGNATURE_KEY ^ /* 继续组合表达式。 */
+           cmd->magic ^ /* 继续组合表达式。 */
+           cmd->seq ^ /* 继续组合表达式。 */
+           cmd->timestamp_ms ^ /* 继续组合表达式。 */
+           cmd->max_age_ms ^ /* 继续组合表达式。 */
+           cmd->owner_hold_ms ^ /* 继续组合表达式。 */
+           ((uint32_t)cmd->owner << 24) ^ /* 继续组合表达式。 */
+           ((uint32_t)cmd->priority << 16) ^ /* 继续组合表达式。 */
+           target_bits; /* 完成本行操作。 */
+}
+
+static void LoadMotor_ProcessCommandStream(void) /* 实现 LoadMotor_ProcessCommandStream。 */
+{
+    LoadMotorCommand_t cmd; /* 保存 cmd。 */
+    size_t received; /* 保存 received。 */
+    uint32_t now_ms; /* 保存 now_ms。 */
+
+    if (g_GripperCmdStream == NULL) /* 检查当前执行条件。 */
+    {
+        return; /* 结束当前函数。 */
+    }
+
+    while ((received = xStreamBufferReceive(g_GripperCmdStream, &cmd, sizeof(cmd), 0)) > 0U) /* 条件满足时继续执行。 */
+    {
+        bool accepted; /* 保存 accepted。 */
+        uint32_t hold_ms; /* 保存 hold_ms。 */
+
+        if (received != sizeof(cmd)) /* 检查当前执行条件。 */
+        {
+            (void)xStreamBufferReset(g_GripperCmdStream); /* 调用 xStreamBufferReset。 */
+            break; /* 结束当前循环或分支。 */
+        }
+        now_ms = HAL_GetTick(); /* 更新 now_ms。 */
+        if (cmd.magic != LOAD_MOTOR_CMD_MAGIC || /* 检查当前执行条件。 */
+            cmd.signature != LoadMotor_CalcSignature(&cmd) || /* 继续组合表达式。 */
+            !isfinite(cmd.target_pos_deg) || /* 继续组合表达式。 */
+            (cmd.max_age_ms > 0U && /* 继续组合表达式。 */
+             (uint32_t)(now_ms - cmd.timestamp_ms) > cmd.max_age_ms)) /* 继续当前语句。 */
+        {
+            continue; /* 跳过本轮剩余处理。 */
+        }
+
+        taskENTER_CRITICAL(); /* 调用 taskENTER_CRITICAL。 */
+        if (g_GripperActiveOwner != LOAD_MOTOR_OWNER_NONE && /* 检查当前执行条件。 */
+            LoadMotor_TimeReached(now_ms, g_GripperActiveOwnerExpireMs)) /* 开始调用 LoadMotor_TimeReached。 */
+        {
+            g_GripperActiveOwner = LOAD_MOTOR_OWNER_NONE; /* 更新 g_GripperActiveOwner。 */
+            g_GripperActivePriority = 0U; /* 更新 g_GripperActivePriority。 */
+        }
+        accepted = (g_GripperActiveOwner == LOAD_MOTOR_OWNER_NONE || /* 继续更新 accepted。 */
+                    g_GripperActiveOwner == (LoadMotorOwner_e)cmd.owner || /* 继续更新 目标值。 */
+                    cmd.priority >= g_GripperActivePriority); /* 更新 priority。 */
+        taskEXIT_CRITICAL(); /* 调用 taskEXIT_CRITICAL。 */
+        if (!accepted) /* 检查当前执行条件。 */
+        {
+            continue; /* 跳过本轮剩余处理。 */
+        }
+
+        hold_ms = (cmd.owner_hold_ms == 0U) ? LOAD_MOTOR_DEFAULT_HOLD_MS : cmd.owner_hold_ms; /* 更新 hold_ms。 */
+        Motor_SetTarget(RM_3508_GRIPPER, cmd.target_pos_deg); /* 调用 Motor_SetTarget。 */
+        MotorData = Motor_GetTotalAngle(RM_3508_GRIPPER); /* 定义 MotorData 枚举项。 */
+
+        taskENTER_CRITICAL(); /* 调用 taskENTER_CRITICAL。 */
+        g_GripperActiveOwner = (LoadMotorOwner_e)cmd.owner; /* 更新 g_GripperActiveOwner。 */
+        g_GripperActivePriority = cmd.priority; /* 更新 g_GripperActivePriority。 */
+        g_GripperActiveOwnerExpireMs = now_ms + hold_ms; /* 更新 g_GripperActiveOwnerExpireMs。 */
+        taskEXIT_CRITICAL(); /* 调用 taskEXIT_CRITICAL。 */
+    }
+}
+
+bool LoadMotor_SubmitTarget(LoadMotorOwner_e owner, /* 传入下一项参数或数据。 */
+                            uint8_t priority, /* 传入下一项参数或数据。 */
+                            float target_pos_deg, /* 传入下一项参数或数据。 */
+                            uint32_t owner_hold_ms) /* 继续当前语句。 */
+{
+    LoadMotorCommand_t cmd = {0}; /* 初始化 cmd。 */
+    SemaphoreHandle_t mtx; /* 保存 mtx。 */
+    size_t sent; /* 保存 sent。 */
+    uint32_t now_ms; /* 保存 now_ms。 */
+
+    if (g_GripperCmdStream == NULL || !isfinite(target_pos_deg)) /* 检查当前执行条件。 */
+    {
+        return false; /* 返回 false。 */
+    }
+    if (owner == LOAD_MOTOR_OWNER_NONE || priority == 0U) /* 检查当前执行条件。 */
+    {
+        return false; /* 返回 false。 */
+    }
+
+    now_ms = HAL_GetTick(); /* 更新 now_ms。 */
+    taskENTER_CRITICAL(); /* 调用 taskENTER_CRITICAL。 */
+    if (g_GripperActiveOwner != LOAD_MOTOR_OWNER_NONE && /* 检查当前执行条件。 */
+        LoadMotor_TimeReached(now_ms, g_GripperActiveOwnerExpireMs)) /* 开始调用 LoadMotor_TimeReached。 */
+    {
+        g_GripperActiveOwner = LOAD_MOTOR_OWNER_NONE; /* 更新 g_GripperActiveOwner。 */
+        g_GripperActivePriority = 0U; /* 更新 g_GripperActivePriority。 */
+    }
+    if (g_GripperActiveOwner != LOAD_MOTOR_OWNER_NONE && /* 检查当前执行条件。 */
+        g_GripperActiveOwner != owner && /* 继续更新 目标值。 */
+        priority < g_GripperActivePriority) /* 继续当前语句。 */
+    {
+        taskEXIT_CRITICAL(); /* 调用 taskEXIT_CRITICAL。 */
+        return false; /* 返回 false。 */
+    }
+    taskEXIT_CRITICAL(); /* 调用 taskEXIT_CRITICAL。 */
+
+    cmd.magic = LOAD_MOTOR_CMD_MAGIC; /* 更新 magic。 */
+    cmd.timestamp_ms = now_ms; /* 更新 timestamp_ms。 */
+    cmd.max_age_ms = LOAD_MOTOR_CMD_MAX_AGE_MS; /* 更新 max_age_ms。 */
+    cmd.owner_hold_ms = owner_hold_ms; /* 更新 owner_hold_ms。 */
+    cmd.owner = (uint8_t)owner; /* 更新 owner。 */
+    cmd.priority = priority; /* 更新 priority。 */
+    cmd.target_pos_deg = target_pos_deg; /* 更新 target_pos_deg。 */
+
+    mtx = Motor_GetMutex(RM_3508_GRIPPER); /* 更新 mtx。 */
+    if (mtx != NULL) /* 检查当前执行条件。 */
+    {
+        xSemaphoreTake(mtx, portMAX_DELAY); /* 调用 xSemaphoreTake。 */
+    }
+    g_GripperCmdSeq++; /* 递增 g_GripperCmdSeq。 */
+    cmd.seq = g_GripperCmdSeq; /* 更新 seq。 */
+    cmd.signature = LoadMotor_CalcSignature(&cmd); /* 更新 signature。 */
+
+    if (xStreamBufferSpacesAvailable(g_GripperCmdStream) < sizeof(cmd)) /* 检查当前执行条件。 */
+    {
+        (void)xStreamBufferReset(g_GripperCmdStream); /* 调用 xStreamBufferReset。 */
+    }
+    sent = xStreamBufferSend(g_GripperCmdStream, &cmd, sizeof(cmd), 0); /* 更新 sent。 */
+    if (mtx != NULL) /* 检查当前执行条件。 */
+    {
+        xSemaphoreGive(mtx); /* 调用 xSemaphoreGive。 */
+    }
+
+    return (sent == sizeof(cmd)); /* 返回当前计算结果。 */
+}
+
+void LoadMotor_ReleaseOwner(LoadMotorOwner_e owner) /* 实现 LoadMotor_ReleaseOwner。 */
+{
+    taskENTER_CRITICAL(); /* 调用 taskENTER_CRITICAL。 */
+    if (g_GripperActiveOwner == owner) /* 检查当前执行条件。 */
+    {
+        g_GripperActiveOwner = LOAD_MOTOR_OWNER_NONE; /* 更新 g_GripperActiveOwner。 */
+        g_GripperActivePriority = 0U; /* 更新 g_GripperActivePriority。 */
+        g_GripperActiveOwnerExpireMs = 0U; /* 更新 g_GripperActiveOwnerExpireMs。 */
+    }
+    taskEXIT_CRITICAL(); /* 调用 taskEXIT_CRITICAL。 */
+}
+
+/// @brief 获取运行时长
+/// @param cfg 电机别名
+/// @return 运行状态结构体
+static inline MotorRuntimeState_t *Motor_GetRuntime(can_motor_cfg cfg) /* 实现 Motor_GetRuntime。 */
+{
+    if ((uint32_t)cfg < 1U || (uint32_t)cfg > (uint32_t)g_CanMotorNum) /* 检查当前执行条件。 */
+    {
+        return NULL; /* 返回当前计算结果。 */
+    }
+    return &s_runtime[(uint32_t)cfg - 1U]; /* 返回当前计算结果。 */
+}
+
+/// @brief 获取互斥量操作句柄
+/// @param cfg 电机别名
+/// @return 互斥量操作句柄
+static inline SemaphoreHandle_t Motor_GetMutex(can_motor_cfg cfg) /* 实现 Motor_GetMutex。 */
+{
+    if ((uint32_t)cfg < 1U || (uint32_t)cfg > (uint32_t)g_CanMotorNum) /* 检查当前执行条件。 */
+    {
+        return NULL; /* 返回当前计算结果。 */
+    }
+    return s_mtx[(uint32_t)cfg - 1U]; /* 返回当前计算结果。 */
+}
+
+/// @brief 获取电机转动的角度
+/// @param cfg 电机别名
+/// @return 对应电机角度
+static inline float Motor_GetPosRaw(can_motor_cfg cfg) /* 实现 Motor_GetPosRaw。 */
+{
+    MotorTypeDef *motor = Motor_GetHandleFast(cfg); /* 初始化 motor。 */
+    if (motor->MotorInf.band == DM_MOTOR_BAND) /* 检查当前执行条件。 */
+    {
+        /* S3519 规划初值使用已适配的度制逻辑位置，不能读取 DM 的温度槽 [3]。 */
+        return Motor_GetTotalAngle(cfg); /* 返回当前计算结果。 */
+    }
+    return motor->motor_data.solved_data[3]; /* 返回当前计算结果。 */
 }

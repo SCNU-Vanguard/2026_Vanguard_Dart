@@ -6,23 +6,27 @@
  * 数据全部经过测试得来
  * todo：等待准确的数据
  *********************************************************/
-#ifndef __CONFIG_H_
-#define __CONFIG_H_
+#ifndef __CONFIG_H_ /* 按 __CONFIG_H_ 选择编译分支。 */
+#define __CONFIG_H_ /* 定义 __CONFIG_H_。 */
 
 #include "main.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <arm_math.h>
 
+#ifndef USE_RM_STORE /* 按 USE_RM_STORE 选择编译分支。 */
+#define USE_RM_STORE 1 /* 定义 USE_RM_STORE。 */
+#endif /* 结束条件编译。 */
+
 // 每发飞镖对应的 YAW 和 Trigger 微调偏置映射表
 // 最终目标 = 当前目标类型基础值(Base/Outpost) + 当前发序偏置
 // 索引: [0]=Dart4(第1发), [1]=Dart3(第2发), [2]=Dart2(第3发), [3]=Dart1(第4发)
 
-#define TRIGGER_2006_SETUP_TIMEOUT_MS 2500U
-#define STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS 12000U
-#define STATE_SET_GRIPPER_OWNER_EXTRA_MS 500U
-#define STATE_SET_SETUP_GATE_TIMEOUT_MS 1000U
-#define STATE_SET_REQUEST_TIMEOUT_MS (TRIGGER_2006_SETUP_TIMEOUT_MS + STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS + STATE_SET_GRIPPER_OWNER_EXTRA_MS + STATE_SET_SETUP_GATE_TIMEOUT_MS)
+#define TRIGGER_2006_SETUP_TIMEOUT_MS 2500U /* 定义 TRIGGER_2006_SETUP_TIMEOUT_MS。 */
+#define STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS 12000U /* 定义 STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS。 */
+#define STATE_SET_GRIPPER_OWNER_EXTRA_MS 500U /* 定义 STATE_SET_GRIPPER_OWNER_EXTRA_MS。 */
+#define STATE_SET_SETUP_GATE_TIMEOUT_MS 1000U /* 定义 STATE_SET_SETUP_GATE_TIMEOUT_MS。 */
+#define STATE_SET_REQUEST_TIMEOUT_MS (TRIGGER_2006_SETUP_TIMEOUT_MS + STATE_SET_GRIPPER_SETUP_MAX_TIMEOUT_MS + STATE_SET_GRIPPER_OWNER_EXTRA_MS + STATE_SET_SETUP_GATE_TIMEOUT_MS) /* 定义 STATE_SET_REQUEST_TIMEOUT_MS。 */
 
 /* ==================== BSP层：协议常量 ==================== */
 
@@ -37,8 +41,8 @@
 /* ==================== 控制层：通用系统参数 ==================== */
 
 #define MOTOR_TIMEOUT_MS 5000           // 电机运动超时时间（毫秒）
-#define MOTOR_DEAD_ZONE 3.0f            // 电机死区（用于位置判定）
-#define MOTOR_DEADZONE_TIMEOUT_MS 3000U // 死区判定超时退出（毫秒）
+#define MOTOR_DEAD_ZONE 50.0f           // 电机死区（用于位置判定）
+#define MOTOR_DEADZONE_TIMEOUT_MS 1000U // 死区判定超时退出（毫秒）
 #define TRIGGER_DEAD_ZONE 5.0f          // 扳机电机死区
 #define SERVO_MOVE_TIME_MS 315          // 舵机转动时间（毫秒）
 #define POWER_ON_DELAY_MS 100           // 上电延迟时间（毫秒）
@@ -56,10 +60,10 @@
  * - SWB=1（默认状态）：调试模式，只允许电机调试，不执行发射和换弹流程
  * - SWB=0（手动切换）：正常模式，执行正常的发射和换弹流程
  */
-#define ENABLE_RC_MASTER_SWITCH 0
+#define ENABLE_RC_MASTER_SWITCH 0 /* 定义 ENABLE_RC_MASTER_SWITCH。 */
 
 // 遥控器监控任务周期（毫秒）
-#define RC_MONITOR_TASK_PERIOD_MS 10
+#define RC_MONITOR_TASK_PERIOD_MS 10 /* 定义 RC_MONITOR_TASK_PERIOD_MS。 */
 
 /* ==================== 任务层：事件组位定义 ==================== */
 
@@ -69,137 +73,111 @@
 #define EVENT_ALL_READY 0x4C             // 0x4C - 全部就绪
 
 // 裁判系统飞镖舱门状态的本地超时判定
-#define REFEREE_GATE_FRESH_TIMEOUT_MS 2000U
+#define REFEREE_GATE_FRESH_TIMEOUT_MS 1500U // 裁判舱门帧连续监控阈值
+#define IBUS_WATCHDOG_TIMEOUT_MS 100U       // 遥控器连续数据监控阈值
+#define RM_MOTOR_FEEDBACK_TIMEOUT_MS 10U    // RM 电机连续反馈阈值
+#define DM_MOTOR_REPLY_TIMEOUT_MS 10U       // DM 单次发送回复等待阈值
 
 /* ==================== 业务层：机械结构参数 ==================== */
 
 // 换弹结构相关
-#define ConveyorBeltLength 20673
-#define SeperationAngle 500
-#define PresetLoc (0.0f)
-#define LOAD3508_DART_FIRST_STEP_DEG (1152.0f)
-#define LOAD3508_DART_STEP_DEG (2304.0f)
-#define LOAD3508_DART_STEP_DIR (-1.0f)
-#define FirstServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * LOAD3508_DART_FIRST_STEP_DEG))
-#define SecondServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * (LOAD3508_DART_FIRST_STEP_DEG + LOAD3508_DART_STEP_DEG)))
-#define ThirdServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * (LOAD3508_DART_FIRST_STEP_DEG + (2.0f * LOAD3508_DART_STEP_DEG))))
+#define ConveyorBeltLength 20673 /* 定义 ConveyorBeltLength。 */
+#define SeperationAngle 500 /* 定义 SeperationAngle。 */
+#define PresetLoc (0.0f) /* 定义 PresetLoc。 */
+#define LOAD3508_DART_FIRST_STEP_DEG (1152.0f) /* 定义 LOAD3508_DART_FIRST_STEP_DEG。 */
+#define LOAD3508_DART_STEP_DEG (2304.0f) /* 定义 LOAD3508_DART_STEP_DEG。 */
+#define LOAD3508_DART_STEP_DIR (-1.0f) /* 定义 LOAD3508_DART_STEP_DIR。 */
+#define FirstServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * LOAD3508_DART_FIRST_STEP_DEG)) /* 定义 FirstServoLoc。 */
+#define SecondServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * (LOAD3508_DART_FIRST_STEP_DEG + LOAD3508_DART_STEP_DEG))) /* 定义 SecondServoLoc。 */
+#define ThirdServoLoc (PresetLoc + (LOAD3508_DART_STEP_DIR * (LOAD3508_DART_FIRST_STEP_DEG + (2.0f * LOAD3508_DART_STEP_DEG)))) /* 定义 ThirdServoLoc。 */
+
 // LOAD3508 targets are computed from PresetLoc: first 1152, then +2304, +2304.
-#define LOAD3508_STILL_OVERCURRENT_LIMIT_A (2.0f)
-#define LOAD3508_STILL_OVERCURRENT_CLEAR_A (1.0f)
-#define LOAD3508_STILL_OVERCURRENT_RETURN_MS 2500U
-#define LOAD3508_STALL_OVERCURRENT_LIMIT_A (LOAD3508_STILL_OVERCURRENT_LIMIT_A)
-#define LOAD3508_STALL_OVERCURRENT_CLEAR_A (LOAD3508_STILL_OVERCURRENT_CLEAR_A)
-#define LOAD3508_STALL_OVERCURRENT_RETURN_MS 2500U
-#define LOAD3508_STALL_SPEED_RPM (8.0f)
-#define LOAD3508_STALL_POS_DELTA_DEG (1.0f)
-#define LOAD3508_STALL_POS_SAMPLE_MS 100U
-#define LOAD3508_OVERCURRENT_TARGET_BLANK_MS 800U
-#define LOAD3508_OVERCURRENT_FILTER_ALPHA (0.08f)
-#if 0
+#define LOAD3508_STILL_OVERCURRENT_LIMIT_A (2.0f) /* 定义 LOAD3508_STILL_OVERCURRENT_LIMIT_A。 */
+#define LOAD3508_STILL_OVERCURRENT_CLEAR_A (1.0f) /* 定义 LOAD3508_STILL_OVERCURRENT_CLEAR_A。 */
+#define LOAD3508_STILL_OVERCURRENT_RETURN_MS 2500U /* 定义 LOAD3508_STILL_OVERCURRENT_RETURN_MS。 */
+#define LOAD3508_STALL_OVERCURRENT_LIMIT_A (LOAD3508_STILL_OVERCURRENT_LIMIT_A) /* 定义 LOAD3508_STALL_OVERCURRENT_LIMIT_A。 */
+#define LOAD3508_STALL_OVERCURRENT_CLEAR_A (LOAD3508_STILL_OVERCURRENT_CLEAR_A) /* 定义 LOAD3508_STALL_OVERCURRENT_CLEAR_A。 */
+#define LOAD3508_STALL_OVERCURRENT_RETURN_MS 2500U /* 定义 LOAD3508_STALL_OVERCURRENT_RETURN_MS。 */
+#define LOAD3508_STALL_SPEED_RPM (8.0f) /* 定义 LOAD3508_STALL_SPEED_RPM。 */
+#define LOAD3508_STALL_POS_DELTA_DEG (1.0f) /* 定义 LOAD3508_STALL_POS_DELTA_DEG。 */
+#define LOAD3508_STALL_POS_SAMPLE_MS 100U /* 定义 LOAD3508_STALL_POS_SAMPLE_MS。 */
+#define LOAD3508_OVERCURRENT_TARGET_BLANK_MS 800U /* 定义 LOAD3508_OVERCURRENT_TARGET_BLANK_MS。 */
+#define LOAD3508_OVERCURRENT_FILTER_ALPHA (0.08f) /* 定义 LOAD3508_OVERCURRENT_FILTER_ALPHA。 */
+// TODO: LOAD3508_OVERCURRENT_TARGET_BLANK_MS 当前未被 RM_Motor_ApplyOutputLimit 使用，GRIPPER 过流保护走的是简化版（持续过流→计时→trip）。若需要“目标刚切换时给空白时间”，需在 RM_Motor_ApplyOutputLimit 里补相应逻辑并读取本宏。
 
-// 换弹 M3508 的相对零点位置限位，底层电机注册直接使用这组宏。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
-#define LOAD3508_MAX (0.0f)      // 换弹 M3508 相对零点的最大允许位置
-#define LOAD3508_MIN (-10000.0f) // 换弹 M3508 相对零点的最小允许位置
-#define LOAD3508_MAX (0.0f)      // 换弹 M3508 相对零点的最大允许位置
-
-// 两个储能 M3508 各自独立保护/S 型规划参数
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-// 两个储能 M3508 各自独立保护/S 型规划参数
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-#endif
-
-#if 0
-
-// 换弹 M3508 的相对零点位置限位，电机注册时直接使用这组范围。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
-
-// 两个储能 M3508 各自独立使用的异常电流参数。
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-
-// 换弹 M3508 的相对零点位置限位，电机注册时直接使用这组范围。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
-
-// 两个储能 M3508 各自独立使用的异常电流参数。
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-#endif
-
-#undef LOAD3508_MIN
-#undef LOAD3508_MAX
-#undef STORE3508_STILL_OVERCURRENT_LIMIT_A
-#undef STORE3508_STILL_OVERCURRENT_CLEAR_A
-#undef STORE3508_STILL_OVERCURRENT_CONFIRM_MS
-#undef STORE3508_STALL_OVERCURRENT_LIMIT_A
-#undef STORE3508_STALL_OVERCURRENT_CLEAR_A
-#undef STORE3508_STALL_CONFIRM_MS
 // 换弹夹爪 M3508 的相对零点位置限位。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
+#define LOAD3508_MIN (-10000.0f) /* 定义 LOAD3508_MIN。 */
+#define LOAD3508_MAX (0.0f) /* 定义 LOAD3508_MAX。 */
 
 // 储能 M3508 在“已接近目标位置”时的异常电流保护参数。
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
+#define STORE3508_STILL_OVERCURRENT_LIMIT_A (8.5f) /* 定义 STORE3508_STILL_OVERCURRENT_LIMIT_A。 */
+#define STORE3508_STILL_OVERCURRENT_CLEAR_A (7.2f) /* 定义 STORE3508_STILL_OVERCURRENT_CLEAR_A。 */
+#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 10000U /* 定义 STORE3508_STILL_OVERCURRENT_CONFIRM_MS。 */
 
 // 储能 M3508 在“运动途中疑似堵转”时的异常电流保护参数。
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-#define STORE3508_STALL_SPEED_RPM (8.0f)
-#define STORE3508_STALL_POS_DELTA_DEG (1.0f)
-#define STORE3508_STALL_POS_SAMPLE_MS 100U
-#define STORE3508_OVERCURRENT_TARGET_BLANK_MS 400U
-#define STORE3508_OVERCURRENT_FILTER_ALPHA (0.08f)
-#define STORE3508_TEMP_LIMIT_C (60.0f)
-#define STORE3508_TRAP_VMAX_DEG_S (1800.0f)
-#define STORE3508_TRAP_AMAX_DEG_S2 (9000.0f)
-#define STORE3508_TRAP_JERK_FACTOR (1.0f)
-#define STORE3508_TRAP_DISABLE_JERK 0
-#define STORE3508_TRAP_BRAKE_GAIN (0.95f)
-#define STORE3508_TRAP_ARRIVE_ZONE (1.0f)
-#define STORE3508_TRAP_DECEL_ZONE (30.0f)
+#define STORE3508_STALL_OVERCURRENT_LIMIT_A (8.0f) /* 定义 STORE3508_STALL_OVERCURRENT_LIMIT_A。 */
+#define STORE3508_STALL_OVERCURRENT_CLEAR_A (5.5f) /* 定义 STORE3508_STALL_OVERCURRENT_CLEAR_A。 */
+#define STORE3508_STALL_CONFIRM_MS 1500U /* 定义 STORE3508_STALL_CONFIRM_MS。 */
+#define STORE3508_STALL_SPEED_RPM (8.0f) /* 定义 STORE3508_STALL_SPEED_RPM。 */
+#define STORE3508_STALL_POS_DELTA_DEG (1.0f) /* 定义 STORE3508_STALL_POS_DELTA_DEG。 */
+#define STORE3508_STALL_POS_SAMPLE_MS 100U /* 定义 STORE3508_STALL_POS_SAMPLE_MS。 */
+#define STORE3508_OVERCURRENT_TARGET_BLANK_MS 400U /* 定义 STORE3508_OVERCURRENT_TARGET_BLANK_MS。 */
+#define STORE3508_TEMP_LIMIT_C (60.0f) /* 定义 STORE3508_TEMP_LIMIT_C。 */
+#define STORE3508_TRAP_VMAX_DEG_S (3000.0f) /* 定义 STORE3508_TRAP_VMAX_DEG_S。 */
+#define STORE3508_TRAP_AMAX_DEG_S2 (9000.0f) /* 定义 STORE3508_TRAP_AMAX_DEG_S2。 */
+#define STORE3508_TRAP_JERK_FACTOR (1.0f) /* 定义 STORE3508_TRAP_JERK_FACTOR。 */
+#define STORE3508_TRAP_DISABLE_JERK 0 /* 定义 STORE3508_TRAP_DISABLE_JERK。 */
+#define STORE3508_TRAP_BRAKE_GAIN (0.95f) /* 定义 STORE3508_TRAP_BRAKE_GAIN。 */
+#define STORE3508_TRAP_ARRIVE_ZONE (1.0f) /* 定义 STORE3508_TRAP_ARRIVE_ZONE。 */
+#define STORE3508_TRAP_DECEL_ZONE (30.0f) /* 定义 STORE3508_TRAP_DECEL_ZONE。 */
+
+/* 双侧蓄力 3508 位置同步 PID 参数：ia6b_task 生成 base 目标后，
+ * 由 RM_Motor_UpdateStoreSync 把 (left_pos - right_pos) 推向 0。*/
+#define STORE3508_SYNC_PID_KP (0.2f) /* 定义 STORE3508_SYNC_PID_KP。 */
+#define STORE3508_SYNC_PID_KI (0.0f) /* 定义 STORE3508_SYNC_PID_KI。 */
+#define STORE3508_SYNC_PID_KD (0.10f) /* 定义 STORE3508_SYNC_PID_KD。 */
+#define STORE3508_SYNC_PID_KF (0.00f) /* 定义 STORE3508_SYNC_PID_KF。 */
+#define STORE3508_SYNC_PID_MAX_OUT (20.0f) /* 定义 STORE3508_SYNC_PID_MAX_OUT。 */
+#define STORE3508_SYNC_PID_MIN_OUT (0.0f) /* 定义 STORE3508_SYNC_PID_MIN_OUT。 */
+#define STORE3508_SYNC_PID_MAX_IOUT (20.0f) /* 定义 STORE3508_SYNC_PID_MAX_IOUT。 */
 
 // 储能电机相关
-#define LeftStoreLoad (-540.0f)   // 换弹位置
-#define RightStoreLoad (540.0f)   // 换弹位置
-#define LeftStoreBottom (-100.0f) // 左侧滑台底部
-#define RightStoreBottom (100.0f) // 右侧滑台底部
-#define LeftStoreTop (0.0f)       // 左侧滑台叉上滑顶部
-#define RightStoreTop (0.0f)      // 右侧滑台叉上滑顶部
-#define LeftSafe (-100.0f)        // 左侧滑台叉上滑顶部
-#define RightSafe (1000.0f)       // 右侧滑台叉上滑顶部
-#define LimitStore 930.0f         // 电机的位置限制
-#define StoreSpeed (6.0f)         // 储能电机移动速度
+// ============================================================
+// ⚠️ 坐标系标定未完成会直接导致 STORE_FLOW_STORING 死锁：
+//    1) RmMotorPID_Calc 用 motor->config.position_min/max 对 target 做 clamp，
+//       若这里的值与 LeftStoreLoad/LeftStoreTop 量纲不一致，target 会被夹成死值。
+//    2) 业务层 IsInDeadzoneF(left_pos, LeftStoreLoad, MOTOR_DEAD_ZONE) 等循环
+//       依赖 LeftStoreLoad 等位置宏落在相对域 [position_min, position_max] 内，
+//       否则永远进不了死区。
+//
+// TODO(机械标定)：请明确以下三项，并据此一次性校准所有相关宏值：
+//    (a) 上电时电机物理上停在哪一端（顶部 / 底部 / 中间）。
+//    (b) 相对零点角度下，Load/Top/Bottom/Safe 各是正值还是负值。
+//    (c) 左右是否对称（LeftStoreLoad 与 RightStoreLoad 是否应该异号）。
+//  标定完成后同步更新 CanMotor.c 里 left_store_config / right_store_config
+//  的 position_min / position_max，以及下方的 STORE3508_*_POS_*_DEG。
+// ============================================================
+#define LeftStoreLoad (30245.0f)    // 换弹位置
+#define RightStoreLoad (30245.0f)   // 换弹位置
+#define LeftStoreBottom (48500.0f)  // 左侧滑台底部
+#define RightStoreBottom (48500.0f) // 右侧滑台底部
+#define LeftStoreTop (0.0f)         // 左侧滑台叉上滑顶部
+#define RightStoreTop (0.0f)        // 右侧滑台叉上滑顶部
+#define LeftSafe (1500.0f)          // 左侧滑台叉上滑顶部
+#define RightSafe (1500.0f)         // 右侧滑台叉上滑顶部
+#define LimitStore 49000.0f         // 电机的位置限制
+#define StoreSpeed (10.0f)          // 储能电机移动速度
 
 // 扳机射程相关
 #define MG996R_store 2500 // 发射扳机待机状态
 #define MG996R_shoot 1200 // 发射扳机发射状态
 
 // 换弹电机斜坡
-#define LOAD_TASK_TRAP_VMAX_DEG_S (3500.0f)
-#define LOAD_TASK_TRAP_AMAX_DEG_S2 (24000.0f)
-#define LOAD_TASK_TRAP_JERK_FACTOR (1.2f)
-#define LOAD_TASK_TRAP_DISABLE_JERK 0
-#define LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE 1
+#define LOAD_TASK_TRAP_VMAX_DEG_S (3500.0f) /* 定义 LOAD_TASK_TRAP_VMAX_DEG_S。 */
+#define LOAD_TASK_TRAP_AMAX_DEG_S2 (24000.0f) /* 定义 LOAD_TASK_TRAP_AMAX_DEG_S2。 */
+#define LOAD_TASK_TRAP_JERK_FACTOR (1.2f) /* 定义 LOAD_TASK_TRAP_JERK_FACTOR。 */
+#define LOAD_TASK_TRAP_DISABLE_JERK 0 /* 定义 LOAD_TASK_TRAP_DISABLE_JERK。 */
+#define LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE 1 /* 定义 LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE。 */
 #define LOAD_TASK_TRAP_BRAKE_GAIN (0.95f) /* (0,1]，越小越早减速，1.0=理论极限制动 */
 #define LOAD_TASK_TRAP_ARRIVE_ZONE (1.0f) /* 到达死区(°)，误差<此值强制锁零速 */
 #define LOAD_TASK_TRAP_DECEL_ZONE (40.0f) /* 线性减速区(°)，进入后速度线性压低 */
@@ -207,10 +185,10 @@
 // 云台转轴相关
 // 每发飞镖对应的 YAW(RM6020) 和 Trigger(RM2006) 预设位置
 // 索引: [0]=Dart4(第1发), [1]=Dart3(第2发), [2]=Dart2(第3发), [3]=Dart1(第4发)
-#define SETUP_YAW_DART4 0.0f
-#define SETUP_YAW_DART3 0.0f
-#define SETUP_YAW_DART2 0.0f
-#define SETUP_YAW_DART1 0.0f
+#define SETUP_YAW_DART4 0.0f /* 定义 SETUP_YAW_DART4。 */
+#define SETUP_YAW_DART3 0.0f /* 定义 SETUP_YAW_DART3。 */
+#define SETUP_YAW_DART2 0.0f /* 定义 SETUP_YAW_DART2。 */
+#define SETUP_YAW_DART1 0.0f /* 定义 SETUP_YAW_DART1。 */
 
 #define SETUP_TRIGGER_DART4 (0.0f) // 3
 #define SETUP_TRIGGER_DART3 (0.0f) // 2
@@ -218,29 +196,66 @@
 #define SETUP_TRIGGER_DART1 (0.0f) // 0
 
 // 6020 Yaw 到位等待开关：1=在任务层等待进入±deadzone；0=下发目标后直接继续流程
-#define ENABLE_6020_YAW_WAIT 1U
-#define YAW_6020_DEAD_ZONE 5.0f
+#define ENABLE_6020_YAW_WAIT 1U /* 定义 ENABLE_6020_YAW_WAIT。 */
+#define YAW_6020_DEAD_ZONE 5.0f /* 定义 YAW_6020_DEAD_ZONE。 */
 
 // 调试开关：1=跳过“每发前6020/2006到位等待”，直接进入3519流程；0=按原流程等待
-#define STORE_BYPASS_SETUP_WAIT 0U
+#define STORE_BYPASS_SETUP_WAIT 0U /* 定义 STORE_BYPASS_SETUP_WAIT。 */
 
 // 裁判系统飞镖发射站闸门相关参数
-#define REFEREE_DART_OPEN 0
-#define REFEREE_DART_CLOSE 1
-#define REFEREE_DART_MID 2
-#define REFEREE_DART_FIRE_MIN_REMAIN_TIME_S 2U
+#define REFEREE_DART_OPEN 0 /* 定义 REFEREE_DART_OPEN。 */
+#define REFEREE_DART_CLOSE 1 /* 定义 REFEREE_DART_CLOSE。 */
+#define REFEREE_DART_MID 2 /* 定义 REFEREE_DART_MID。 */
+#define REFEREE_DART_FIRE_MIN_REMAIN_TIME_S 2U /* 定义 REFEREE_DART_FIRE_MIN_REMAIN_TIME_S。 */
 
 // 前哨站和基地对应的Yaw角度
-#define OutpostYawAngle 10.0f
-#define BaseYawAngle -10.0f
+#define OutpostYawAngle 10.0f /* 定义 OutpostYawAngle。 */
+#define BaseYawAngle -10.0f /* 定义 BaseYawAngle。 */
 
 // 前哨站和基地对应的扳机位置
-#define OutpostTrigger 10.0f
-#define BaseTrigger -10.0f
+#define OutpostTrigger 10.0f /* 定义 OutpostTrigger。 */
+#define BaseTrigger -10.0f /* 定义 BaseTrigger。 */
 
-static const float g_SetupYaw[4] = {
-    SETUP_YAW_DART4, SETUP_YAW_DART3, SETUP_YAW_DART2, SETUP_YAW_DART1};
-static const float g_SetupTrigger[4] = {
-    SETUP_TRIGGER_DART4, SETUP_TRIGGER_DART3, SETUP_TRIGGER_DART2, SETUP_TRIGGER_DART1};
+static const float g_SetupYaw[4] = { /* 初始化 g_SetupYaw。 */
+    SETUP_YAW_DART4, SETUP_YAW_DART3, SETUP_YAW_DART2, SETUP_YAW_DART1}; /* 完成本行操作。 */
+static const float g_SetupTrigger[4] = { /* 初始化 g_SetupTrigger。 */
+    SETUP_TRIGGER_DART4, SETUP_TRIGGER_DART3, SETUP_TRIGGER_DART2, SETUP_TRIGGER_DART1}; /* 完成本行操作。 */
 
-#endif
+/* 发射数据确认来源 */
+#define TRUST_REFEREE_DART_DATA 0U /* 定义 TRUST_REFEREE_DART_DATA。 */
+#define TRUST_REMOTE_CONTROL_DART_DATA 1U /* 定义 TRUST_REMOTE_CONTROL_DART_DATA。 */
+#define TRUST_RCandREFEREE_DART_DATA 2U /* 定义 TRUST_RCandREFEREE_DART_DATA。 */
+#define TRUST_SHOOT_DART_DATA TRUST_REFEREE_DART_DATA /* 定义 TRUST_SHOOT_DART_DATA。 */
+
+/* ==================== angle_motor 分层框架：画像参数 ==================== */
+/* 说明：
+ *  - 每个位置控制类电机（2006/三个3508/储能位3519）都由一张画像
+ *    (AngleMotorProfile_t) 驱动统一的四层 tick，差异全部落在这些宏里。
+ *  - 过流/堵转阈值：3508 复用上方 STORE3508 / LOAD3508 系列宏，
+ *    2006 用下方专属宏（不再误用储能 8.5A 阈值）。
+ */
+
+/* 到位死区（到位判定用；沿用 MOTOR_DEAD_ZONE / TRIGGER_DEAD_ZONE 的量纲） */
+#define GRIPPER_POS_TOLERANCE_DEG (MOTOR_DEAD_ZONE) /* 定义 GRIPPER_POS_TOLERANCE_DEG。 */
+#define STORE_POS_TOLERANCE_DEG (MOTOR_DEAD_ZONE) /* 定义 STORE_POS_TOLERANCE_DEG。 */
+#define TRIGGER_POS_TOLERANCE_DEG (TRIGGER_DEAD_ZONE) /* 定义 TRIGGER_POS_TOLERANCE_DEG。 */
+
+/* 执行器电流硬限幅（最终 CAN 电流值的绝对上限，兜底防溢出） */
+#define M3508_CURRENT_HARD_LIMIT (16384) /* 定义 M3508_CURRENT_HARD_LIMIT。 */
+#define M2006_CURRENT_HARD_LIMIT (10000) /* 定义 M2006_CURRENT_HARD_LIMIT。 */
+
+/* 扳机 2006 专属过流/堵转保护阈值。
+ * M2006 额定电流较小（最大指令 10000 对应 ~10A 量级），
+ * 这里给保守初值，台架标定后再收紧。 */
+#define TRIGGER2006_STILL_OVERCURRENT_LIMIT_A (3.0f) /* 定义 TRIGGER2006_STILL_OVERCURRENT_LIMIT_A。 */
+#define TRIGGER2006_STILL_OVERCURRENT_CLEAR_A (2.0f) /* 定义 TRIGGER2006_STILL_OVERCURRENT_CLEAR_A。 */
+#define TRIGGER2006_STILL_OVERCURRENT_CONFIRM_MS 3000U /* 定义 TRIGGER2006_STILL_OVERCURRENT_CONFIRM_MS。 */
+#define TRIGGER2006_STALL_OVERCURRENT_LIMIT_A (3.0f) /* 定义 TRIGGER2006_STALL_OVERCURRENT_LIMIT_A。 */
+#define TRIGGER2006_STALL_OVERCURRENT_CLEAR_A (2.0f) /* 定义 TRIGGER2006_STALL_OVERCURRENT_CLEAR_A。 */
+#define TRIGGER2006_STALL_CONFIRM_MS 2000U /* 定义 TRIGGER2006_STALL_CONFIRM_MS。 */
+#define TRIGGER2006_STALL_SPEED_RPM (8.0f) /* 定义 TRIGGER2006_STALL_SPEED_RPM。 */
+#define TRIGGER2006_STALL_POS_DELTA_DEG (1.0f) /* 定义 TRIGGER2006_STALL_POS_DELTA_DEG。 */
+#define TRIGGER2006_STALL_POS_SAMPLE_MS 100U /* 定义 TRIGGER2006_STALL_POS_SAMPLE_MS。 */
+#define TRIGGER2006_OVERCURRENT_TARGET_BLANK_MS 400U /* 定义 TRIGGER2006_OVERCURRENT_TARGET_BLANK_MS。 */
+
+#endif /* 结束条件编译。 */

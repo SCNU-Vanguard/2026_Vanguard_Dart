@@ -194,7 +194,7 @@ static const DM_MotorIdConfig_t g_DM_IdTable[] = {
     // 右侧蓄力电机 - J3519 (位置速度模式, ID=2)
     [DM_3519_STRENTH_RIGHT] = {2, 0x109, 0x029, DM_LOCATION_SPEED},
     // Yaw轴电机 - J4310 (MIT模式, ID=3)
-    [DM_4310_YAW] = {3, 0x003, 0x013, DM_MIT},
+    [DM_4310_YAW] = {3, 0x009, 0x019, DM_MIT},
 };
 
 const DM_MotorIdConfig_t *DM_GetIdConfig(can_motor_cfg motor_cfg)

@@ -108,19 +108,20 @@ void MotorRegister(void)
     };
 
     // 左右储能 M3508：各自注册独立的位置限位，后续 PID/保护都按各自配置生效。
+    // TODO确认角度正负号
     RM_MotorConfig_t left_store_config = {
         .direction_bias = 0.0f,
-        .position_min = -LimitStore,
-        .position_max = LeftStoreTop,
-        .position_tolerance = MOTOR_DEAD_ZONE,
-        .reverse = 1U,
+        .position_min = STORE3508_LEFT_POS_MIN_DEG, // STORE3508_LEFT_POS_MIN_DEG,
+        .position_max = LimitStore,                 // STORE3508_LEFT_POS_MAX_DEG,
+        .position_tolerance = 0.0f,
+        .reverse = 0U,
     };
     RM_MotorConfig_t right_store_config = {
         .direction_bias = 0.0f,
-        .position_min = RightStoreTop,
-        .position_max = LimitStore,
-        .position_tolerance = MOTOR_DEAD_ZONE,
-        .reverse = 0U,
+        .position_min = STORE3508_RIGHT_POS_MIN_DEG, // STORE3508_RIGHT_POS_MIN_DEG,
+        .position_max = LimitStore,                  // STORE3508_RIGHT_POS_MAX_DEG,
+        .position_tolerance = 0.0f,
+        .reverse = 1U,
     };
 
     // 夹爪 M3508 的 S 型规划参数
@@ -160,7 +161,7 @@ void MotorRegister(void)
     RM_Motor_SetConfig(&MotorManager.MotorList[RM_3508_GRIPPER - 1], &gripper_config);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_GRIPPER - 1],
                            14.00f, 0.1f, 0.05f, 10.0f,
-                           0.225f, 1.00f, 0.05f, 93.0f,
+                           0.225f, 1.00f, 0.0f, 93.0f,
                            20000.0f, 0.0f, 500.0f,
                            8000.0f, 0.0f, 1500.0f);
     MotorManager.MotorList[RM_3508_GRIPPER - 1].trap_config = gripper_trap_config;
@@ -174,25 +175,34 @@ void MotorRegister(void)
                            6000.0f, 0.0f, 0.0f);
     MotorManager.MotorList[RM_2006_TRIGGER - 1].CAN_Rid = 0x205;
 
-    RM_M3508_Create(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1], 2U);
-    RM_Motor_SetConfig(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1], &left_store_config);
-    RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1],
-                           14.00f, 0.1f, 0.05f, 10.0f,
-                           0.225f, 1.00f, 0.05f, 93.0f,
-                           20000.0f, 0.0f, 500.0f,
-                           8000.0f, 0.0f, 1500.0f);
-    MotorManager.MotorList[RM_3508_STORE_LEFT - 1].trap_config = store_trap_config;
-    MotorManager.MotorList[RM_3508_STORE_LEFT - 1].CAN_Rid = 0x202;
-
-    RM_M3508_Create(&MotorManager.MotorList[RM_3508_STORE_RIGHT - 1], 3U);
+    RM_M3508_Create(&MotorManager.MotorList[RM_3508_STORE_RIGHT - 1], 2U);
     RM_Motor_SetConfig(&MotorManager.MotorList[RM_3508_STORE_RIGHT - 1], &right_store_config);
     RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_STORE_RIGHT - 1],
-                           14.00f, 0.1f, 0.05f, 10.0f,
-                           0.225f, 1.00f, 0.05f, 93.0f,
-                           20000.0f, 0.0f, 500.0f,
-                           8000.0f, 0.0f, 1500.0f);
+                           0.1f, 0.00f, 20.0f, 0.0f,
+                           4.00f, 2.00f, 0.0f, 0.0f,
+                           350.0f, 0.0f, 50.0f,
+                           15000.0f, 0.0f, 4000.0f);
+    // RM_Motor_SetSpeedPID(&MotorManager.MotorList[RM_3508_STORE_RIGHT - 1], PID_POSITION, 4.00f, 2.00f, 0.0f, 0.0f, 15000.0f, 0.0f, 4000.0f); // 速度2300,速度环kf为0
     MotorManager.MotorList[RM_3508_STORE_RIGHT - 1].trap_config = store_trap_config;
-    MotorManager.MotorList[RM_3508_STORE_RIGHT - 1].CAN_Rid = 0x203;
+    MotorManager.MotorList[RM_3508_STORE_RIGHT - 1].CAN_Rid = 0x202;
+
+    RM_M3508_Create(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1], 3U);
+    RM_Motor_SetConfig(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1], &left_store_config);
+    RM_Motor_SetCascadePID(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1],
+                           0.1f, 0.00f, 0.00f, 0.0f,
+                           5.00f, 2.30f, 0.0f, 0.0f,
+                           350.0f, 0.0f, 50.0f,
+                           15000.0f, 0.0f, 4000.0f);
+    // RM_Motor_SetSpeedPID(&MotorManager.MotorList[RM_3508_STORE_LEFT - 1], PID_POSITION, 5.00f, 2.30f, 0.0f, 0.0f, 15000.0f, 0.0f, 4000.0f); // 速度2300,速度环kf为0
+    MotorManager.MotorList[RM_3508_STORE_LEFT - 1].trap_config = store_trap_config;
+    MotorManager.MotorList[RM_3508_STORE_LEFT - 1].CAN_Rid = 0x203; // 左边是203，方向负向
+
+    /* 双侧蓄力 3508 位置同步 PID：对 (left_pos - right_pos) 做 PID，
+     * 上层以 ±correction/2 分发给左右目标，把累计角差推向 0。*/
+    RM_Motor_InitStoreSyncPid(STORE3508_SYNC_PID_KP, STORE3508_SYNC_PID_KI,
+                              STORE3508_SYNC_PID_KD, STORE3508_SYNC_PID_KF,
+                              STORE3508_SYNC_PID_MAX_OUT, STORE3508_SYNC_PID_MIN_OUT,
+                              STORE3508_SYNC_PID_MAX_IOUT);
 
     // Yaw轴电机 - J4310
     DM_J4310_Init(&MotorManager.MotorList[DM_4310_YAW - 1],
@@ -289,6 +299,10 @@ float Motor_GetTotalAngle(can_motor_cfg motor_id)
     MotorTypeDef *motor = &MotorManager.MotorList[motor_id - 1];
     if (motor->MotorInf.band == RM_MOTOR_BAND)
     {
+        if ((motor_id == RM_3508_STORE_LEFT) || (motor_id == RM_3508_STORE_RIGHT))
+        {
+            return motor->motor_data.solved_data[3];
+        }
         return motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle;
     }
     if (motor->MotorInf.band == DM_MOTOR_BAND)

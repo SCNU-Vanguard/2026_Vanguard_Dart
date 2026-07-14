@@ -35,11 +35,16 @@ float g_RcDebug2006TargetPosDeg = 0.0f;
 float g_RcDebug2006SpeedRpm = 0.0f;
 float g_RcDebug3508DesiredSpeedRpm = 0.0f;
 float g_RcDebug3508DesiredPosStepDeg = 0.0f;
+float g_RcDebug3508PreviewDesiredPosStepDeg = 0.0f;
+float g_RcDebug3508PreviewStickNorm = 0.0f;
 float g_RcDebug3508UkfSpeedRpm = 0.0f;
 float g_RcDebug3508StepSpeedRpm = 0.0f;
 float g_RcDebug3508SpeedStepPerFrame = LOAD3508_SPEED_STEP_MIN;
 float g_RcDebug3508StepPosDeg = 0.0f;
 float g_RcDebug3508PosStepPerFrame = LOAD3508_POS_STEP_MIN;
+float g_RcDebug3508PreviewStepPosDeg = 0.0f;
+float g_RcDebug3508PreviewPosStepPerFrame = LOAD3508_POS_STEP_MIN;
+int8_t g_RcDebug3508PreviewSwbState = 0;
 float g_RcDebug3508UkfCovP = 0.0f;
 int16_t g_RcDebug3508Raw = 0;
 int8_t g_RcDebugSwbState = 0;
@@ -72,9 +77,10 @@ extern float RmMotorSpeedData;
 static uint32_t g_last_ibus_tick = 0U;
 static float g_prev_desired_speed_rpm_3508 = 0.0f;
 static float g_prev_desired_pos_step_deg = 0.0f;
+static float g_prev_preview_desired_pos_step_deg = 0.0f;
 static float g_prev_desired_speed_rpm_6020 = 0.0f;
 static float g_prev_desired_pos_step_deg_6020 = 0.0f;
-static PID_t g_RcDebug3508SyncPid;
+/* 双侧 3508 同步 PID 定义/初始化现在在 RM_Motor.c + CanMotor.c */
 
 #if RC_INPUT_USE_UKF
 static UKF1D_t g_RcInputUkf = {0};
@@ -82,9 +88,9 @@ static UKF1D_t g_RcInputUkf = {0};
 
 static const RcDebug3508MotorInfo_t g_RcDebug3508PrimaryMotorInfo =
 #if ENABLE_RC_DEBUG_3508_STORE_RIGHT
-    {RM_3508_STORE_RIGHT, RightStoreTop, LimitStore};
+    {RM_3508_STORE_RIGHT, STORE3508_RIGHT_POS_MIN_DEG, STORE3508_RIGHT_POS_MAX_DEG};
 #else
-    {RM_3508_STORE_LEFT, -LimitStore, LeftStoreTop};
+    {RM_3508_STORE_LEFT, STORE3508_LEFT_POS_MIN_DEG, STORE3508_LEFT_POS_MAX_DEG};
 #endif
 
 static float NormalizeCenterStick(int16_t raw);
@@ -115,6 +121,7 @@ void IA6BTask_Init(void)
     g_last_ibus_tick = 0U;
     g_prev_desired_speed_rpm_3508 = 0.0f;
     g_prev_desired_pos_step_deg = 0.0f;
+    g_prev_preview_desired_pos_step_deg = 0.0f;
     g_prev_desired_speed_rpm_6020 = 0.0f;
     g_prev_desired_pos_step_deg_6020 = 0.0f;
     g_RcDebug3508PosTargetInitialized = 0U;
@@ -122,14 +129,15 @@ void IA6BTask_Init(void)
 
     g_RcDebug3508SpeedStepPerFrame = LOAD3508_SPEED_STEP_MIN;
     g_RcDebug3508PosStepPerFrame = LOAD3508_POS_STEP_MIN;
+    g_RcDebug3508PreviewStepPosDeg = 0.0f;
+    g_RcDebug3508PreviewPosStepPerFrame = LOAD3508_POS_STEP_MIN;
+    g_RcDebug3508PreviewStickNorm = 0.0f;
+    g_RcDebug3508PreviewSwbState = 0;
     g_RcDebug2006PosStepPerFrame = LOAD2006_SPEED_STEP_MIN;
     g_RcDebug6020SpeedStepPerFrame = LOAD6020_SPEED_STEP_MIN;
     g_RcDebug6020PosStepPerFrame = LOAD6020_POS_STEP_MIN;
     g_RcDebug2006TargetPosDeg = 0.0f;
-    PID_Init(&g_RcDebug3508SyncPid, PID_POSITION,
-             LOAD3508_SYNC_PID_KP, LOAD3508_SYNC_PID_KI, LOAD3508_SYNC_PID_KD, LOAD3508_SYNC_PID_KF,
-             LOAD3508_SYNC_PID_MAX_OUT, LOAD3508_SYNC_PID_MIN_OUT, LOAD3508_SYNC_PID_MAX_IOUT);
-    PID_Clear(&g_RcDebug3508SyncPid);
+    /* 同步 PID 的 Init/Clear 已移至 CanMotor.c:MotorRegister → RM_Motor_InitStoreSyncPid */
 
 #if ENABLE_RC_DEBUG_3508
     g_RcDebug3508TargetPosDeg = 0.0f;
@@ -161,6 +169,7 @@ void IA6BTask_ProcessAndControl(void)
                 ((HAL_GetTick() - g_last_ibus_tick) <= IBUS_LOST_TIMEOUT_MS);
 
     g_RcDebugSwbState = Channel[4];
+    g_RcDebug3508PreviewSwbState = g_RcDebugSwbState;
     rc_enabled_3508 = rc_online && (g_RcDebugSwbState == 0);
     rc_enabled_2006 = rc_online;
     rc_enabled_6020 = rc_online;
@@ -181,6 +190,52 @@ void IA6BTask_ProcessAndControl(void)
 #else
     g_RcDebug3508UkfCovP = 0.0f;
 #endif
+
+    if (rc_online)
+    {
+        float preview_stick_norm = 0.0f;
+        if (g_RcDebug3508Raw >= 900 && g_RcDebug3508Raw <= 2100)
+        {
+            preview_stick_norm = NormalizeCenterStick(g_RcDebug3508Raw);
+        }
+        g_RcDebug3508PreviewStickNorm = preview_stick_norm;
+
+        g_RcDebug3508PreviewDesiredPosStepDeg = preview_stick_norm * LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME;
+        if (ibus_updated)
+        {
+            float preview_tracking_error_pos = g_RcDebug3508PreviewDesiredPosStepDeg - g_RcDebug3508PreviewStepPosDeg;
+            if (preview_tracking_error_pos < 0.0f)
+            {
+                preview_tracking_error_pos = -preview_tracking_error_pos;
+            }
+            g_RcDebug3508PreviewPosStepPerFrame = ComputeAdaptiveStep(g_RcDebug3508PreviewDesiredPosStepDeg,
+                                                                       g_prev_preview_desired_pos_step_deg,
+                                                                       preview_tracking_error_pos,
+                                                                       LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME,
+                                                                       LOAD3508_POS_STEP_MIN,
+                                                                       LOAD3508_POS_STEP_MAX,
+                                                                       LOAD3508_POS_STEP_SENSITIVITY);
+        }
+
+        g_RcDebug3508PreviewStepPosDeg = StepToward(g_RcDebug3508PreviewStepPosDeg,
+                                                    g_RcDebug3508PreviewDesiredPosStepDeg,
+                                                    g_RcDebug3508PreviewPosStepPerFrame);
+        g_RcDebug3508PreviewStepPosDeg = ClampFloat(g_RcDebug3508PreviewStepPosDeg,
+                                                    -LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME,
+                                                    LOAD3508_POS_STEP_CMD_MAX_DEG_PER_FRAME);
+        if (ibus_updated)
+        {
+            g_prev_preview_desired_pos_step_deg = g_RcDebug3508PreviewDesiredPosStepDeg;
+        }
+    }
+    else
+    {
+        g_RcDebug3508PreviewDesiredPosStepDeg = 0.0f;
+        g_RcDebug3508PreviewStickNorm = 0.0f;
+        g_RcDebug3508PreviewStepPosDeg = 0.0f;
+        g_RcDebug3508PreviewPosStepPerFrame = LOAD3508_POS_STEP_MIN;
+        g_prev_preview_desired_pos_step_deg = 0.0f;
+    }
 
     if (rc_enabled_3508)
     {
@@ -422,7 +477,8 @@ static void RC3508ResetStates(void)
     g_RcDebug3508RightTargetPosDeg = 0.0f;
     g_RcDebug3508SyncErrorDeg = 0.0f;
     g_RcDebug3508SyncPidOutputDeg = 0.0f;
-    PID_Clear(&g_RcDebug3508SyncPid);
+    /* 同步 PID 本体在 MotorRegister → RM_Motor_InitStoreSyncPid 里已经 Clear，
+     * 本 TU 只做观测值清零。*/
 }
 
 static void RC2006ResetStates(void)
@@ -464,6 +520,10 @@ static float GetMotorRelativePosDeg(can_motor_cfg motor_id)
     if (motor == NULL)
     {
         return 0.0f;
+    }
+    if ((motor_id == RM_3508_STORE_LEFT) || (motor_id == RM_3508_STORE_RIGHT))
+    {
+        return motor->motor_data.solved_data[3];
     }
     return motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle;
 }
@@ -552,17 +612,16 @@ static void Update3508CascadeTargets(float stick_norm, bool ibus_updated)
                                            LOAD3508_BOTH_TARGET_MIN_DEG,
                                            LOAD3508_BOTH_TARGET_MAX_DEG);
 
-    g_RcDebug3508SyncErrorDeg = g_RcDebug3508LeftPosDeg + g_RcDebug3508RightPosDeg;
-    g_RcDebug3508SyncPidOutputDeg = PID_Calculate(&g_RcDebug3508SyncPid, 0.0f, g_RcDebug3508SyncErrorDeg);
-    g_RcDebug3508SyncPidOutputDeg = ClampFloat(g_RcDebug3508SyncPidOutputDeg,
-                                               -LOAD3508_SYNC_PID_MAX_OUT,
-                                               LOAD3508_SYNC_PID_MAX_OUT);
+    /* BOTH 模式：左侧目标镜像为负，用 (LeftPos, -RightPos) 让内部 (L − (−R))=L+R 达到原语义。 */
+    float sync_correction = RM_Motor_UpdateStoreSync(g_RcDebug3508LeftPosDeg, -g_RcDebug3508RightPosDeg);
+    g_RcDebug3508SyncErrorDeg = g_RmStoreSyncErrorDeg;
+    g_RcDebug3508SyncPidOutputDeg = g_RmStoreSyncPidOutputDeg;
 
     /* 左侧目标为镜像负值，右侧目标为正值；同步 PID 输出在此基础上做差分补偿。 */
-    g_RcDebug3508LeftTargetPosDeg = ClampFloat(-g_RcDebug3508TargetPosDeg + g_RcDebug3508SyncPidOutputDeg,
+    g_RcDebug3508LeftTargetPosDeg = ClampFloat(-g_RcDebug3508TargetPosDeg + sync_correction,
                                                -LimitStore,
                                                LeftStoreTop);
-    g_RcDebug3508RightTargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg - g_RcDebug3508SyncPidOutputDeg,
+    g_RcDebug3508RightTargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg - sync_correction,
                                                 RightStoreTop,
                                                 LimitStore);
 #elif ENABLE_RC_DEBUG_3508_STORE_LEFT
@@ -570,7 +629,10 @@ static void Update3508CascadeTargets(float stick_norm, bool ibus_updated)
     g_RcDebug3508TargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg,
                                            g_RcDebug3508PrimaryMotorInfo.min_pos_deg,
                                            g_RcDebug3508PrimaryMotorInfo.max_pos_deg);
+
+    /* base 目标下发给左右；差分修正由 DefaultTask_Control3508 在下发 PID 前做。 */
     g_RcDebug3508LeftTargetPosDeg = g_RcDebug3508TargetPosDeg;
+    g_RcDebug3508RightTargetPosDeg = g_RcDebug3508TargetPosDeg;
 #elif ENABLE_RC_DEBUG_3508_STORE_RIGHT
     g_RcDebug3508TargetPosDeg += g_RcDebug3508StepPosDeg;
     g_RcDebug3508TargetPosDeg = ClampFloat(g_RcDebug3508TargetPosDeg,

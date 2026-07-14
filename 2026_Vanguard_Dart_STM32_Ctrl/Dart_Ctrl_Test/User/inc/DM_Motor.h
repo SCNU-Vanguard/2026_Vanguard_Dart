@@ -129,10 +129,10 @@ typedef struct _DM_MotorClass
     void (*calculate)(struct _MotorTypeDef *self);
 
     /// @brief 发送电机控制数据
-    uint8_t (*send_control)(struct _MotorTypeDef *self, CAN_TxRetryMode retry_mode);
+    uint8_t (*send_control)(struct _MotorTypeDef *self);
 
     /// @brief 电机数据刷新函数(只刷新数据)
-    void (*refresh_data)(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
+    void (*refresh_data)(can_motor_cfg motor_cfg);
 
 } DM_MotorClass_t;
 #pragma pack(pop)
@@ -225,11 +225,6 @@ void DM_Motor_Create(MotorTypeDef *motor, const DM_MotorClass_t *motor_class, ui
 /// @note 等同于 motor->motor_class->calculate(motor)
 void DM_Motor_Calculate(MotorTypeDef *motor);
 
-/// @brief 调用电机的发送控制函数（通过类虚函数表）
-/// @param motor 电机结构体指针
-/// @return 发送成功返回1，失败返回0
-uint8_t DM_Motor_SendControl(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
-
 /// @brief 获取电机所属的类指针
 /// @param motor 电机结构体指针
 /// @return 电机类指针，失败返回NULL
@@ -258,6 +253,33 @@ void DM_Motor_SetConfig(MotorTypeDef *motor, const DM_MotorConfig_t *config);
 /// @param motor 电机结构体指针
 /// @return 配置指针，失败返回NULL
 DM_MotorConfig_t *DM_Motor_GetConfig(MotorTypeDef *motor);
+
+/// @brief 配置DM电机串级PID
+/// @param motor 电机结构体指针
+/// @param outer_p/i/d/f 外环PID参数
+/// @param inner_p/i/d/f 内环PID参数
+/// @param outer_max_out 外环输出上限
+/// @param outer_min_out 外环输出下限
+/// @param outer_max_iout 外环积分限幅
+/// @param inner_max_out 内环输出上限
+/// @param inner_min_out 内环输出下限
+/// @param inner_max_iout 内环积分限幅
+void DM_Motor_SetCascadePID(MotorTypeDef *motor,
+                            float outer_p, float outer_i, float outer_d, float outer_f,
+                            float inner_p, float inner_i, float inner_d, float inner_f,
+                            float outer_max_out, float outer_min_out, float outer_max_iout,
+                            float inner_max_out, float inner_min_out, float inner_max_iout);
+
+/// @brief 配置DM电机单环速度PID
+/// @param motor 电机结构体指针
+/// @param mode PID模式 (PID_POSITION 或 PID_DELTA)
+/// @param p/i/d/f PID参数
+/// @param max_out 输出上限
+/// @param min_out 输出下限
+/// @param max_iout 积分限幅
+void DM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
+                          float p, float i, float d, float f,
+                          float max_out, float min_out, float max_iout);
 
 /// @brief 设置DM电机KP参数
 /// @param motor 电机结构体指针
@@ -312,27 +334,27 @@ float DM_Motor_GetTorqueFF(MotorTypeDef *motor);
 /// @brief 用于使能达妙电机
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorEnable(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
+uint8_t DM_MotorEnable(can_motor_cfg motor_cfg);
 
 /// @brief 用于失能达妙电机
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_MotorDisable(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
+uint8_t DM_MotorDisable(can_motor_cfg motor_cfg);
 
 /// @brief 用于使能达妙电机
 /// @param motor 电机结构体指针
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_Motor_Enable(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
+uint8_t DM_Motor_Enable(MotorTypeDef *motor);
 
 /// @brief 用于失能达妙电机
 /// @param motor 电机结构体指针
 /// @return 1：发送成功，0：发送失败
-uint8_t DM_Motor_Disable(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
+uint8_t DM_Motor_Disable(MotorTypeDef *motor);
 
 /// @brief 设置达妙电机发送的数据
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
 /// @param data 数据所在数组的指针
-void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode retry_mode);
+void DM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data);
 
 /// @brief DM电机的解算
 /// @param motor 电机结构体指针
@@ -348,7 +370,7 @@ void DM_MOTOR_CALCU(MotorTypeDef *motor);
 /// @param TargetPos 目标位置
 /// @param TargetVel 目标速度
 /// @param workmode  达妙电机的工作模式
-void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, DM_WorkMode workmode, CAN_TxRetryMode retry_mode);
+void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, float TargetTorque, DM_WorkMode workmode);
 
 /// @brief DM电机MIT模式控制
 /// @param motor 电机结构体指针
@@ -361,8 +383,13 @@ void DmMotorSendCfg(can_motor_cfg motor_cfg, float TargetPos, float TargetVel, D
 /// @param target 目标值
 void DmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 
+void DmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm);
+
 /// @brief 电机数据刷新函数(只刷新数据)
 /// @param motor_cfg 电机配置枚举值 (can_motor_cfg)
-void DM_Motor_RefreshData(can_motor_cfg motor_cfg, CAN_TxRetryMode retry_mode);
+void DM_Motor_RefreshData(can_motor_cfg motor_cfg);
+
+bool DM_Motor_Is3519StallProtected(void);
+void DM_Motor_Clear3519StallProtection(void);
 
 #endif

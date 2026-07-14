@@ -1,33 +1,31 @@
-#ifndef __USER_TASK_H_
-#define __USER_TASK_H_
+#ifndef __USER_TASK_H_ /* 按 __USER_TASK_H_ 选择编译分支。 */
+#define __USER_TASK_H_ /* 定义 __USER_TASK_H_。 */
 
 #include "main.h"
 #include "tim.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "cmsis_os.h"
-#include "event_groups.h" // ARM.FreeRTOS::RTOS:Event Groups
-#include "semphr.h"       // ARM.FreeRTOS::RTOS:Core
+#include "event_groups.h"
+#include "semphr.h"
 #include "queue.h"
 #include "stream_buffer.h"
-
 #include "config.h"
 #include "bsp_dwt.h"
 #include "bsp_can.h"
 #include "bsp_uart.h"
 #include "bsp_pwr.h"
-
 #include "IA6B.h"
 #include "motor_algrothim.h"
 #include "referee.h"
 #include "MotorControlTask.h"
 #include "FireControl.h"
+#include "SoftwareWatchdog.h"
 #include <string.h>
 #include "HX06L.h"
 #include "CanMotor.h"
 #include "RM_Motor.h"
 #include "DM_Motor.h"
-
 #include "ControlState.h"
 #include "StateSetFunc.h"
 #include "StoreEnergyTaskFunc.h"
@@ -35,139 +33,101 @@
 #include "RefereeTaskFunc.h"
 
 // 拉簧储能任务
-#if 0
-osThreadId_t StoreEnergyTaskHandle;
-const osThreadAttr_t StoreEnergyTask_attributes = {
-    .name = "StoreEnergyTask",
-    .stack_size = 512 * 4,
-    .priority = (osPriority_t)osPriorityNormal1,
+#if 0 /* 按 0 选择编译分支。 */
+osThreadId_t StoreEnergyTaskHandle; /* 保存 StoreEnergyTaskHandle。 */
+const osThreadAttr_t StoreEnergyTask_attributes = { /* 初始化 StoreEnergyTask_attributes。 */
+    .name = "StoreEnergyTask", /* 配置 name。 */
+    .stack_size = 512 * 4, /* 配置 stack_size。 */
+    .priority = (osPriority_t)osPriorityNormal1, /* 配置 priority。 */
 };
 
 // 换弹任务
-osThreadId_t LoadTaskHandle;
-const osThreadAttr_t LoadTask_attributes = {
-    .name = "LoadTask",
-    .stack_size = 256 * 4,
-    .priority = (osPriority_t)osPriorityBelowNormal7,
+osThreadId_t LoadTaskHandle; /* 保存 LoadTaskHandle。 */
+const osThreadAttr_t LoadTask_attributes = { /* 初始化 LoadTask_attributes。 */
+    .name = "LoadTask", /* 配置 name。 */
+    .stack_size = 256 * 4, /* 配置 stack_size。 */
+    .priority = (osPriority_t)osPriorityBelowNormal7, /* 配置 priority。 */
 };
 
 // 飞镖状态设置(设置Yaw和射程)
-osThreadId_t StateSetTaskHandle;
-const osThreadAttr_t StateSetTask_attributes = {
-    .name = "StateSetTask",
-    .stack_size = 512 * 4,
-    .priority = (osPriority_t)osPriorityNormal,
+osThreadId_t StateSetTaskHandle; /* 保存 StateSetTaskHandle。 */
+const osThreadAttr_t StateSetTask_attributes = { /* 初始化 StateSetTask_attributes。 */
+    .name = "StateSetTask", /* 配置 name。 */
+    .stack_size = 512 * 4, /* 配置 stack_size。 */
+    .priority = (osPriority_t)osPriorityNormal, /* 配置 priority。 */
 };
 
 // 裁判系统轮询解析任务
-osThreadId_t RefereeTaskHandle;
-const osThreadAttr_t RefereeTask_attributes = {
-    .name = "RefereeTask",
-    .stack_size = 256 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
+osThreadId_t RefereeTaskHandle; /* 保存 RefereeTaskHandle。 */
+const osThreadAttr_t RefereeTask_attributes = { /* 初始化 RefereeTask_attributes。 */
+    .name = "RefereeTask", /* 配置 name。 */
+    .stack_size = 256 * 4, /* 配置 stack_size。 */
+    .priority = (osPriority_t)osPriorityAboveNormal, /* 配置 priority。 */
 };
 
-// 3508单独控制任务
-osThreadId_t g_3508_CtrlHandle;
-const osThreadAttr_t Ctrl_3508_Task_attributes = {
-    .name = "3508CtrlTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
+// 统一电机控制任务（原 3508/2006/StoreSync/6020 四个塌合为一）
+osThreadId_t g_MotorCtrlHandle; /* 保存 g_MotorCtrlHandle。 */
+const osThreadAttr_t MotorCtrl_Task_attributes = { /* 初始化 MotorCtrl_Task_attributes。 */
+    .name = "MotorCtrlTask", /* 配置 name。 */
+    .stack_size = 512 * 4, /* 配置 stack_size。 */
+    .priority = (osPriority_t)osPriorityAboveNormal, /* 配置 priority。 */
 };
+#endif /* 结束条件编译。 */
 
-// 2006单独控制任务
-osThreadId_t g_2006_CtrlHandle;
-const osThreadAttr_t Ctrl_2006_Task_attributes = {
-    .name = "2006CtrlTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
-};
-
-osThreadId_t g_LeftStore_CtrlHandle;
-const osThreadAttr_t Ctrl_Left_Store_Task_attributes = {
-    .name = "LStoreCtrlTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
-};
-
-osThreadId_t g_RightStore_CtrlHandle;
-const osThreadAttr_t Ctrl_Right_Store_Task_attributes = {
-    .name = "RStoreCtrlTask",
-    .stack_size = 128 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
-};
-
-// 6020单独控制任务
-osThreadId_t g_6020_CtrlHandle;
-const osThreadAttr_t Ctrl_6020_Task_attributes = {
-    .name = "6020CtrlTask",
-    .stack_size = 64 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal,
-};
-#endif
-
-extern osThreadId_t StoreEnergyTaskHandle;
-extern const osThreadAttr_t StoreEnergyTask_attributes;
-extern osThreadId_t LoadTaskHandle;
-extern const osThreadAttr_t LoadTask_attributes;
-extern osThreadId_t StateSetTaskHandle;
-extern const osThreadAttr_t StateSetTask_attributes;
-extern osThreadId_t RefereeTaskHandle;
-extern const osThreadAttr_t RefereeTask_attributes;
-extern osThreadId_t g_3508_CtrlHandle;
-extern const osThreadAttr_t Ctrl_3508_Task_attributes;
-extern osThreadId_t g_2006_CtrlHandle;
-extern const osThreadAttr_t Ctrl_2006_Task_attributes;
-extern osThreadId_t g_LeftStore_CtrlHandle;
-extern const osThreadAttr_t Ctrl_Left_Store_Task_attributes;
-extern osThreadId_t g_RightStore_CtrlHandle;
-extern const osThreadAttr_t Ctrl_Right_Store_Task_attributes;
-extern osThreadId_t g_6020_CtrlHandle;
-extern const osThreadAttr_t Ctrl_6020_Task_attributes;
-typedef enum
+extern osThreadId_t StoreEnergyTaskHandle; /* 声明外部变量 StoreEnergyTaskHandle。 */
+extern const osThreadAttr_t StoreEnergyTask_attributes; /* 声明外部变量 StoreEnergyTask_attributes。 */
+extern osThreadId_t LoadTaskHandle; /* 声明外部变量 LoadTaskHandle。 */
+extern const osThreadAttr_t LoadTask_attributes; /* 声明外部变量 LoadTask_attributes。 */
+extern osThreadId_t StateSetTaskHandle; /* 声明外部变量 StateSetTaskHandle。 */
+extern const osThreadAttr_t StateSetTask_attributes; /* 声明外部变量 StateSetTask_attributes。 */
+extern osThreadId_t RefereeTaskHandle; /* 声明外部变量 RefereeTaskHandle。 */
+extern const osThreadAttr_t RefereeTask_attributes; /* 声明外部变量 RefereeTask_attributes。 */
+extern osThreadId_t g_MotorCtrlHandle; /* 声明外部变量 g_MotorCtrlHandle。 */
+extern const osThreadAttr_t MotorCtrl_Task_attributes; /* 声明外部变量 MotorCtrl_Task_attributes。 */
+typedef enum /* 开始定义数据类型。 */
 {
-    STORE_FLOW_WAIT_SETUP = 0,
-    STORE_FLOW_READY,
-    STORE_FLOW_STORING,
-    STORE_FLOW_WAIT_SHOOT_PERMISSION,
-    STORE_FLOW_FIRING,
-    STORE_FLOW_SAFE_RETURN,
-} StoreEnergyFlowState_t;
+    STORE_FLOW_WAIT_SETUP = 0, /* 定义 STORE_FLOW_WAIT_SETUP 枚举项。 */
+    STORE_FLOW_READY, /* 定义 STORE_FLOW_READY 枚举项。 */
+    STORE_FLOW_STORING, /* 定义 STORE_FLOW_STORING 枚举项。 */
+    STORE_FLOW_WAIT_SHOOT_PERMISSION, /* 定义 STORE_FLOW_WAIT_SHOOT_PERMISSION 枚举项。 */
+    STORE_FLOW_FIRING, /* 定义 STORE_FLOW_FIRING 枚举项。 */
+    STORE_FLOW_SAFE_RETURN, /* 定义 STORE_FLOW_SAFE_RETURN 枚举项。 */
+} StoreEnergyFlowState_t; /* 结束 StoreEnergyFlowState_t 类型定义。 */
 
-#define LOAD_REQUEST_MAGIC 0x4C445254UL
-#define LOAD_REQUEST_PRIORITY_NORMAL 80U
-#define LOAD_REQUEST_MAX_AGE_MS 1000U
-#define LOAD_REQUEST_DONE_TIMEOUT_MS 15000U
+#define LOAD_REQUEST_MAGIC 0x4C445254UL /* 定义 LOAD_REQUEST_MAGIC。 */
+#define LOAD_REQUEST_PRIORITY_NORMAL 80U /* 定义 LOAD_REQUEST_PRIORITY_NORMAL。 */
+#define LOAD_REQUEST_MAX_AGE_MS 1000U /* 定义 LOAD_REQUEST_MAX_AGE_MS。 */
+#define LOAD_REQUEST_DONE_TIMEOUT_MS 15000U /* 定义 LOAD_REQUEST_DONE_TIMEOUT_MS。 */
 
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-    LOAD_RESULT_NONE = 0,
-    LOAD_RESULT_ACCEPTED,
-    LOAD_RESULT_DONE,
-    LOAD_RESULT_FAILED,
-    LOAD_RESULT_ABORTED,
-} LoadResult_e;
+    LOAD_RESULT_NONE = 0, /* 定义 LOAD_RESULT_NONE 枚举项。 */
+    LOAD_RESULT_ACCEPTED, /* 定义 LOAD_RESULT_ACCEPTED 枚举项。 */
+    LOAD_RESULT_DONE, /* 定义 LOAD_RESULT_DONE 枚举项。 */
+    LOAD_RESULT_FAILED, /* 定义 LOAD_RESULT_FAILED 枚举项。 */
+    LOAD_RESULT_ABORTED, /* 定义 LOAD_RESULT_ABORTED 枚举项。 */
+} LoadResult_e; /* 结束 LoadResult_e 类型定义。 */
 
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
-    uint32_t magic;
-    uint32_t seq;
-    uint32_t timestamp_ms;
-    uint8_t dart_num;
-    uint8_t priority;
-    uint16_t checksum;
-} LoadRequest_t;
+    uint32_t magic; /* 保存 magic。 */
+    uint32_t seq; /* 保存 seq。 */
+    uint32_t timestamp_ms; /* 保存 timestamp_ms。 */
+    uint8_t dart_num; /* 保存 dart_num。 */
+    uint8_t priority; /* 保存 priority。 */
+    uint16_t checksum; /* 保存 checksum。 */
+} LoadRequest_t; /* 结束 LoadRequest_t 类型定义。 */
 
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
-    uint32_t seq;
-    LoadResult_e result;
-} LoadAck_t;
+    uint32_t seq; /* 保存 seq。 */
+    LoadResult_e result; /* 保存 result。 */
+} LoadAck_t; /* 结束 LoadAck_t 类型定义。 */
 
 // 模块驱动初始化
-void Module_Init(void);
+void Module_Init(void); /* 声明 Module_Init 接口。 */
 
 // 任务初始化
-void TaskInitFunc(void);
+void TaskInitFunc(void); /* 声明 TaskInitFunc 接口。 */
 
-#endif
+#endif /* 结束条件编译。 */

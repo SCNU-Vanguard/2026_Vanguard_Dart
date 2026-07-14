@@ -28,6 +28,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "UserTask.h"
+#include "SoftwareWatchdog.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -104,7 +106,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // 对各个外设进行初始化
-  Module_Init();
+  Module_Init(); /* 调用 Module_Init。 */
 
   /* USER CODE END 2 */
 
@@ -119,7 +121,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
+  while (1) /* 持续执行当前任务。 */
   {
 
     /* USER CODE END WHILE */
@@ -200,6 +202,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   if (htim->Instance == TIM4)
   {
     HAL_IncTick();
+    SoftwareWatchdog_Tick1msFromISR(); // 每 1 ms 统一计数并检查首次超时
   }
   /* USER CODE BEGIN Callback 1 */
 
@@ -214,8 +217,8 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
+  __disable_irq(); /* 调用 __disable_irq。 */
+  while (1) /* 持续执行当前任务。 */
   {
   }
   /* USER CODE END Error_Handler_Debug */

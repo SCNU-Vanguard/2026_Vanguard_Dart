@@ -1,5 +1,5 @@
-#ifndef __BSP_CAN_H_
-#define __BSP_CAN_H_
+#ifndef __BSP_CAN_H_ /* 按 __BSP_CAN_H_ 选择编译分支。 */
+#define __BSP_CAN_H_ /* 定义 __BSP_CAN_H_。 */
 
 #include "main.h"
 #include "can.h"
@@ -14,34 +14,34 @@
  * @param: Result : 结果存储的变量
  * @todo:  也许还可以再优化
  ******************************************************/
-#define PreserveBit(Buffer, Length, Result)                                                                                                   \
-	do                                                                                                                                        \
+#define PreserveBit(Buffer, Length, Result) /* 继续当前语句。 */ \
+	do /* 开始宏封装语句。 */ \
 	{                                                                                                                                         \
-		uint16_t temp = 0x0000;                                                                                                               \
-		for (uint8_t cnt = 0; cnt < Length; cnt++)                                                                                            \
+		uint16_t temp = 0x0000; /* 完成本行操作。 */ \
+		for (uint8_t cnt = 0; cnt < Length; cnt++) /* 继续更新 cnt。 */ \
 		{                                                                                                                                     \
-			uint16_t Mask = ((0x0000 >> ((*((volatile uint8_t *)(Buffer + cnt)) - 1))) + 1) << ((*((volatile uint8_t *)(Buffer + cnt)) - 1)); \
-			temp += Mask;                                                                                                                     \
+			uint16_t Mask = ((0x0000 >> ((*((volatile uint8_t *)(Buffer + cnt)) - 1))) + 1) << ((*((volatile uint8_t *)(Buffer + cnt)) - 1)); /* 完成本行操作。 */ \
+			temp += Mask; /* 完成本行操作。 */ \
 		}                                                                                                                                     \
-		Result = temp;                                                                                                                        \
-	} while (0)
+		Result = temp; /* 完成本行操作。 */ \
+	} while (0) /* 结束宏封装语句。 */
 
-#define g_CanMotorNum 5
+#define g_CanMotorNum 5 /* 定义 g_CanMotorNum。 */
 
 // fifox register
 // x could be 0 or 1
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-	fifo0 = CAN_FILTER_FIFO0,
-	fifo1 = CAN_FILTER_FIFO1,
-} CAN_FIFO;
+	fifo0 = CAN_FILTER_FIFO0, /* 传入下一项参数或数据。 */
+	fifo1 = CAN_FILTER_FIFO1, /* 传入下一项参数或数据。 */
+} CAN_FIFO; /* 结束 CAN_FIFO 类型定义。 */
 
 /******************************************
  *简介: CAN初始化
  *参数: canHandle: CAN句柄
  *返回: 无
  ******************************************/
-uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum, uint8_t MaskStatus);
+uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum, uint8_t MaskStatus); /* 声明 CAN_Init 接口。 */
 
 /******************************************
  *简介: CAN发送数据
@@ -51,7 +51,7 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
  *返回: 0: 发送失败
  *      1: 发送成功
  ******************************************/
-uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data);
+uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data); /* 声明 CAN_SendData 接口。 */
 
 /// @brief 目前使用这个函数暴露接口方便简单地配置想要接收的CAN设备
 /// @param canHandle CAN句柄
@@ -59,6 +59,6 @@ uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader
 /// @param Mask 给一个想要过滤的位的数组
 /// @param FliterNum 过滤器的位号
 /// @param fifo fifo的位号
-void FliterIdCfg_Init(CAN_HandleTypeDef *canHandle, uint16_t *ID, uint16_t *Mask, uint8_t FliterNum, uint8_t fifo);
+void FliterIdCfg_Init(CAN_HandleTypeDef *canHandle, uint16_t *ID, uint16_t *Mask, uint8_t FliterNum, uint8_t fifo); /* 声明 FliterIdCfg_Init 接口。 */
 
-#endif
+#endif /* 结束条件编译。 */

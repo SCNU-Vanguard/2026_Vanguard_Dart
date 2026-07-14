@@ -5,6 +5,7 @@
 
 #include "RM_Motor.h"
 #include "CanMotor.h"
+#include "config.h"
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
@@ -13,6 +14,26 @@ extern MotorManager_t MotorManager;
 extern SemaphoreHandle_t g_xRmBufferMutexHandle; // 互斥访问
 
 static float s_rm_motor_pid_output = 0.0f;
+float g_RmDebugStoreLeftPosDeg = 0.0f;
+float g_RmDebugStoreRightPosDeg = 0.0f;
+float g_RmDebugStoreLeftPidOutput = 0.0f;
+float g_RmDebugStoreRightPidOutput = 0.0f;
+int16_t g_RmDebugStoreLeftFinalCurrent = 0;
+int16_t g_RmDebugStoreRightFinalCurrent = 0;
+uint8_t g_RmDebugStoreLeftLimitBlocked = 0U;
+uint8_t g_RmDebugStoreRightLimitBlocked = 0U;
+float g_testVariable = 0.0f;
+
+/* 左右蓄力 3508 位置同步 PID：由 MotorRegister 初始化。*/
+static PID_t s_rm_store_sync_pid;
+static uint8_t s_rm_store_sync_pid_inited = 0U;
+float g_RmStoreSyncErrorDeg = 0.0f;
+float g_RmStoreSyncPidOutputDeg = 0.0f;
+
+float g_RmDebugLoadCurrentFilt = 0.0f;
+uint32_t g_RmDebugLoadOverCurMs = 0U;
+uint32_t g_RmDebugLoadClearMs = 0U;
+uint8_t g_RmDebugLoadStallTripped = 0U;
 
 #define CtrlMotorLen 8
 #define ECD_TO_DEGREE 0.04394531250f // (360.0f / 8192.0f)
@@ -30,7 +51,6 @@ static void RM_M3508_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void RM_M3508_CalculateInternal(MotorTypeDef *motor);
 static void RM_GM6020_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void RM_GM6020_CalculateInternal(MotorTypeDef *motor);
-static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor);
 static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *motor);
 static inline int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output);
 static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle);
@@ -350,6 +370,7 @@ static inline void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 /// @param current_inv 电机对应的减速比
 static inline void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv)
 {
+    // 暂存数据
     MotorSolvedData_t *data = &motor->motor_data;
     uint8_t *rx = motor->ReceiveMotorData;
 
@@ -357,11 +378,18 @@ static inline void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_i
     int16_t speed_rpm = (int16_t)((((uint16_t)rx[2]) << 8) | rx[3]);
     int16_t current_raw = (int16_t)((((uint16_t)rx[4]) << 8) | rx[5]);
 
+    // 确认是否初始化完成
     if (data->init_flag == 0U)
     {
         data->last_ecd = ecd;
         data->offset_ecd = ecd;
         data->offset_ecd_angle = ecd * ECD_TO_DEGREE;
+        // offset_ecd_angle 要与 solved_data[3] 处在同一坐标系，否则
+        // "solved_data[3] - offset_ecd_angle" 会跨坐标相减。
+        if (motor->config.reverse != 0U)
+        {
+            data->offset_ecd_angle = -data->offset_ecd_angle;
+        }
         data->init_flag = 1U;
     }
 
@@ -392,9 +420,21 @@ static inline void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_i
     }
 
     data->solved_data[2] = current_raw * current_inv;
-    data->solved_data[3] = data->total_round * 360.0f + data->solved_data[0];
+    data->solved_data[3] = (float)data->total_ecd * ECD_TO_DEGREE;
     data->solved_data[4] = (float)speed_rpm * 0.10472f;
     data->last_speed = data->solved_data[1];
+
+    // reverse=1 时，把上层所见的反馈（角度、速度、电流）统一翻到逻辑坐标，
+    // 后续 PID/限位/死区都按逻辑坐标工作；物理侧的反号只在 RmMotorSendCfg
+    // 把 PID 输出电流再翻回来一次。
+    if (motor->config.reverse != 0U)
+    {
+        data->solved_data[0] = -data->solved_data[0];
+        data->solved_data[1] = -data->solved_data[1];
+        data->solved_data[2] = -data->solved_data[2];
+        data->solved_data[3] = -data->solved_data[3];
+        data->solved_data[4] = -data->solved_data[4];
+    }
 
     if (motor->MotorInf.model == RmM3508)
     {
@@ -475,6 +515,19 @@ void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent)
         TargetCurrent = (int16_t)(-TargetCurrent);
     }
 
+    if (motor_cfg == RM_3508_STORE_LEFT)
+    {
+        g_RmDebugStoreLeftFinalCurrent = TargetCurrent;
+    }
+    else if (motor_cfg == RM_3508_STORE_RIGHT)
+    {
+        g_RmDebugStoreRightFinalCurrent = TargetCurrent;
+    }
+    if (TargetCurrent < 0)
+    {
+        TargetCurrent = (uint16_t)(~(-TargetCurrent));
+    }
+
     uint8_t data[8] = {0};
     data[0] = (uint8_t)((uint16_t)TargetCurrent >> 8);
     data[1] = (uint8_t)TargetCurrent;
@@ -488,10 +541,116 @@ void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent)
 /// @return 四舍五入之后的数值
 static inline int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output)
 {
-    (void)motor_cfg;
-    (void)motor;
-    /* u can add something to handle ur problem here */
-    return (int16_t)pid_output;
+    bool should_block = false;
+    int16_t final_output = (int16_t)pid_output;
+    float output_for_limit = pid_output;
+
+    if (motor == NULL)
+    {
+        return final_output;
+    }
+
+    if (motor_cfg == RM_3508_STORE_LEFT)
+    {
+        float current_pos_deg = motor->motor_data.solved_data[3];
+        g_RmDebugStoreLeftPosDeg = current_pos_deg;
+        g_RmDebugStoreLeftPidOutput = pid_output;
+        should_block = ((current_pos_deg >= STORE3508_LEFT_POS_MAX_DEG) && (output_for_limit > 0.0f)) ||
+                       ((current_pos_deg <= STORE3508_LEFT_POS_MIN_DEG) && (output_for_limit < 0.0f));
+        g_RmDebugStoreLeftLimitBlocked = (uint8_t)should_block;
+    }
+    else if (motor_cfg == RM_3508_STORE_RIGHT)
+    {
+        float current_pos_deg = motor->motor_data.solved_data[3];
+        g_RmDebugStoreRightPosDeg = current_pos_deg;
+        g_RmDebugStoreRightPidOutput = pid_output;
+        should_block = ((current_pos_deg >= STORE3508_RIGHT_POS_MAX_DEG) && (output_for_limit > 0.0f)) ||
+                       ((current_pos_deg <= STORE3508_RIGHT_POS_MIN_DEG) && (output_for_limit < 0.0f));
+        g_RmDebugStoreRightLimitBlocked = (uint8_t)should_block;
+    }
+    else if (motor_cfg == RM_3508_GRIPPER)
+    {
+        // GRIPPER 过流/堵转保护的持久状态。g_RmDebug* 全局量同时作为示波器观测用途。
+        // 当前 RmMotorPID_Calc 只在单一控制任务中周期触发，static + 临界区即可。
+        static uint32_t s_last_tick = 0U;
+        static uint8_t s_tick_init = 0U;
+        static uint8_t s_tripped = 0U;
+
+        uint32_t now = HAL_GetTick();
+        float current_abs = fabsf(motor->motor_data.solved_data[2]);
+
+        taskENTER_CRITICAL();
+        uint32_t dt_ms = 0U;
+        if (s_tick_init == 0U)
+        {
+            s_tick_init = 1U;
+        }
+        else
+        {
+            dt_ms = now - s_last_tick;
+        }
+        s_last_tick = now;
+
+        g_RmDebugLoadCurrentFilt += LOAD3508_OVERCURRENT_FILTER_ALPHA * (current_abs - g_RmDebugLoadCurrentFilt);
+
+        if (s_tripped == 0U)
+        {
+            if (g_RmDebugLoadCurrentFilt >= LOAD3508_STALL_OVERCURRENT_LIMIT_A)
+            {
+                g_RmDebugLoadOverCurMs += dt_ms;
+                if (g_RmDebugLoadOverCurMs >= LOAD3508_STALL_OVERCURRENT_RETURN_MS)
+                {
+                    s_tripped = 1U;
+                    g_RmDebugLoadClearMs = 0U;
+                }
+            }
+            else
+            {
+                g_RmDebugLoadOverCurMs = 0U;
+            }
+        }
+        else
+        {
+            if (g_RmDebugLoadCurrentFilt <= LOAD3508_STALL_OVERCURRENT_CLEAR_A)
+            {
+                g_RmDebugLoadClearMs += dt_ms;
+                if (g_RmDebugLoadClearMs >= LOAD3508_STALL_OVERCURRENT_RETURN_MS)
+                {
+                    s_tripped = 0U;
+                    g_RmDebugLoadOverCurMs = 0U;
+                }
+            }
+            else
+            {
+                g_RmDebugLoadClearMs = 0U;
+            }
+        }
+
+        g_RmDebugLoadStallTripped = s_tripped;
+        uint8_t tripped_snapshot = s_tripped;
+        taskEXIT_CRITICAL();
+
+        if (tripped_snapshot != 0U)
+        {
+            should_block = true;
+        }
+    }
+
+    if (should_block)
+    {
+        if (motor->use_cascade != 0U)
+        {
+            PID_Clear_Integral(&motor->cascade_pid.outer);
+            PID_Clear_Integral(&motor->cascade_pid.inner);
+        }
+        else
+        {
+            PID_Clear_Integral(&motor->inner_pid);
+        }
+        final_output = 0;
+    }
+
+    return final_output;
 }
 
 /// @brief 处理角度环方向问题
@@ -546,6 +705,10 @@ static inline float RM_Motor_ClampFloat(float value, float min, float max)
     return value;
 }
 
+/// @brief PID计算函数
+/// @param motor_cfg 电机对应别名
+/// @param target 电机目标值
+/// @note 电机现在PID目标减小误差(以°为单位)
 void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
@@ -557,7 +720,14 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 
     // 统一使用“相对零点角度”做位置环计算，
     // 这样目标值、限位、死区都在同一套坐标系下。
-    current_pos_deg = motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle;
+    if ((motor_cfg == RM_3508_STORE_LEFT) || (motor_cfg == RM_3508_STORE_RIGHT))
+    {
+        current_pos_deg = motor->motor_data.solved_data[3];
+    }
+    else
+    {
+        current_pos_deg = motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle;
+    }
 
     if (motor->MotorInf.model == RmM3508)
     {
@@ -599,7 +769,14 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
 
     RM_Motor_HandleAngleLoopDirectionChange(motor, target, current_pos_deg);
     MotorSolvedData_t *data = &motor->motor_data;
-    current_pos_deg = data->solved_data[3] - data->offset_ecd_angle; // 更新一下
+    if ((motor_cfg == RM_3508_STORE_LEFT) || (motor_cfg == RM_3508_STORE_RIGHT))
+    {
+        current_pos_deg = data->solved_data[3];
+    }
+    else
+    {
+        current_pos_deg = data->solved_data[3] - data->offset_ecd_angle; // update
+    }
     if (motor->use_cascade != 0U)
     {
         s_rm_motor_pid_output = CASCADE_PID_Calculate(&motor->cascade_pid, target, current_pos_deg, data->solved_data[4]);
@@ -612,6 +789,9 @@ void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
     RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, s_rm_motor_pid_output));
 }
 
+/// @brief 速度环PID调试
+/// @param motor_cfg 电机对应别名
+/// @param target_speed_rpm  目标转速
 void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
@@ -619,9 +799,35 @@ void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
     {
         return;
     }
-
-    s_rm_motor_pid_output = PID_Calculate(&motor->inner_pid, target_speed_rpm, motor->motor_data.solved_data[1]);
+    g_testVariable = motor->motor_data.solved_data[4];
+    s_rm_motor_pid_output = PID_Calculate(&motor->inner_pid, target_speed_rpm, g_testVariable); // 这里调节速度环,但是得先看目标速度如何
     RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, s_rm_motor_pid_output));
+}
+
+/*============================== 双侧蓄力 3508 位置同步 PID ==============================*/
+
+void RM_Motor_InitStoreSyncPid(float kp, float ki, float kd, float kf,
+                               float max_out, float min_out, float max_iout)
+{
+    PID_Init(&s_rm_store_sync_pid, PID_POSITION, kp, ki, kd, kf, max_out, min_out, max_iout);
+    PID_Clear(&s_rm_store_sync_pid);
+    g_RmStoreSyncErrorDeg = 0.0f;
+    g_RmStoreSyncPidOutputDeg = 0.0f;
+    s_rm_store_sync_pid_inited = 1U;
+}
+
+float RM_Motor_UpdateStoreSync(float left_pos_deg, float right_pos_deg)
+{
+    if (s_rm_store_sync_pid_inited == 0U)
+    {
+        g_RmStoreSyncErrorDeg = 0.0f;
+        g_RmStoreSyncPidOutputDeg = 0.0f;
+        return 0.0f;
+    }
+
+    g_RmStoreSyncErrorDeg = left_pos_deg - right_pos_deg;
+    g_RmStoreSyncPidOutputDeg = PID_Calculate(&s_rm_store_sync_pid, 0.0f, g_RmStoreSyncErrorDeg);
+    return g_RmStoreSyncPidOutputDeg;
 }
 
 /// @brief 检查打包帧

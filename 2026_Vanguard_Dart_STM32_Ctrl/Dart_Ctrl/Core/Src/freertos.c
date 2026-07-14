@@ -28,6 +28,7 @@
 #include "UserTask.h"
 #include <stdio.h>
 #include <string.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,8 +49,16 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-static StaticSemaphore_t g_xRmBufferMutexBuffer;
-SemaphoreHandle_t g_xRmBufferMutexHandle;
+static StaticSemaphore_t g_xRmBufferMutexBuffer; /* 保存 g_xRmBufferMutexBuffer。 */
+SemaphoreHandle_t g_xRmBufferMutexHandle; /* 保存 g_xRmBufferMutexHandle。 */
+float g_speed_right_test = 0.0f; /* 初始化 g_speed_right_test。 */
+float g_speed_left_test = 0.0f; /* 初始化 g_speed_left_test。 */
+float g_right_target = 0.0f; /* 初始化 g_right_target。 */
+float g_left_target = 0.0f; /* 初始化 g_left_target。 */
+float g_left_out_output = 0.0f; /* 初始化 g_left_out_output。 */
+float g_right_out_output = 0.0f; /* 初始化 g_right_out_output。 */
+float g_right_inner_test = 0.0f; /* 初始化 g_right_inner_test。 */
+float g_left_inner_test = 0.0f; /* 初始化 g_left_inner_test。 */
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -82,7 +91,7 @@ void MX_FREERTOS_Init(void)
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
-  g_xRmBufferMutexHandle = xSemaphoreCreateMutexStatic(&g_xRmBufferMutexBuffer);
+  g_xRmBufferMutexHandle = xSemaphoreCreateMutexStatic(&g_xRmBufferMutexBuffer); /* 更新 g_xRmBufferMutexHandle。 */
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -105,7 +114,7 @@ void MX_FREERTOS_Init(void)
   /* add threads, ... */
 
   // 飞镖任务初始化
-  TaskInitFunc();
+  TaskInitFunc(); /* 调用 TaskInitFunc。 */
 
   /* USER CODE END RTOS_THREADS */
 
@@ -140,10 +149,22 @@ void StartDefaultTask(void *argument)
   // ServoControlMulti(3, servo_ids, angles, 1000);
 
   /* Infinite loop */
-  for (;;)
+  for (;;) /* 遍历当前数据集合。 */
   {
-    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
-    vTaskDelay(250);
+#if 0
+    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin); /* 调用 HAL_GPIO_TogglePin。 */
+    vTaskDelay(250); /* 调用 vTaskDelay。 */
+#else
+    g_speed_right_test = MotorManager.MotorList[2].motor_data.solved_data[3]; /* 更新 g_speed_right_test。 */
+    g_speed_left_test = MotorManager.MotorList[3].motor_data.solved_data[3]; /* 更新 g_speed_left_test。 */
+    g_right_target = MotorManager.MotorList[2].cascade_pid.outer.target; /* 更新 g_right_target。 */
+    g_left_target = MotorManager.MotorList[3].cascade_pid.outer.target; /* 更新 g_left_target。 */
+    g_left_inner_test = MotorManager.MotorList[3].motor_data.solved_data[4]; /* 更新 g_left_inner_test。 */
+    g_right_inner_test = MotorManager.MotorList[2].motor_data.solved_data[4]; /* 更新 g_right_inner_test。 */
+    g_left_out_output = MotorManager.MotorList[3].cascade_pid.outer.output; /* 更新 g_left_out_output。 */
+    g_right_out_output = MotorManager.MotorList[2].cascade_pid.outer.output; /* 更新 g_right_out_output。 */
+    vTaskDelay(pdMS_TO_TICKS(1)); /* 调用 vTaskDelay。 */
+#endif
   }
   /* USER CODE END StartDefaultTask */
 }

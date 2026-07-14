@@ -1,5 +1,5 @@
-#ifndef __CAN_MOTOR_H_
-#define __CAN_MOTOR_H_
+#ifndef __CAN_MOTOR_H_ /* 按 __CAN_MOTOR_H_ 选择编译分支。 */
+#define __CAN_MOTOR_H_ /* 定义 __CAN_MOTOR_H_。 */
 
 // 通用CAN电机管理层
 // 负责统一管理RM电机和DM电机
@@ -13,18 +13,20 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "config.h"
+#include "SoftwareWatchdog.h"
 
 #define CtrlMotorLen 8 // 电机控制报文长度默认给8
-#define TestUse 0U
+#define TestUse 0U /* 定义 TestUse。 */
 
 // 角度转弧度宏：degree * π/180 ≈ degree * 0.01745329f
-#define DegreeToRad(degree) ((degree) * 0.01745329f)
+#define DegreeToRad(degree) ((degree) * 0.01745329f) /* 定义 DegreeToRad。 */
 
 // 弧度转角度宏：radian * 180/π ≈ radian * 57.29578f
-#define RadToDegree(radian) ((radian) * 57.29578f)
+#define RadToDegree(radian) ((radian) * 57.29578f) /* 定义 RadToDegree。 */
 
 /*============================== 前向声明 ==============================*/
-#pragma pack(push, 1)
+#pragma pack(push, 1) /* 配置编译选项 pack(push, 1)。 */
 struct _RM_MotorClass; // RM电机类前向声明
 struct _DM_MotorClass; // DM电机类前向声明（预留扩展）
 
@@ -32,74 +34,74 @@ struct _DM_MotorClass; // DM电机类前向声明（预留扩展）
 
 /// @brief 电机硬件抽象层结构体
 /// @note 用于解耦驱动层与具体硬件实现，便于移植和测试
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     /// @brief CAN数据发送函数
     /// @param hdr CAN报文头指针
     /// @param data 数据指针
     /// @return 1-成功，0-失败
-    uint8_t (*can_send)(CAN_TxHeaderTypeDef *hdr, uint8_t *data);
+    uint8_t (*can_send)(CAN_TxHeaderTypeDef *hdr, uint8_t *data); /* 调用 uint8_t。 */
 
     /// @brief 延时函数（毫秒）
     /// @param ms 延时时间（毫秒）
-    void (*delay_ms)(uint32_t ms);
-} MotorHAL_t;
-#pragma pack(pop)
+    void (*delay_ms)(uint32_t ms); /* 调用 void。 */
+} MotorHAL_t; /* 结束 MotorHAL_t 类型定义。 */
+#pragma pack(pop) /* 配置编译选项 pack(pop)。 */
 
 /// @brief 获取当前电机HAL接口指针
 /// @return HAL接口指针
-const MotorHAL_t *Motor_GetHAL(void);
+const MotorHAL_t *Motor_GetHAL(void); /* 声明 Motor_GetHAL 接口。 */
 
 /// @brief 设置电机HAL接口（可选，用于测试或自定义硬件）
 /// @param hal HAL接口指针，传NULL恢复默认
-void Motor_SetHAL(const MotorHAL_t *hal);
+void Motor_SetHAL(const MotorHAL_t *hal); /* 声明 Motor_SetHAL 接口。 */
 
 // HAL指针（供内联函数使用）
-extern const MotorHAL_t *g_pMotorHAL;
+extern const MotorHAL_t *g_pMotorHAL; /* 声明外部变量 g_pMotorHAL。 */
 
 /// @brief 获取当前电机HAL接口（内联版本，零开销）
 /// @return HAL接口指针
-static inline const MotorHAL_t *Motor_GetHAL_Fast(void)
+static inline const MotorHAL_t *Motor_GetHAL_Fast(void) /* 实现 Motor_GetHAL_Fast。 */
 {
-    return g_pMotorHAL;
+    return g_pMotorHAL; /* 返回当前计算结果。 */
 }
 
 /*============================== 电机类型枚举 ==============================*/
 
 // 电机品牌
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-    RM_MOTOR_BAND = 0,
-    DM_MOTOR_BAND,
-    CubeMars_MOTOR_BAND
-} can_motor_band;
+    RM_MOTOR_BAND = 0, /* 定义 RM_MOTOR_BAND 枚举项。 */
+    DM_MOTOR_BAND, /* 定义 DM_MOTOR_BAND 枚举项。 */
+    CubeMars_MOTOR_BAND /* 定义 CubeMars_MOTOR_BAND 枚举项。 */
+} can_motor_band; /* 结束 can_motor_band 类型定义。 */
 
 // 电机型号
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-    RmM2006 = 1,
-    RmM3508,
-    RmGM6020,
-    DmS3519,
-    DmJ4310,
-    CmG80
-} can_motor_model;
+    RmM2006 = 1, /* 定义 RmM2006 枚举项。 */
+    RmM3508, /* 定义 RmM3508 枚举项。 */
+    RmGM6020, /* 定义 RmGM6020 枚举项。 */
+    DmS3519, /* 定义 DmS3519 枚举项。 */
+    DmJ4310, /* 定义 DmJ4310 枚举项。 */
+    CmG80 /* 定义 CmG80 枚举项。 */
+} can_motor_model; /* 结束 can_motor_model 类型定义。 */
 
-#pragma pack(push, 1)
-typedef struct
+#pragma pack(push, 1) /* 配置编译选项 pack(push, 1)。 */
+typedef struct /* 开始定义数据类型。 */
 {
-    can_motor_band band;
-    can_motor_model model;
-} motor_inf;
-#pragma pack(pop)
+    can_motor_band band; /* 保存 band。 */
+    can_motor_model model; /* 保存 model。 */
+} motor_inf; /* 结束 motor_inf 类型定义。 */
+#pragma pack(pop) /* 配置编译选项 pack(pop)。 */
 
 // 电机解算数据存储结构体（用于存储反馈解算后的数据）
 // RM电机: [0]单圈角度(°), [1]速度(rpm), [2]电流(A), [3]累计角度(°), [4]速度(rad/s)
 // DM电机: [0]位置(rad/°), [1]速度(rad/s), [2]力矩(N·m), [3]MOS温度(℃), [4]转子温度(℃)
-#define MOTOR_SOLVED_DATA_NUM 8
+#define MOTOR_SOLVED_DATA_NUM 8 /* 定义 MOTOR_SOLVED_DATA_NUM。 */
 
-#pragma pack(push, 1)
-typedef struct
+#pragma pack(push, 1) /* 配置编译选项 pack(push, 1)。 */
+typedef struct /* 开始定义数据类型。 */
 {
     float solved_data[MOTOR_SOLVED_DATA_NUM]; // 解算后的数据数组
 
@@ -120,60 +122,69 @@ typedef struct
     float last_target;        // 上次目标值
     float pre_last_target;    // 上上次目标值
     uint8_t target_init_flag; // 目标值初始化标志（首次调用RmMotorRemoveBias时置1）
-} MotorSolvedData_t;
-#pragma pack(pop)
+} MotorSolvedData_t; /* 结束 MotorSolvedData_t 类型定义。 */
+#pragma pack(pop) /* 配置编译选项 pack(pop)。 */
 
 // CAN线挂载的电机（包含RM和DM电机）
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-    SingleMotorTest = 1,
-    RM_3508_GRIPPER = 1,
-    RM_2006_TRIGGER,
-    RM_3508_STORE_LEFT,
-    RM_3508_STORE_RIGHT,
-    DM_4310_YAW,
-    RM_6020_YAW = 5,
-    DM_3519_STRENTH_LEFT = RM_3508_STORE_LEFT,
-    DM_3519_STRENTH_RIGHT = RM_3508_STORE_RIGHT
-} can_motor_cfg;
+    SingleMotorTest = 1, /* 定义 SingleMotorTest 枚举项。 */
+    RM_3508_GRIPPER = 1, /* 定义 RM_3508_GRIPPER 枚举项。 */
+    RM_2006_TRIGGER, /* 定义 RM_2006_TRIGGER 枚举项。 */
 
-#pragma pack(push, 1)
+#if USE_RM_STORE /* 按 USE_RM_STORE 选择编译分支。 */
+    RM_3508_STORE_RIGHT, /* 定义 RM_3508_STORE_RIGHT 枚举项。 */
+    RM_3508_STORE_LEFT, /* 定义 RM_3508_STORE_LEFT 枚举项。 */
+    DM_3519_STRENTH_RIGHT = RM_3508_STORE_RIGHT, /* 定义 DM_3519_STRENTH_RIGHT 枚举项。 */
+    DM_3519_STRENTH_LEFT = RM_3508_STORE_LEFT, /* 定义 DM_3519_STRENTH_LEFT 枚举项。 */
+#else /* 切换到备用编译分支。 */
+    DM_3519_STRENTH_RIGHT, /* 定义 DM_3519_STRENTH_RIGHT 枚举项。 */
+    DM_3519_STRENTH_LEFT, /* 定义 DM_3519_STRENTH_LEFT 枚举项。 */
+    RM_3508_STORE_RIGHT = DM_3519_STRENTH_RIGHT, /* 定义 RM_3508_STORE_RIGHT 枚举项。 */
+    RM_3508_STORE_LEFT = DM_3519_STRENTH_LEFT, /* 定义 RM_3508_STORE_LEFT 枚举项。 */
+#endif /* 结束条件编译。 */
+
+    DM_4310_YAW, /* 定义 DM_4310_YAW 枚举项。 */
+    RM_6020_YAW = 5 /* 定义 RM_6020_YAW 枚举项。 */
+} can_motor_cfg; /* 结束 can_motor_cfg 类型定义。 */
+
+#pragma pack(push, 1) /* 配置编译选项 pack(push, 1)。 */
 // 电机配置结构体（用户可调参数）
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     float direction_bias;     // 换向偏移补偿(°)
     float position_min;       // 相对零点最小允许位置(°)
     float position_max;       // 相对零点最大允许位置(°)
     float position_tolerance; // 位置误差容限/到位死区(°)
     uint8_t reverse;          // 是否反向: 0-正向, 1-反向
-} MotorConfig_t;
+} MotorConfig_t; /* 结束 MotorConfig_t 类型定义。 */
 
 // S 型规划器的注册参数：
 // 1. 只保存“初始化/注册配置”
 // 2. 不保存运行时 cmd_pos/cmd_vel 之类状态
 // 3. 运行时状态仍由具体控制任务维护
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
-    uint8_t registered;
-    uint8_t resync_on_target_change;
-    float vmax_deg_s;
-    float amax_deg_s2;
-    float jmax_deg_s3;
-    float brake_gain;
-    float arrive_zone;
-    float decel_zone;
-} MotorTrapConfig_t;
+    uint8_t registered; /* 保存 registered。 */
+    uint8_t resync_on_target_change; /* 保存 resync_on_target_change。 */
+    float vmax_deg_s; /* 保存 vmax_deg_s。 */
+    float amax_deg_s2; /* 保存 amax_deg_s2。 */
+    float jmax_deg_s3; /* 保存 jmax_deg_s3。 */
+    float brake_gain; /* 保存 brake_gain。 */
+    float arrive_zone; /* 保存 arrive_zone。 */
+    float decel_zone; /* 保存 decel_zone。 */
+} MotorTrapConfig_t; /* 结束 MotorTrapConfig_t 类型定义。 */
 
 // 电机参数结构体（只读，由型号决定）
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     float gear_ratio;    // 减速比
     int16_t max_current; // 最大电流
     float current_ratio; // 电流转换系数
-} MotorParams_t;
+} MotorParams_t; /* 结束 MotorParams_t 类型定义。 */
 
 // 电机结构体定义
-typedef struct _MotorTypeDef
+typedef struct _MotorTypeDef /* 开始定义数据类型。 */
 {
     // ==================== 快速访问区 (展平数据) ====================
     uint8_t MotorID;       // 电机ID
@@ -184,9 +195,14 @@ typedef struct _MotorTypeDef
     float gear_ratio;      // 减速比
     float current_ratio;   // 电流/力矩转换系数
     int16_t max_current;   // 最大电流/限幅值
+    uint8_t drive_enabled; // 驱动器使能状态：RM 注册后恒为 1，DM 由使能/失能协议维护
+    volatile uint32_t last_rx_tick;          // 最近一次有效反馈的本地时间
+    volatile uint8_t online;                 // 1=在线，0=尚未上线或已超时
+    volatile uint8_t watchdog_lost_pending;  // LostCallback 留给任务处理的标志
+    volatile uint8_t dm_reply_pending;       // DM 已发送且正在等待唯一回复
 
     // ==================== 原始存储区 ====================
-    motor_inf MotorInf;
+    motor_inf MotorInf; /* 保存 MotorInf。 */
     uint8_t ReceiveMotorData[8];    // 电机接收数据存储
     uint8_t SendMotorData[8];       // 电机发送数据存储
     CAN_TxHeaderTypeDef g_TxHeader; // 电机发送报文头
@@ -195,25 +211,25 @@ typedef struct _MotorTypeDef
     MotorSolvedData_t motor_data; // 电机解算数据
 
     // 电机配置和参数（面向对象扩展）
-    MotorConfig_t config; // 用户可调配置
-    MotorParams_t params; // 电机参数（只读）
+    MotorConfig_t config;          // 用户可调配置
+    MotorParams_t params;          // 电机参数（只读）
     MotorTrapConfig_t trap_config; // S 型规划器注册参数
 
     // ==================== 面向对象扩展 ====================
     // 电机类指针（指向类型定义，包含虚函数表和默认参数）
     // 推荐使用：通过 motor_class 访问虚函数，如 motor->motor_class.rm_motor_class->calculate(motor)
-    union
+    union /* 继续当前语句。 */
     {
         const struct _RM_MotorClass *rm_motor_class; // RM电机类指针
         const struct _DM_MotorClass *dm_motor_class; // DM电机类指针
-    } motor_class;
+    } motor_class; /* 结束 motor_class 类型定义。 */
 
     // ==================== 兼容性接口 (保留旧代码) ====================
     // 以下函数指针保留用于向后兼容，新代码请使用 motor_class 虚函数表
     // @deprecated 使用 RM_Motor_SendControl() 或 DM_Motor_SendControl() 代替
-    uint8_t (*SendMotorControl)(struct _MotorTypeDef *st);
+    uint8_t (*SendMotorControl)(struct _MotorTypeDef *st); /* 调用 uint8_t。 */
     // @deprecated 使用 RM_Motor_Calculate() 或 DM_Motor_Calculate() 代替
-    void (*calculate)(struct _MotorTypeDef *self);
+    void (*calculate)(struct _MotorTypeDef *self); /* 调用 void。 */
 
     // PID控制器（可选择单环或串级）
     PID_t inner_pid;           // 内环PID（单环控制时使用）
@@ -221,114 +237,115 @@ typedef struct _MotorTypeDef
     uint8_t use_cascade;       // 是否使用串级控制：0-单环，1-串级
 
     // CAN_RX_ID
-    uint16_t CAN_Rid;
-} MotorTypeDef;
+    uint16_t CAN_Rid; /* 保存 CAN_Rid。 */
+} MotorTypeDef; /* 结束 MotorTypeDef 类型定义。 */
 
 // 电机管理器结构体
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
-    MotorTypeDef MotorList[g_CanMotorNum];
+    MotorTypeDef MotorList[g_CanMotorNum]; /* 保存 MotorList。 */
     // 记录当前已注册的数量
-    uint8_t registered_count;
+    uint8_t registered_count; /* 保存 registered_count。 */
     uint8_t RM_MOTOR_DATA_ARRAY[8]; // 电机列表发送数据的数组，每次发送RM电机的控制数据发送的都是这个arr
-} MotorManager_t;
-#pragma pack(pop)
+} MotorManager_t; /* 结束 MotorManager_t 类型定义。 */
+#pragma pack(pop) /* 配置编译选项 pack(pop)。 */
 
-extern MotorManager_t MotorManager;
+extern MotorManager_t MotorManager; /* 声明外部变量 MotorManager。 */
 
 /*********************************************************函数声明***************************************************************/
 
 /// @brief 上电之后的电机注册、CAN初始化等等
 /// @param 无
-void MotorInit(void);
+void MotorInit(void); /* 声明 MotorInit 接口。 */
 
 /// @brief 注册所有电机的信息
 /// @param 无（按照已经配置的电机表注册）
 /// @return 注册是否成功
-void MotorRegister(void);
+void MotorRegister(void); /* 声明 MotorRegister 接口。 */
 
 /// @brief 注册电机的CAN通信信息
 /// @param ptr 电机初始化指针
 /// @note 包含报文头的初始化
 /// @return 无
-void CanRegisterMotorCfg(MotorTypeDef *ptr);
+void CanRegisterMotorCfg(MotorTypeDef *ptr); /* 声明 CanRegisterMotorCfg 接口。 */
 
 /// @brief CAN过滤器的再初始化
 /// @param 无
 /// @note 默认接收全部数据,调用该函数之后将只接收达妙MIT模式的反馈和RM电机的反馈帧
-void CanFilterCfg(void);
+void CanFilterCfg(void); /* 声明 CanFilterCfg 接口。 */
 
 /// @brief CAN FIFO中断回调处理函数
 /// @param fifo_num FIFO的对应号
 /// @param hcan 处理时候的can句柄
 /// @param FIFOmessageNum 要处理的消息数量
 /// @return 无
-void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
-
-/// @brief 获取电机管理器指针
-/// @return 电机管理器结构体指针
-MotorManager_t *GetPtrMotorManager(void);
+void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum); /* 声明 CAN_FIFO_CBKHANDLER 接口。 */
+void CanMotor_WatchdogInit(void);                                // 注册全部 CAN 电机看门狗
+void CanMotor_WatchdogLostCallback(SoftwareWatchdogId_e id);     // CAN 超时中断回调
+bool Motor_IsOnline(can_motor_cfg motor_id);                      // 查询电机在线状态
+bool CanMotor_DmReplyWaitBegin(MotorTypeDef *motor);              // DM 发送前置 pending 并启动计时
+void CanMotor_DmReplyWaitCancel(MotorTypeDef *motor);             // DM 发送失败时撤销 pending
 
 /// @brief 获取电机句柄（内联版本，零开销）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 电机结构体指针，ID无效时返回NULL
-static inline MotorTypeDef *Motor_GetHandle(can_motor_cfg motor_id)
+static inline MotorTypeDef *Motor_GetHandle(can_motor_cfg motor_id) /* 实现 Motor_GetHandle。 */
 {
-    if (motor_id < 1 || motor_id > g_CanMotorNum)
-        return NULL;
-    return &MotorManager.MotorList[motor_id - 1];
+    if (motor_id < 1 || motor_id > g_CanMotorNum) /* 检查当前执行条件。 */
+        return NULL; /* 返回当前计算结果。 */
+    return &MotorManager.MotorList[motor_id - 1]; /* 返回当前计算结果。 */
 }
 
 /// @brief 获取电机句柄（无检查版本，最高性能）
 /// @param motor_id 电机ID（调用者需确保有效性）
 /// @return 电机结构体指针
-static inline MotorTypeDef *Motor_GetHandleFast(can_motor_cfg motor_id)
+static inline MotorTypeDef *Motor_GetHandleFast(can_motor_cfg motor_id) /* 实现 Motor_GetHandleFast。 */
 {
-    return &MotorManager.MotorList[motor_id - 1];
+    return &MotorManager.MotorList[motor_id - 1]; /* 返回当前计算结果。 */
 }
 
 /// @brief 获取RM电机发送缓冲区（内联版本）
 /// @return RM电机发送数据数组指针
-static inline uint8_t *Motor_GetRmSendBuffer(void)
+static inline uint8_t *Motor_GetRmSendBuffer(void) /* 实现 Motor_GetRmSendBuffer。 */
 {
-    return MotorManager.RM_MOTOR_DATA_ARRAY;
+    return MotorManager.RM_MOTOR_DATA_ARRAY; /* 返回当前计算结果。 */
 }
 
 /// @brief 设置已注册电机数量（仅供测试使用）
 /// @param count 电机数量
-void Motor_SetRegisteredCount(uint8_t count);
+void Motor_SetRegisteredCount(uint8_t count); /* 声明 Motor_SetRegisteredCount 接口。 */
 
 /*********************************************************电机数据读取接口***************************************************************/
 
 /// @brief 获取电机累计角度（单位：度）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 累计角度（度），失败返回0
-float Motor_GetTotalAngle(can_motor_cfg motor_id);
+float Motor_GetTotalAngle(can_motor_cfg motor_id); /* 声明 Motor_GetTotalAngle 接口。 */
 
 /// @brief 获取电机累计角度（单位：弧度）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 累计角度（弧度），失败返回0
-float Motor_GetTotalAngleRad(can_motor_cfg motor_id);
+float Motor_GetTotalAngleRad(can_motor_cfg motor_id); /* 声明 Motor_GetTotalAngleRad 接口。 */
 
 /// @brief 获取电机速度（单位：rpm）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 速度（rpm），失败返回0
-float Motor_GetSpeedRPM(can_motor_cfg motor_id);
+float Motor_GetSpeedRPM(can_motor_cfg motor_id); /* 声明 Motor_GetSpeedRPM 接口。 */
 
 /// @brief 获取电机速度（单位：rad/s）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 速度（rad/s），失败返回0
-float Motor_GetSpeedRadS(can_motor_cfg motor_id);
+float Motor_GetSpeedRadS(can_motor_cfg motor_id); /* 声明 Motor_GetSpeedRadS 接口。 */
 
 /// @brief 获取电机单圈角度（单位：度）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 单圈角度（度），失败返回0
-float Motor_GetSingleAngle(can_motor_cfg motor_id);
+float Motor_GetSingleAngle(can_motor_cfg motor_id); /* 声明 Motor_GetSingleAngle 接口。 */
 
 /// @brief 获取电机电流（单位：A）
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
 /// @return 电流（A），DM电机返回力矩(N·m)，失败返回0
-float Motor_GetCurrent(can_motor_cfg motor_id);
+float Motor_GetCurrent(can_motor_cfg motor_id); /* 声明 Motor_GetCurrent 接口。 */
 
 /// @brief 获取电机所有解算数据
 /// @param motor_id 电机ID（can_motor_cfg枚举值）
@@ -336,6 +353,6 @@ float Motor_GetCurrent(can_motor_cfg motor_id);
 /// @return true-成功，false-失败
 /// @note RM电机: [0]单圈角度(°), [1]速度(rpm), [2]电流(A), [3]累计角度(°), [4]速度(rad/s)
 ///       DM电机: [0]位置(rad), [1]速度(rad/s), [2]力矩(N·m), [3]MOS温度(℃), [4]转子温度(℃)
-bool Motor_GetAllData(can_motor_cfg motor_id, float *data);
+bool Motor_GetAllData(can_motor_cfg motor_id, float *data); /* 声明 Motor_GetAllData 接口。 */
 
-#endif
+#endif /* 结束条件编译。 */

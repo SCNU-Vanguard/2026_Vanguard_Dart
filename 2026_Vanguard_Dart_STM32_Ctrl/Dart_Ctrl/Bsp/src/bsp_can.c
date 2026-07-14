@@ -28,9 +28,9 @@
 /// @param FliterNum 过滤器的位号
 /// @param fifo fifo的位号
 /// @todo  似乎再配置失败了，需要重新更改
-void FliterIdCfg_Init(CAN_HandleTypeDef *canHandle, uint16_t *ID, uint16_t *Mask, uint8_t FliterNum, uint8_t fifo)
+void FliterIdCfg_Init(CAN_HandleTypeDef *canHandle, uint16_t *ID, uint16_t *Mask, uint8_t FliterNum, uint8_t fifo) /* 实现 FliterIdCfg_Init。 */
 {
-  CAN_FilterTypeDef temp;
+  CAN_FilterTypeDef temp; /* 保存 temp。 */
   temp.FilterBank = FliterNum;              // 过滤器编号
   temp.FilterFIFOAssignment = fifo;         // 过滤器看用户配置
   temp.FilterActivation = DISABLE;          // 要先失能过滤器
@@ -38,19 +38,19 @@ void FliterIdCfg_Init(CAN_HandleTypeDef *canHandle, uint16_t *ID, uint16_t *Mask
   temp.FilterMode = CAN_FILTERMODE_IDMASK;  // 默认是需要过滤地址
   temp.FilterScale = CAN_FILTERSCALE_16BIT; // 默认使用16位
 
-  temp.FilterIdHigh = ID[0];
-  temp.FilterIdLow = ID[1];
-  temp.FilterMaskIdHigh = Mask[0];
-  temp.FilterMaskIdLow = Mask[1];
+  temp.FilterIdHigh = ID[0]; /* 更新 FilterIdHigh。 */
+  temp.FilterIdLow = ID[1]; /* 更新 FilterIdLow。 */
+  temp.FilterMaskIdHigh = Mask[0]; /* 更新 FilterMaskIdHigh。 */
+  temp.FilterMaskIdLow = Mask[1]; /* 更新 FilterMaskIdLow。 */
 
-  if (HAL_CAN_ConfigFilter(canHandle, &temp) != HAL_OK)
+  if (HAL_CAN_ConfigFilter(canHandle, &temp) != HAL_OK) /* 检查当前执行条件。 */
   {
     Error_Handler(); // 配置错误
   }
 
   // 使能过滤器
-  temp.FilterActivation = ENABLE;
-  if (HAL_CAN_ConfigFilter(canHandle, &temp) != HAL_OK)
+  temp.FilterActivation = ENABLE; /* 更新 FilterActivation。 */
+  if (HAL_CAN_ConfigFilter(canHandle, &temp) != HAL_OK) /* 检查当前执行条件。 */
   {
     Error_Handler(); // 配置错误
   }
@@ -63,14 +63,14 @@ void FliterIdCfg_Init(CAN_HandleTypeDef *canHandle, uint16_t *ID, uint16_t *Mask
  *note: 初始化失败则会直接进入ErrorHandler
  *todo: 尝试解决这个ID和MASK正常配置之后是否进入FIFO1中断，这里先全部不通过
  ******************************************/
-uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum, uint8_t MaskStatus)
+uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum, uint8_t MaskStatus) /* 实现 CAN_Init。 */
 {
-  assert_param(canHandle != NULL);
-  if (canHandle == NULL)
+  assert_param(canHandle != NULL); /* 更新 assert_paramcanHandle。 */
+  if (canHandle == NULL) /* 检查当前执行条件。 */
   {
-    Error_Handler();
+    Error_Handler(); /* 调用 Error_Handler。 */
   }
-  CAN_FilterTypeDef gFilterConfig;
+  CAN_FilterTypeDef gFilterConfig; /* 保存 gFilterConfig。 */
   gFilterConfig.FilterBank = FliterNum;              // 过滤器编号
   gFilterConfig.FilterFIFOAssignment = fifo;         // 过滤器看用户配置
   gFilterConfig.FilterActivation = ENABLE;           // 激活过滤器
@@ -79,27 +79,27 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
   gFilterConfig.FilterScale = CAN_FILTERSCALE_16BIT; // 默认使用16位
 
   // 默认不接收总线数据
-  gFilterConfig.FilterIdHigh = 0xFFFF;
-  gFilterConfig.FilterIdLow = 0xFFFF;
-  gFilterConfig.FilterMaskIdHigh = 0xFFFF;
-  gFilterConfig.FilterMaskIdLow = 0xFFFF;
+  gFilterConfig.FilterIdHigh = 0xFFFF; /* 更新 FilterIdHigh。 */
+  gFilterConfig.FilterIdLow = 0xFFFF; /* 更新 FilterIdLow。 */
+  gFilterConfig.FilterMaskIdHigh = 0xFFFF; /* 更新 FilterMaskIdHigh。 */
+  gFilterConfig.FilterMaskIdLow = 0xFFFF; /* 更新 FilterMaskIdLow。 */
 
-  HAL_CAN_MspInit(canHandle);
+  HAL_CAN_MspInit(canHandle); /* 调用 HAL_CAN_MspInit。 */
 
-  uint8_t ConfigEnd = HAL_CAN_ActivateNotification(canHandle, CAN_IT_RX_FIFO0_MSG_PENDING);
-  ConfigEnd &= HAL_CAN_ActivateNotification(canHandle, CAN_IT_RX_FIFO1_MSG_PENDING);
-  if (ConfigEnd)
+  uint8_t ConfigEnd = HAL_CAN_ActivateNotification(canHandle, CAN_IT_RX_FIFO0_MSG_PENDING); /* 初始化 ConfigEnd。 */
+  ConfigEnd &= HAL_CAN_ActivateNotification(canHandle, CAN_IT_RX_FIFO1_MSG_PENDING); /* 更新 ConfigEnd。 */
+  if (ConfigEnd) /* 检查当前执行条件。 */
   {
-    Error_Handler();
+    Error_Handler(); /* 调用 Error_Handler。 */
   }
 
-  if (HAL_CAN_ConfigFilter(canHandle, &gFilterConfig) != HAL_OK)
+  if (HAL_CAN_ConfigFilter(canHandle, &gFilterConfig) != HAL_OK) /* 检查当前执行条件。 */
   {
     Error_Handler(); // 配置错误
   }
-  HAL_CAN_Start(canHandle);
+  HAL_CAN_Start(canHandle); /* 调用 HAL_CAN_Start。 */
 
-  return 1;
+  return 1; /* 返回状态值 1。 */
 }
 
 /******************************************
@@ -114,32 +114,32 @@ uint8_t CAN_Init(CAN_HandleTypeDef *canHandle, CAN_FIFO fifo, uint8_t FliterNum,
  *
  * 注意：当CAN挂载设备多了应考虑是否直接写入缓冲区
  ******************************************/
-uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data)
+uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader, uint8_t *data) /* 实现 CAN_SendData。 */
 {
-  static uint32_t s_red_blink_tick = 0U;
-  uint32_t TxMailbox;
-  uint32_t timeout = 0;
+  static uint32_t s_red_blink_tick = 0U; /* 初始化 s_red_blink_tick。 */
+  uint32_t TxMailbox; /* 保存 TxMailbox。 */
+  uint32_t timeout = 0; /* 初始化 timeout。 */
   // @note:增加超时机制，当超时直接退出
-  while (!HAL_CAN_GetTxMailboxesFreeLevel(canHandle))
+  while (!HAL_CAN_GetTxMailboxesFreeLevel(canHandle)) /* 条件满足时继续执行。 */
   {
-    timeout++;
-    if (timeout > 5000)
+    timeout++; /* 递增 timeout。 */
+    if (timeout > 5000) /* 检查当前执行条件。 */
     {
-      return 0;
+      return 0; /* 返回状态值 0。 */
     }
   }
-  if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) != HAL_OK)
+  if (HAL_CAN_AddTxMessage(canHandle, TxHeader, data, &TxMailbox) != HAL_OK) /* 检查当前执行条件。 */
   {
     // 发送失败：红灯常亮（板载红灯为低电平点亮）
-    HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(Red_GPIO_Port, Red_Pin, GPIO_PIN_RESET); /* 调用 HAL_GPIO_WritePin。 */
     return 0; // 发送失败
   }
 
   // 发送成功：红灯按250ms节拍闪烁
-  if ((uint32_t)(HAL_GetTick() - s_red_blink_tick) >= 250U)
+  if ((uint32_t)(HAL_GetTick() - s_red_blink_tick) >= 250U) /* 检查当前执行条件。 */
   {
-    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin);
-    s_red_blink_tick = HAL_GetTick();
+    HAL_GPIO_TogglePin(Red_GPIO_Port, Red_Pin); /* 调用 HAL_GPIO_TogglePin。 */
+    s_red_blink_tick = HAL_GetTick(); /* 更新 s_red_blink_tick。 */
   }
   return 1; // 发送成功
 }
@@ -151,17 +151,17 @@ uint8_t CAN_SendData(CAN_HandleTypeDef *canHandle, CAN_TxHeaderTypeDef *TxHeader
  *返回: FIFO当中的数据帧数量（0-3）
  *note: 可以使用另一种方法，这个也行可能精度不如while循环那个
  ******************************************/
-uint8_t CAN_FIFO_DLC(CAN_HandleTypeDef *hcan, uint8_t fifo_num)
+uint8_t CAN_FIFO_DLC(CAN_HandleTypeDef *hcan, uint8_t fifo_num) /* 实现 CAN_FIFO_DLC。 */
 {
-  if (fifo_num)
+  if (fifo_num) /* 检查当前执行条件。 */
   {
     // fifo1
-    return (uint8_t)((hcan->Instance->RF1R & CAN_RF1R_FMP1) >> CAN_RF1R_FMP1_Pos);
+    return (uint8_t)((hcan->Instance->RF1R & CAN_RF1R_FMP1) >> CAN_RF1R_FMP1_Pos); /* 返回当前计算结果。 */
   }
-  else
+  else /* 处理其余情况。 */
   {
     // fifo0
-    return (uint8_t)((hcan->Instance->RF0R & CAN_RF0R_FMP0) >> CAN_RF0R_FMP0_Pos);
+    return (uint8_t)((hcan->Instance->RF0R & CAN_RF0R_FMP0) >> CAN_RF0R_FMP0_Pos); /* 返回当前计算结果。 */
   }
 }
 
@@ -182,8 +182,8 @@ uint8_t CAN_FIFO_DLC(CAN_HandleTypeDef *hcan, uint8_t fifo_num)
  * 前后两种方法都差不多，但是我更加偏向第一种调用函数的方法
  ********************************************/
 
-extern void Error_Handler(void);
-extern void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
+extern void Error_Handler(void); /* 声明 Error_Handler 接口。 */
+extern void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum); /* 声明 CAN_FIFO_CBKHANDLER 接口。 */
 
 /// @todo 合并两个回调函数，进行回调的ID检验
 /******************************************
@@ -193,7 +193,7 @@ extern void CAN_FIFO_CBKHANDLER(uint32_t fifo_num, uint8_t FIFOmessageNum);
  ******************************************/
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) // 中断回调函数
 {
-  CAN_FIFO_CBKHANDLER(fifo0, CAN_FIFO_DLC(hcan, fifo0));
+  CAN_FIFO_CBKHANDLER(fifo0, CAN_FIFO_DLC(hcan, fifo0)); /* 调用 CAN_FIFO_CBKHANDLER。 */
 }
 
 /******************************************
@@ -203,5 +203,5 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) // 中断回调�
  ******************************************/
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan) // 中断回调函数
 {
-  CAN_FIFO_CBKHANDLER(fifo1, CAN_FIFO_DLC(hcan, fifo1));
+  CAN_FIFO_CBKHANDLER(fifo1, CAN_FIFO_DLC(hcan, fifo1)); /* 调用 CAN_FIFO_CBKHANDLER。 */
 }

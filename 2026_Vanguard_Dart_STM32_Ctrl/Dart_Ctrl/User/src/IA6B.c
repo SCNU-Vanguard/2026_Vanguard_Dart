@@ -59,45 +59,45 @@
 #include "config.h"
 #include "IA6B.h"
 
-int8_t Channel[13] = {0};
-int16_t RawChannel[13] = {0};
-void IA6B_HandleData2Channel(uint8_t *data)
+int8_t Channel[13] = {0}; /* 初始化 Channel。 */
+int16_t RawChannel[13] = {0}; /* 初始化 RawChannel。 */
+void IA6B_HandleData2Channel(uint8_t *data) /* 实现 IA6B_HandleData2Channel。 */
 {
     // 传进来的channel数据是符合对应信道格式的,除去帧头和校验帧尾一共28字节
     // 前Channel1-14获取
-    for (uint8_t i = 0; i < 13; i++)
+    for (uint8_t i = 0; i < 13; i++) /* 遍历当前数据集合。 */
     {
         // 两字节循环,直到26
-        RawChannel[i] = data[2 * i] | (data[2 * i + 1] << 8);
+        RawChannel[i] = data[2 * i] | (data[2 * i + 1] << 8); /* 更新 RawChannel。 */
     }
-    for (uint8_t temp = 0; temp < 4; temp++)
+    for (uint8_t temp = 0; temp < 4; temp++) /* 遍历当前数据集合。 */
     {
         // 一般中间为0
-        if ((RawChannel[temp] >= 1400) && (RawChannel[temp] <= 1600))
+        if ((RawChannel[temp] >= 1400) && (RawChannel[temp] <= 1600)) /* 检查当前执行条件。 */
         {
-            Channel[temp] = 0;
+            Channel[temp] = 0; /* 更新 Channel。 */
         }
         // 下和左为-1
-        else if (RawChannel[temp] < 1400)
+        else if (RawChannel[temp] < 1400) /* 继续判断下一条件。 */
         {
-            Channel[temp] = -1;
+            Channel[temp] = -1; /* 更新 Channel。 */
         }
-        else
+        else /* 处理其余情况。 */
         {
-            Channel[temp] = 1;
+            Channel[temp] = 1; /* 更新 Channel。 */
         }
     }
 
     // 对应SWB,1为默认状态为真,2为手动调节为0
     // 使用范围判断，避免信号波动导致检测不灵敏
     // 同时检查数据有效性（RawChannel应在1000-2000范围内）
-    if (RawChannel[4] >= 900 && RawChannel[4] <= 2100)
+    if (RawChannel[4] >= 900 && RawChannel[4] <= 2100) /* 检查当前执行条件。 */
     {
-        if (RawChannel[4] < 1500)
+        if (RawChannel[4] < 1500) /* 检查当前执行条件。 */
         {
             Channel[4] = 1; // SWB位置1（默认）
         }
-        else
+        else /* 处理其余情况。 */
         {
             Channel[4] = 0; // SWB位置2（手动调节）
         }
@@ -105,17 +105,17 @@ void IA6B_HandleData2Channel(uint8_t *data)
     // 如果数据无效则保持之前的值
 
     // SWC三段开关：使用范围判断
-    if (RawChannel[5] >= 900 && RawChannel[5] <= 2100)
+    if (RawChannel[5] >= 900 && RawChannel[5] <= 2100) /* 检查当前执行条件。 */
     {
-        if (RawChannel[5] < 1250)
+        if (RawChannel[5] < 1250) /* 检查当前执行条件。 */
         {
             Channel[5] = 1; // SWC位置1
         }
-        else if (RawChannel[5] < 1750)
+        else if (RawChannel[5] < 1750) /* 继续判断下一条件。 */
         {
             Channel[5] = 0; // SWC位置2（中间）
         }
-        else
+        else /* 处理其余情况。 */
         {
             Channel[5] = -1; // SWC位置3
         }
@@ -124,9 +124,9 @@ void IA6B_HandleData2Channel(uint8_t *data)
 }
 
 // 初始化队列接受任务,同时使用DMA加缓冲区接收,但是这个固定很麻烦
-int16_t IA6B_ReadChannel(uint8_t ChannelNum)
+int16_t IA6B_ReadChannel(uint8_t ChannelNum) /* 实现 IA6B_ReadChannel。 */
 {
-    return Channel[ChannelNum - 1];
+    return Channel[ChannelNum - 1]; /* 返回当前计算结果。 */
 }
 
 /**
@@ -135,14 +135,14 @@ int16_t IA6B_ReadChannel(uint8_t ChannelNum)
  * @return true-成功获取并解析, false-无数据包
  * @note 在主循环或任务中周期性调用
  */
-bool IA6B_ProcessIbusPacket(BSP_UART_NUM_e uart_num)
+bool IA6B_ProcessIbusPacket(BSP_UART_NUM_e uart_num) /* 实现 IA6B_ProcessIbusPacket。 */
 {
-    IbusPacket_t packet;
-    if (UART_GetIbusPacket(uart_num, &packet))
+    IbusPacket_t packet; /* 保存 packet。 */
+    if (UART_GetIbusPacket(uart_num, &packet)) /* 检查当前执行条件。 */
     {
         // 跳过帧头(data[0]=0x20, data[1]=0x40)，传入28字节通道数据
-        IA6B_HandleData2Channel(&packet.data[2]);
-        return true;
+        IA6B_HandleData2Channel(&packet.data[2]); /* 调用 IA6B_HandleData2Channel。 */
+        return true; /* 返回 true。 */
     }
-    return false;
+    return false; /* 返回 false。 */
 }

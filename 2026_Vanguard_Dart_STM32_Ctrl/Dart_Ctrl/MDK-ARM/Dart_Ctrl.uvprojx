@@ -701,6 +701,11 @@
               <FilePath>..\User\src\CanMotor.c</FilePath>
             </File>
             <File>
+              <FileName>angle_motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\src\angle_motor.c</FilePath>
+            </File>
+            <File>
               <FileName>DM_Motor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\src\DM_Motor.c</FilePath>
@@ -759,6 +764,16 @@
               <FileName>FireControl.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Application\FireControl.h</FilePath>
+            </File>
+            <File>
+              <FileName>SoftwareWatchdog.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\SoftwareWatchdog.c</FilePath>
+            </File>
+            <File>
+              <FileName>SoftwareWatchdog.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Application\SoftwareWatchdog.h</FilePath>
             </File>
             <File>
               <FileName>UserTask.c</FileName>

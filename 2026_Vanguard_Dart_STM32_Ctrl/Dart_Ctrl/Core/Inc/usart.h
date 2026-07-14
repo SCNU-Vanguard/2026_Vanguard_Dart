@@ -30,6 +30,7 @@ extern "C" {
 
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+
 /* USER CODE END Includes */
 
 extern UART_HandleTypeDef huart7;
@@ -43,7 +44,7 @@ extern UART_HandleTypeDef huart3;
 extern UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN Private defines */
-  int fputc(int ch, FILE *f);
+  int fputc(int ch, FILE *f); /* 声明 fputc 接口。 */
 /* USER CODE END Private defines */
 
 void MX_UART7_Init(void);

@@ -1,23 +1,24 @@
-#ifndef __FIRE_CONTROL_H_
-#define __FIRE_CONTROL_H_
+#ifndef __FIRE_CONTROL_H_ /* 按 __FIRE_CONTROL_H_ 选择编译分支。 */
+#define __FIRE_CONTROL_H_ /* 定义 __FIRE_CONTROL_H_。 */
 
 #include "main.h"
 #include "rm_referee_protocol.h"
+#include "SoftwareWatchdog.h"
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-    FIRE_TARGET_OUTPOST = 0U,
-    FIRE_TARGET_BASE = 1U,
-} FireTargetSelect_e;
+    FIRE_TARGET_OUTPOST = 0U, /* 定义 FIRE_TARGET_OUTPOST 枚举项。 */
+    FIRE_TARGET_BASE = 1U, /* 定义 FIRE_TARGET_BASE 枚举项。 */
+} FireTargetSelect_e; /* 结束 FireTargetSelect_e 类型定义。 */
 
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
-    FIRE_RANGE_DEFAULT = 0U,
-    FIRE_RANGE_1 = 1U,
-    FIRE_RANGE_2 = 2U,
-} FireRangeSelect_e;
+    FIRE_RANGE_DEFAULT = 0U, /* 定义 FIRE_RANGE_DEFAULT 枚举项。 */
+    FIRE_RANGE_1 = 1U, /* 定义 FIRE_RANGE_1 枚举项。 */
+    FIRE_RANGE_2 = 2U, /* 定义 FIRE_RANGE_2 枚举项。 */
+} FireRangeSelect_e; /* 结束 FireRangeSelect_e 类型定义。 */
 
 /**
  * @brief 裁判系统门控业务快照
@@ -30,7 +31,7 @@ typedef enum
  * - 判断裁判舱门数据是否有效、是否超时
  * - 给设定任务/发射任务提供稳定的只读快照
  */
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     bool valid;                      // 是否已经收到过有效裁判帧
     uint8_t opening_status;          // 当前舱门状态：OPEN/CLOSE/MID
@@ -58,7 +59,7 @@ typedef struct
  * 更新方式：
  * - 推荐由 ControlState 或遥控器解析任务调用 FireControl_UpdateIntent() / SetXXX()
  */
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     bool fire_enable;      // 遥控器总发射使能
     uint8_t target_select; // 当前目标选择
@@ -80,7 +81,7 @@ typedef struct
  * - 发射前最终门禁关注 can_shoot
  * - 储能/发射中途关注 abort_current_shot
  */
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     bool can_setup;                  // 当前是否允许重新设置 2006/4310
     bool can_shoot;                  // 当前是否允许真正发射
@@ -97,7 +98,7 @@ typedef struct
     uint8_t target_select_end;       // 当前最终目标选择
 } FirePermission_t;                  // 最后输出的开火指令
 
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     bool valid;                  // 数据帧是否合法
     uint16_t target_change_time; // 目标改变的时间点
@@ -118,7 +119,9 @@ typedef struct
  * - 清空内部已应用设定基线
  * - 生成一份初始仲裁结果
  */
-void FireControl_Init(void);
+void FireControl_Init(void); /* 声明 FireControl_Init 接口。 */
+void FireControl_WatchdogInit(void); /* 声明 FireControl_WatchdogInit 接口。 */
+void FireControl_RefereeLostCallback(SoftwareWatchdogId_e id); /* 声明 FireControl_RefereeLostCallback 接口。 */
 
 /**
  * @brief 更新裁判系统的飞镖舱门状态快照
@@ -134,7 +137,7 @@ void FireControl_Init(void);
  * - 更新本地接收时间戳和序号
  * - 重新计算统一仲裁结果
  */
-bool FireControl_UpdateRefereeGate(const ext_dart_launch_status_t *dart_status);
+bool FireControl_UpdateRefereeGate(const ext_dart_launch_status_t *dart_status); /* 声明 FireControl_UpdateRefereeGate 接口。 */
 
 /**
  * @brief 更新比赛剩余时间镜像
@@ -145,7 +148,7 @@ bool FireControl_UpdateRefereeGate(const ext_dart_launch_status_t *dart_status);
  * - 在 RefereeTaskFunc 收到 ID_game_state 后调用
  * - 主要用于补充仲裁结果中的上下文，不直接决定开火
  */
-bool FireControl_UpdateRefereeRemainTime(uint16_t remain_time);
+bool FireControl_UpdateRefereeRemainTime(uint16_t remain_time); /* 声明 FireControl_UpdateRefereeRemainTime 接口。 */
 
 /**
  * @brief 更新飞镖发射剩余时间镜像
@@ -156,7 +159,7 @@ bool FireControl_UpdateRefereeRemainTime(uint16_t remain_time);
  * - 在 RefereeTaskFunc 收到 ID_dart_info 后调用
  * - 当前主要用于发射最终门禁：剩余时间小于 1s 时禁止发射
  */
-bool FireControl_UpdateDartInfo(const ext_dart_info_t *dart_info);
+bool FireControl_UpdateDartInfo(const ext_dart_info_t *dart_info); /* 声明 FireControl_UpdateDartInfo 接口。 */
 
 /**
  * @brief 一次性更新完整遥控器业务意图
@@ -169,28 +172,14 @@ bool FireControl_UpdateDartInfo(const ext_dart_info_t *dart_info);
  * - 推荐在 ControlState 或遥控器解析任务中调用
  * - 当 fire_enable / target_select / range_select 任一变化时调用
  */
-bool FireControl_UpdateIntent(bool fire_enable, uint8_t target_select, uint8_t range_select);
+bool FireControl_UpdateIntent(bool fire_enable, uint8_t target_select, uint8_t range_select); /* 声明 FireControl_UpdateIntent 接口。 */
 
 /**
  * @brief 单独更新总发射使能
  * @param fire_enable 总发射使能
  * @return true-值发生变化；false-未变化
  */
-bool FireControl_SetFireEnable(bool fire_enable);
-
-/**
- * @brief 单独更新目标选择
- * @param target_select 目标选择
- * @return true-值发生变化；false-未变化
- */
-bool FireControl_SetTargetSelect(uint8_t target_select);
-
-/**
- * @brief 单独更新射程/角度档位
- * @param range_select 射程/角度档位
- * @return true-值发生变化；false-未变化
- */
-bool FireControl_SetRangeSelect(uint8_t range_select);
+bool FireControl_SetFireEnable(bool fire_enable); /* 声明 FireControl_SetFireEnable 接口。 */
 
 /**
  * @brief 标记“当前设定已经成功下发到机构”
@@ -203,17 +192,7 @@ bool FireControl_SetRangeSelect(uint8_t range_select);
  * - 记录当前 target_select / range_select
  * - 让 need_reconfigure 在条件未变化时恢复为 false
  */
-void FireControl_MarkSetupApplied(void);
-
-/**
- * @brief 获取当前裁判快照副本
- * @param snapshot 输出指针
- *
- * 用法：
- * - 需要调试或读取最新裁判门控上下文时调用
- * - 返回的是副本，不要尝试直接修改内部状态
- */
-void FireControl_GetRefereeSnapshot(RefereeGateSnapshot_t *snapshot);
+void FireControl_MarkSetupApplied(void); /* 声明 FireControl_MarkSetupApplied 接口。 */
 
 /**
  * @brief 获取当前遥控器业务意图副本
@@ -222,7 +201,7 @@ void FireControl_GetRefereeSnapshot(RefereeGateSnapshot_t *snapshot);
  * 用法：
  * - 调试遥控器业务输入，或在其他任务中读取当前目标/射程配置时调用
  */
-void FireControl_GetIntent(RC_FireIntent_t *intent);
+void FireControl_GetIntent(RC_FireIntent_t *intent); /* 声明 FireControl_GetIntent 接口。 */
 
 /**
  * @brief 获取当前统一仲裁结果副本
@@ -233,31 +212,19 @@ void FireControl_GetIntent(RC_FireIntent_t *intent);
  * - 发射前读取 can_shoot
  * - 储能/发射过程中读取 abort_current_shot
  */
-void FireControl_GetPermission(FirePermission_t *permission);
+void FireControl_GetPermission(FirePermission_t *permission); /* 声明 FireControl_GetPermission 接口。 */
 
 /**
  * @brief 快捷接口：当前是否允许设定
  * @return true-允许；false-不允许
  */
-bool FireControl_CanSetup(void);
-
-/**
- * @brief 快捷接口：当前是否允许发射
- * @return true-允许；false-不允许
- */
-bool FireControl_CanShoot(void);
-
-/**
- * @brief 快捷接口：当前是否应中止发射流程
- * @return true-应中止；false-可继续
- */
-bool FireControl_ShouldAbortShot(void);
+bool FireControl_CanSetup(void); /* 声明 FireControl_CanSetup 接口。 */
 
 /**
  * @brief 快捷读取：当前击打目标
  * @return FIRE_TARGET_BASE->true,击打基地
  * @note   默认返回的是 FIRE_TARGET_OUTPOST
  */
-uint8_t FireControl_SelectTarget(void);
+uint8_t FireControl_SelectTarget(void); /* 声明 FireControl_SelectTarget 接口。 */
 
-#endif
+#endif /* 结束条件编译。 */

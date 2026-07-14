@@ -260,9 +260,9 @@ static void SyncTargetsWithMotorFeedback(void)
     // 同步扳机目标（RM2006）
     g_ControlState.trigger_target = Motor_GetTotalAngle(RM_2006_TRIGGER);
 
-    // 同步储能电机目标（DM3519）
-    g_ControlState.energy_left_target = Motor_GetTotalAngle(DM_3519_STRENTH_LEFT);
-    g_ControlState.energy_right_target = Motor_GetTotalAngle(DM_3519_STRENTH_RIGHT);
+    // 同步储能电机目标（RM3508）
+    g_ControlState.energy_left_target = Motor_GetTotalAngle(RM_3508_STORE_LEFT);
+    g_ControlState.energy_right_target = Motor_GetTotalAngle(RM_3508_STORE_RIGHT);
 
     // 同步3508目标
     g_ControlState.load3508_target = Motor_GetTotalAngle(RM_3508_GRIPPER);
@@ -450,14 +450,15 @@ static void SendMotorCommands(void)
     // DmMotorSendCfg(DM_4310_YAW, g_ControlState.yaw_target, 0.0f, DM_MIT, CAN_TX_RETRY_ENABLE);
 
     // 扳机电机（RM2006 PID控制）
-    // RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target, CAN_TX_RETRY_DISABLE);
+    // RmMotorPID_Calc(RM_2006_TRIGGER, g_ControlState.trigger_target);
 
-    // 储能电机（DM3519 位置速度模式）
-    DmMotorSendCfg(DM_3519_STRENTH_LEFT, g_ControlState.energy_left_target, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
-    DmMotorSendCfg(DM_3519_STRENTH_RIGHT, g_ControlState.energy_right_target, 5.0f, DM_LOCATION_SPEED, CAN_TX_RETRY_ENABLE);
+    // 储能电机（RM3508 位置环 PID）
+    /* 测试工程精简版: 调试模式下储能电机改用 RmMotorPID_Calc, 不再走 DM3519 协议 */
+    RmMotorPID_Calc(RM_3508_STORE_LEFT, g_ControlState.energy_left_target);
+    RmMotorPID_Calc(RM_3508_STORE_RIGHT, g_ControlState.energy_right_target);
 
     // 3508电机（RM3508 PID控制）
-    // RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target, CAN_TX_RETRY_DISABLE);
+    // RmMotorPID_Calc(RM_3508_GRIPPER, g_ControlState.load3508_target);
 }
 
 /*============================== API函数实现 ==============================*/

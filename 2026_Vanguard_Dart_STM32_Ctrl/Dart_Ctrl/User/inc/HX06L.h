@@ -10,8 +10,8 @@
  * 参考：Arduino/MicroPython 版本舵机驱动
  ****************************************************************/
 
-#ifndef __HX_06L_H_
-#define __HX_06L_H_
+#ifndef __HX_06L_H_ /* 按 __HX_06L_H_ 选择编译分支。 */
+#define __HX_06L_H_ /* 定义 __HX_06L_H_。 */
 
 #include "main.h"
 #include "bsp_uart.h"
@@ -23,17 +23,17 @@
 /**
  * @brief 操作结果返回值类型
  */
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
     SERVO_SUCCESS = 1, // 操作成功
     SERVO_FAIL = 0,    // 操作失败
     SERVO_WAIT = 2,    // 等待中
     SERVO_TIMEOUT = 3  // 超时
-} ServoResult_t;
+} ServoResult_t; /* 结束 ServoResult_t 类型定义。 */
 
 /*****************************LED报警故障类型***********************************/
 
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
     SERVO_ERROR_NO_ALARM = 0,            // 无报警
     SERVO_ERROR_OVER_TEMP = 1,           // 过温报警
@@ -43,20 +43,20 @@ typedef enum
     SERVO_ERROR_OVER_TEMP_AND_STALL = 5, // 过温和堵转报警
     SERVO_ERROR_OVER_VOLT_AND_STALL = 6, // 过压和堵转报警
     SERVO_ERROR_ALL = 7                  // 过温、过压和堵转报警
-} ServoAlarmCode_t;
+} ServoAlarmCode_t; /* 结束 ServoAlarmCode_t 类型定义。 */
 
 /*****************************协议选择宏***********************************/
 // 0: 无MCU驱动板协议（115200波特率，帧格式：0x55 0x55 | ID | Length | Cmd | Param | CRC）
 // 1: 有MCU控制板协议（9600波特率，帧格式：0x55 0x55 | Length | Cmd | Param）
-#define other_mcu_forcing 1
+#define other_mcu_forcing 1 /* 定义 other_mcu_forcing。 */
 
 /*****************************指令定义***********************************/
 
-#if (other_mcu_forcing == 1)
+#if (other_mcu_forcing == 1) /* 按 (other_mcu_forcing == 1) 选择编译分支。 */
 /*********************有MCU控制板协议指令定义**********************/
 
 // 控制板指令枚举
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
     CMD_SERVO_MOVE = 0x03,            // 控制任意个舵机的转动
     CMD_ACTION_GROUP_RUN = 0x06,      // 控制动作组运行
@@ -66,19 +66,19 @@ typedef enum
     CMD_GET_BATTERY_VOLTAGE = 0x0F,   // 获取控制板电池电压
     CMD_MULT_SERVO_UNLOAD = 0x14,     // 控制多个舵机马达掉电卸力
     CMD_MULT_SERVO_POS_READ = 0x15    // 读取多个舵机的角度位置值
-} ControlBoardCmd;
+} ControlBoardCmd; /* 结束 ControlBoardCmd 类型定义。 */
 
-#else
+#else /* 切换到备用编译分支。 */
 /*********************无MCU驱动板协议指令定义**********************/
 
 // @todo 可以考虑使用共用体
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     uint8_t cmd;      // 指令值
     uint8_t data_len; // 数据长度
-} ServoCommandInfo;
+} ServoCommandInfo; /* 结束 ServoCommandInfo 类型定义。 */
 
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
     SERVO_MOVE_TIME_WRITE,      // 写数据（立马），发送数值0 - 1000 ，对应0 - 240°，最小分度0.24°，存在转动时间参数，范围为0-30000ms
     SERVO_MOVE_TIME_READ,       // 读数据（立马）
@@ -130,10 +130,10 @@ typedef enum
     SERVO_LED_ERROR_WRITE,      // 写LED报警指令
     SERVO_LED_ERROR_READ,       // 读取LED故障报警值
     SERVO_CMD_COUNT             // 读取舵机的转动距离（4096/圈）
-} ServoCommandName;
+} ServoCommandName; /* 结束 ServoCommandName 类型定义。 */
 
 // 指令映射表（按顺序对应上面的 enum）
-static const ServoCommandInfo servo_commands[SERVO_CMD_COUNT] = {
+static const ServoCommandInfo servo_commands[SERVO_CMD_COUNT] = { /* 初始化 servo_commands。 */
     {1, 7},  // SERVO_MOVE_TIME_WRITE
     {2, 3},  // SERVO_MOVE_TIME_READ
     {7, 7},  // SERVO_MOVE_TIME_WAIT_WRITE
@@ -165,13 +165,13 @@ static const ServoCommandInfo servo_commands[SERVO_CMD_COUNT] = {
 };
 
 // 工作模式
-typedef enum
+typedef enum /* 开始定义数据类型。 */
 {
     Servo_PosCtrl = 0x00, // 位置控制模式
     Servo_MotorCtrl,      // 电机控制模式
     Rotate_Duty,          // 固定占空比模式
     Rotate_Speed          // 固定速度模式
-} WorkMode;
+} WorkMode; /* 结束 WorkMode 类型定义。 */
 
 #endif /* other_mcu_forcing */
 
@@ -182,7 +182,7 @@ typedef enum
 /// @brief 换弹舵机初始化
 /// @param  无
 /// @retval true:初始化正常, false:初始化失败
-bool ServoInit(void);
+bool ServoInit(void); /* 声明 ServoInit 接口。 */
 
 /// @brief 总线舵机控制函数（立即转动）
 /// @param ID 总线舵机ID
@@ -190,12 +190,12 @@ bool ServoInit(void);
 /// @param Time 转动过程时间（0-30000ms）
 /// @retval 无
 /// @note 根据时间匀速转动到对应设置的角度
-void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time);
+void ServoControlPos(uint8_t ID, uint16_t Angle, uint16_t Time); /* 声明 ServoControlPos 接口。 */
 
 /// @brief 读取舵机预设角度和时间（立即控制模式）
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果，返回数据包含：角度(2字节) + 时间(2字节)
-void ServoReadMoveTime(uint8_t ID);
+void ServoReadMoveTime(uint8_t ID); /* 声明 ServoReadMoveTime 接口。 */
 
 /// @brief 控制多个舵机同时转动
 /// @param servo_num 舵机个数
@@ -203,79 +203,79 @@ void ServoReadMoveTime(uint8_t ID);
 /// @param angles 角度数组（0-1000）
 /// @param time 转动时间（ms）
 /// @note 无MCU协议下通过循环逐个控制实现
-void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, uint16_t *angles, uint16_t time);
+void ServoControlMulti(uint8_t servo_num, uint8_t *servo_ids, uint16_t *angles, uint16_t time); /* 声明 ServoControlMulti 接口。 */
 
 /*****************************舵机注册表***********************************/
 
-#define SERVO_REG_MAX_COUNT 8U
+#define SERVO_REG_MAX_COUNT 8U /* 定义 SERVO_REG_MAX_COUNT。 */
 
-typedef struct
+typedef struct /* 开始定义数据类型。 */
 {
     uint8_t id;           // 舵机ID
     uint16_t raw_zero;    // 机械归零位置原始值
     uint16_t raw_release; // 机械释放位置原始值
-    ServoAlarmCode_t AlarmData;
-} ServoRegistryItem_t;
+    ServoAlarmCode_t AlarmData; /* 保存 AlarmData。 */
+} ServoRegistryItem_t; /* 结束 ServoRegistryItem_t 类型定义。 */
 
 /// @brief 清空舵机注册表
-void ServoRegistry_Reset(void);
+void ServoRegistry_Reset(void); /* 声明 ServoRegistry_Reset 接口。 */
 
 /// @brief 批量注册舵机配置（覆盖原有注册）
 /// @param items 注册数组
 /// @param count 注册个数
 /// @retval true 注册成功，false 参数错误/数量超限/ID重复
-bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count);
+bool ServoRegistry_RegisterBatch(const ServoRegistryItem_t *items, uint8_t count); /* 声明 ServoRegistry_RegisterBatch 接口。 */
 
 /// @brief 按ID查找舵机注册项
 /// @param id 舵机ID
 /// @return 内部注册项指针，未找到返回NULL
-const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id);
+const ServoRegistryItem_t *ServoRegistry_Find(uint8_t id); /* 声明 ServoRegistry_Find 接口。 */
 
 /// @brief 注册飞镖机构舵机配置表
-void Servo_RegisterDartProfiles(void);
+void Servo_RegisterDartProfiles(void); /* 声明 Servo_RegisterDartProfiles 接口。 */
 
 /// @brief 控制飞镖机构所有舵机同时回到机械零位
 /// @param time_ms 转动时间（ms）
-void Servo_MoveAllToZero(uint16_t time_ms);
+void Servo_MoveAllToZero(uint16_t time_ms); /* 声明 Servo_MoveAllToZero 接口。 */
 
 /// @brief 控制指定弹位对应的一组舵机回到机械零位
 /// @param dart_num 当前飞镖编号，支持1-3
 /// @param time_ms 转动时间（ms）
 /// @retval true 指令已下发，false 弹位或舵机配置无效
-bool Servo_MoveDartGroupToZero(uint8_t dart_num, uint16_t time_ms);
+bool Servo_MoveDartGroupToZero(uint8_t dart_num, uint16_t time_ms); /* 声明 Servo_MoveDartGroupToZero 接口。 */
 
 /// @brief 释放指定弹位对应的一组舵机
 /// @param dart_num 当前飞镖编号，支持1-3
 /// @param time_ms 转动时间（ms）
 /// @retval true 指令已下发，false 弹位或舵机配置无效
-bool Servo_ReleaseDartGroup(uint8_t dart_num, uint16_t time_ms);
+bool Servo_ReleaseDartGroup(uint8_t dart_num, uint16_t time_ms); /* 声明 Servo_ReleaseDartGroup 接口。 */
 
 /// @brief 运行动作组
 /// @param group_num 动作组编号
 /// @param run_times 运行次数（0表示无限次）
 /// @note 无MCU协议不支持此功能，为空实现
-void ServoRunActionGroup(uint8_t group_num, uint16_t run_times);
+void ServoRunActionGroup(uint8_t group_num, uint16_t run_times); /* 声明 ServoRunActionGroup 接口。 */
 
 /// @brief 停止动作组
 /// @note 无MCU协议不支持此功能，为空实现
-void ServoStopActionGroup(void);
+void ServoStopActionGroup(void); /* 声明 ServoStopActionGroup 接口。 */
 
 /// @brief 设置动作组速度
 /// @param group_num 动作组编号（0xFF表示所有动作组）
 /// @param speed_percent 速度百分比（100表示原速，200表示2倍速）
 /// @note 无MCU协议不支持此功能，为空实现
-void ServoSetActionGroupSpeed(uint8_t group_num, uint16_t speed_percent);
+void ServoSetActionGroupSpeed(uint8_t group_num, uint16_t speed_percent); /* 声明 ServoSetActionGroupSpeed 接口。 */
 
 /// @brief 控制多个舵机卸力
 /// @param servo_num 舵机个数
 /// @param servo_ids 舵机ID数组
-void ServoUnloadMulti(uint8_t servo_num, uint8_t *servo_ids);
+void ServoUnloadMulti(uint8_t servo_num, uint8_t *servo_ids); /* 声明 ServoUnloadMulti 接口。 */
 
 /// @brief 获取电池/输入电压
 /// @note 需要通过接收回调获取结果
-void ServoGetBatteryVoltage(void);
+void ServoGetBatteryVoltage(void); /* 声明 ServoGetBatteryVoltage 接口。 */
 
-#if (other_mcu_forcing == 0)
+#if (other_mcu_forcing == 0) /* 按 (other_mcu_forcing == 0) 选择编译分支。 */
 /***********************无MCU驱动板协议专用函数***********************/
 
 /*****************************延时控制函数***********************************/
@@ -284,15 +284,15 @@ void ServoGetBatteryVoltage(void);
 /// @param ID 舵机ID
 /// @param Angle 目标角度（0-1000对应0-240°）
 /// @param Time 转动时间（0-30000ms）
-void ServoMoveTimeWaitWrite(uint8_t ID, uint16_t Angle, uint16_t Time);
+void ServoMoveTimeWaitWrite(uint8_t ID, uint16_t Angle, uint16_t Time); /* 声明 ServoMoveTimeWaitWrite 接口。 */
 
 /// @brief 启动舵机转动（配合ServoMoveTimeWaitWrite使用）
 /// @param ID 舵机ID
-void ServoStart(uint8_t ID);
+void ServoStart(uint8_t ID); /* 声明 ServoStart 接口。 */
 
 /// @brief 立即停止舵机转动并保持当前位置
 /// @param ID 舵机ID
-void ServoStop(uint8_t ID);
+void ServoStop(uint8_t ID); /* 声明 ServoStop 接口。 */
 
 /*****************************ID设置函数***********************************/
 
@@ -300,28 +300,28 @@ void ServoStop(uint8_t ID);
 /// @param ID 当前舵机ID
 /// @param newID 新舵机ID（0-253）
 /// @return SERVO_SUCCESS或SERVO_FAIL
-ServoResult_t ServoSetID(uint8_t ID, uint8_t newID);
+ServoResult_t ServoSetID(uint8_t ID, uint8_t newID); /* 声明 ServoSetID 接口。 */
 
 /// @brief 读取舵机ID
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadID(uint8_t ID);
+void ServoReadID(uint8_t ID); /* 声明 ServoReadID 接口。 */
 
 /*****************************角度偏差设置***********************************/
 
 /// @brief 设置舵机角度偏差（不保存到内存）
 /// @param ID 舵机ID
 /// @param offset 偏差值（-125~125，对应-30°~30°）
-void ServoSetAngleOffset(uint8_t ID, int8_t offset);
+void ServoSetAngleOffset(uint8_t ID, int8_t offset); /* 声明 ServoSetAngleOffset 接口。 */
 
 /// @brief 保存角度偏差到内存（掉电保存）
 /// @param ID 舵机ID
-void ServoSaveAngleOffset(uint8_t ID);
+void ServoSaveAngleOffset(uint8_t ID); /* 声明 ServoSaveAngleOffset 接口。 */
 
 /// @brief 读取舵机角度偏差
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadAngleOffset(uint8_t ID);
+void ServoReadAngleOffset(uint8_t ID); /* 声明 ServoReadAngleOffset 接口。 */
 
 /*****************************角度限制设置***********************************/
 
@@ -330,12 +330,12 @@ void ServoReadAngleOffset(uint8_t ID);
 /// @param minAngle 最小角度（0-1000）
 /// @param maxAngle 最大角度（0-1000）
 /// @return SERVO_SUCCESS或SERVO_FAIL
-ServoResult_t ServoSetAngleLimit(uint8_t ID, uint16_t minAngle, uint16_t maxAngle);
+ServoResult_t ServoSetAngleLimit(uint8_t ID, uint16_t minAngle, uint16_t maxAngle); /* 声明 ServoSetAngleLimit 接口。 */
 
 /// @brief 读取舵机角度限制
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadAngleLimit(uint8_t ID);
+void ServoReadAngleLimit(uint8_t ID); /* 声明 ServoReadAngleLimit 接口。 */
 
 /*****************************电压限制设置***********************************/
 
@@ -344,12 +344,12 @@ void ServoReadAngleLimit(uint8_t ID);
 /// @param minVin 最小电压（单位mV，4500-14000）
 /// @param maxVin 最大电压（单位mV，4500-14000）
 /// @return SERVO_SUCCESS或SERVO_FAIL
-ServoResult_t ServoSetVinLimit(uint8_t ID, uint16_t minVin, uint16_t maxVin);
+ServoResult_t ServoSetVinLimit(uint8_t ID, uint16_t minVin, uint16_t maxVin); /* 声明 ServoSetVinLimit 接口。 */
 
 /// @brief 读取舵机电压限制
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadVinLimit(uint8_t ID);
+void ServoReadVinLimit(uint8_t ID); /* 声明 ServoReadVinLimit 接口。 */
 
 /*****************************温度限制设置***********************************/
 
@@ -357,41 +357,41 @@ void ServoReadVinLimit(uint8_t ID);
 /// @param ID 舵机ID
 /// @param maxTemp 最高温度（50-100℃）
 /// @return SERVO_SUCCESS或SERVO_FAIL
-ServoResult_t ServoSetTempLimit(uint8_t ID, uint8_t maxTemp);
+ServoResult_t ServoSetTempLimit(uint8_t ID, uint8_t maxTemp); /* 声明 ServoSetTempLimit 接口。 */
 
 /// @brief 读取舵机温度限制
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadTempLimit(uint8_t ID);
+void ServoReadTempLimit(uint8_t ID); /* 声明 ServoReadTempLimit 接口。 */
 
 /*****************************状态读取函数***********************************/
 
 /// @brief 读取舵机当前角度位置
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadPosition(uint8_t ID);
+void ServoReadPosition(uint8_t ID); /* 声明 ServoReadPosition 接口。 */
 
 /// @brief 读取舵机实时温度
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadTemp(uint8_t ID);
+void ServoReadTemp(uint8_t ID); /* 声明 ServoReadTemp 接口。 */
 
 /// @brief 读取舵机输入电压
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadVin(uint8_t ID);
+void ServoReadVin(uint8_t ID); /* 声明 ServoReadVin 接口。 */
 
 /*****************************上电/卸力控制***********************************/
 
 /// @brief 设置舵机上电/卸力状态
 /// @param ID 舵机ID
 /// @param load 1为上电，0为卸力
-void ServoSetLoad(uint8_t ID, uint8_t load);
+void ServoSetLoad(uint8_t ID, uint8_t load); /* 声明 ServoSetLoad 接口。 */
 
 /// @brief 读取舵机上电/卸力状态
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadLoadStatus(uint8_t ID);
+void ServoReadLoadStatus(uint8_t ID); /* 声明 ServoReadLoadStatus 接口。 */
 
 /*****************************工作模式设置***********************************/
 
@@ -400,64 +400,64 @@ void ServoReadLoadStatus(uint8_t ID);
 /// @param servoMode 舵机模式（0=位置控制，1=电机控制）
 /// @param rotateMode 转动模式（0=固定占空比，1=固定转速）
 /// @param speed 转动速度（占空比模式-1000~1000，转速模式-50~50）
-void ServoSetModeAndSpeed(uint8_t ID, uint8_t servoMode, uint8_t rotateMode, int16_t speed);
+void ServoSetModeAndSpeed(uint8_t ID, uint8_t servoMode, uint8_t rotateMode, int16_t speed); /* 声明 ServoSetModeAndSpeed 接口。 */
 
 /// @brief 读取舵机工作模式和速度
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadModeAndSpeed(uint8_t ID);
+void ServoReadModeAndSpeed(uint8_t ID); /* 声明 ServoReadModeAndSpeed 接口。 */
 
 /*****************************LED控制函数***********************************/
 
 /// @brief 设置舵机LED灯状态（支持掉电保存）
 /// @param ID 舵机ID
 /// @param ledOn 0=常亮，1=常灭
-void ServoSetLED(uint8_t ID, uint8_t ledOn);
+void ServoSetLED(uint8_t ID, uint8_t ledOn); /* 声明 ServoSetLED 接口。 */
 
 /// @brief 读取舵机LED状态
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadLED(uint8_t ID);
+void ServoReadLED(uint8_t ID); /* 声明 ServoReadLED 接口。 */
 
 /// @brief 设置LED报警故障类型
 /// @param ID 舵机ID
 /// @param alarmCode 报警代码（使用ServoAlarmCode_t枚举）
-void ServoSetLEDAlarm(uint8_t ID, ServoAlarmCode_t alarmCode);
+void ServoSetLEDAlarm(uint8_t ID, ServoAlarmCode_t alarmCode); /* 声明 ServoSetLEDAlarm 接口。 */
 
 /// @brief 读取LED报警状态
 /// @param ID 舵机ID
 /// @note 需要通过接收回调获取结果
-void ServoReadLEDAlarm(uint8_t ID);
+void ServoReadLEDAlarm(uint8_t ID); /* 声明 ServoReadLEDAlarm 接口。 */
 
 /*****************************角度转换辅助函数***********************************/
 
 /// @brief 将角度值（0-240度）转换为舵机原始值（0-1000）
 /// @param angleDeg 角度值（0.0-240.0度）
 /// @return 原始值（0-1000）
-static inline uint16_t ServoAngleToRaw(float angleDeg)
+static inline uint16_t ServoAngleToRaw(float angleDeg) /* 实现 ServoAngleToRaw。 */
 {
-    if (angleDeg < 0)
-        angleDeg = 0;
-    if (angleDeg > 240)
-        angleDeg = 240;
-    return (uint16_t)(angleDeg / 0.24f);
+    if (angleDeg < 0) /* 检查当前执行条件。 */
+        angleDeg = 0; /* 更新 angleDeg。 */
+    if (angleDeg > 240) /* 检查当前执行条件。 */
+        angleDeg = 240; /* 更新 angleDeg。 */
+    return (uint16_t)(angleDeg / 0.24f); /* 返回当前计算结果。 */
 }
 
 /// @brief 将舵机原始值（0-1000）转换为角度值（0-240度）
 /// @param rawValue 原始值（0-1000）
 /// @return 角度值（0.0-240.0度）
-static inline float ServoRawToAngle(uint16_t rawValue)
+static inline float ServoRawToAngle(uint16_t rawValue) /* 实现 ServoRawToAngle。 */
 {
-    return (float)rawValue * 0.24f;
+    return (float)rawValue * 0.24f; /* 返回当前计算结果。 */
 }
 
 /// @brief 使用角度值（度）控制舵机立即转动
 /// @param ID 舵机ID
 /// @param angleDeg 目标角度（0-240度）
 /// @param timeMs 转动时间（0-30000ms）
-static inline void ServoControlAngle(uint8_t ID, float angleDeg, uint16_t timeMs)
+static inline void ServoControlAngle(uint8_t ID, float angleDeg, uint16_t timeMs) /* 实现 ServoControlAngle。 */
 {
-    ServoControlPos(ID, ServoAngleToRaw(angleDeg), timeMs);
+    ServoControlPos(ID, ServoAngleToRaw(angleDeg), timeMs); /* 调用 ServoControlPos。 */
 }
 
 #endif /* other_mcu_forcing == 0 */

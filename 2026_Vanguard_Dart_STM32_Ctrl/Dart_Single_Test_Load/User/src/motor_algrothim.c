@@ -8,16 +8,7 @@ volatile float g_MotorTrapPosLastOutput = 0.0f;
 /*  内部工具函数                                                        */
 /* ------------------------------------------------------------------ */
 
-static inline float _signf(float x) { return (x > 0.0f) ? 1.0f : ((x < 0.0f) ? -1.0f : 0.0f); }
-
-static inline float _clampf(float x, float lo, float hi)
-{
-    if (x < lo)
-        return lo;
-    if (x > hi)
-        return hi;
-    return x;
-}
+static inline float motor_signf(float x) { return (x > 0.0f) ? 1.0f : ((x < 0.0f) ? -1.0f : 0.0f); }
 
 /* ------------------------------------------------------------------ */
 /*  公开 API                                                            */
@@ -77,8 +68,8 @@ void Motor_TrapPos_Init(MotorTrapPosProfile_t *profile,
     profile->cmd_pos = initial_pos;
     profile->cmd_vel = 0.0f;
     profile->cmd_acc = 0.0f;
-    profile->vmax = _fabsf(vmax);
-    profile->amax = _fabsf(amax);
+    profile->vmax = fabsf(vmax);
+    profile->amax = fabsf(amax);
     profile->jmax = profile->amax * 10.0f; /* 默认宽松 jerk */
     profile->brake_gain = 1.0f;            /* 默认不提前制动 */
     profile->arrive_zone = 0.5f;           /* 默认0.5°死区锁定 */
@@ -90,7 +81,7 @@ void Motor_TrapPos_SetJerk(MotorTrapPosProfile_t *profile, float jmax)
 {
     if (!profile)
         return;
-    profile->jmax = _fabsf(jmax);
+    profile->jmax = fabsf(jmax);
 }
 
 void Motor_TrapPos_Reset(MotorTrapPosProfile_t *profile, float pos)
@@ -132,7 +123,7 @@ float Motor_TrapPos_Update(MotorTrapPosProfile_t *profile, float dt)
         return 0.0f;
 
     float error = profile->target_pos - profile->cmd_pos;
-    float abs_error = _fabsf(error);
+    float abs_error = fabsf(error);
 
     /* --- 0. 到达死区：误差极小时强制锁零速，防止PID硬响应导致飞车 --- */
     if (abs_error <= profile->arrive_zone)
@@ -167,11 +158,11 @@ float Motor_TrapPos_Update(MotorTrapPosProfile_t *profile, float dt)
         }
     }
 
-    /* 取 v_brake 和 v_limit 中较小者 */
+    /* 取 v_brake 和 v_limit 中较小者，二者皆已 ∈ [0, vmax]，无需再 clamp */
     float v_cap = (v_brake < v_limit) ? v_brake : v_limit;
 
     /* --- 2. 期望速度（方向 × 速度上限） --- */
-    float v_desired = _signf(error) * _clampf(v_cap, 0.0f, profile->vmax);
+    float v_desired = motor_signf(error) * v_cap;
 
     /* --- 3. 加速度限幅：cmd_vel → v_desired --- */
     float dv_max = profile->amax * dt;
@@ -190,7 +181,7 @@ float Motor_TrapPos_Update(MotorTrapPosProfile_t *profile, float dt)
 
     /* --- 5. 到达判断：防止过冲 --- */
     /* 若越过目标，直接钳位并清零速度 */
-    if (_signf(profile->target_pos - profile->cmd_pos) != _signf(error) && abs_error > 1e-6f)
+    if (motor_signf(profile->target_pos - profile->cmd_pos) != motor_signf(error) && abs_error > 1e-6f)
     {
         profile->cmd_pos = profile->target_pos;
         profile->cmd_vel = 0.0f;

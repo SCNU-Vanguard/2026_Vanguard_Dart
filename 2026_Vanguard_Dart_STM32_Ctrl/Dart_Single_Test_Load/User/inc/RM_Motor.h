@@ -104,6 +104,22 @@ void RM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
                           float p, float i, float d, float f,
                           float max_out, float min_out, float max_iout);
 
+/*============================== 双侧蓄力 3508 同步 PID ==============================*/
+
+/* 初始化左右蓄力 3508 的位置同步 PID（由 CanMotor.c:MotorRegister 调用）。 */
+void RM_Motor_InitStoreSyncPid(float kp, float ki, float kd, float kf,
+                               float max_out, float min_out, float max_iout);
+
+/* 传入左右蓄力 3508 的当前位置真实值（accumulated deg，即 solved_data[3]），
+ * 内部以 (left - right) 为 sync_error 跑 PID，目标 0。
+ * 返回的 correction 建议由调用方按 ±correction/2 分发到左右目标。
+ */
+float RM_Motor_UpdateStoreSync(float left_pos_deg, float right_pos_deg);
+
+/* 调试观测：最近一次的 sync error 与 PID 输出。 */
+extern float g_RmStoreSyncErrorDeg;
+extern float g_RmStoreSyncPidOutputDeg;
+
 /*============================== 兼容旧接口 ==============================*/
 
 void RM_MOTOR_CALCU(MotorTypeDef *motor);
@@ -112,5 +128,14 @@ void RM_Motor_Reset_All(void);
 void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent);
 void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target);
 void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm);
+
+extern float g_RmDebugStoreLeftPosDeg;
+extern float g_RmDebugStoreRightPosDeg;
+extern float g_RmDebugStoreLeftPidOutput;
+extern float g_RmDebugStoreRightPidOutput;
+extern int16_t g_RmDebugStoreLeftFinalCurrent;
+extern int16_t g_RmDebugStoreRightFinalCurrent;
+extern uint8_t g_RmDebugStoreLeftLimitBlocked;
+extern uint8_t g_RmDebugStoreRightLimitBlocked;
 
 #endif

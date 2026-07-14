@@ -1,72 +1,50 @@
 /*****************************************************
- * RM电机（大疆电机）控制模块
- * 适配M3508、M2006、GM6020等系列电机
- *
- * note:M3508 -> 19.2减速比
- *      M2006 -> 36.0减速比
- *      GM6020 -> 1.0减速比
- * --------------------------------------------------
- * RM电机说明：
- * 大疆电机的注册同一系列电调最多是4个
- * 同一CAN总线上挂载的大疆电调（只有一个系列电调最多是8个）
- * 如果是C610和C620都有，则二者均为4个即为最大值
- * --------------------------------------------------
- * 面向对象设计说明：
- * 使用 RM_MotorClass_t 作为电机"类"，包含：
- * - 电机默认参数（减速比、最大电流、电流转换系数）
- * - 虚函数表（初始化、解算、发送控制、PID计算等）
- * 预定义 RM_M2006_Class、RM_M3508_Class、RM_GM6020_Class 三个类实例
- * TODO:等待测试文件是否有异常，如无直接更新到正常的RM_Motor.c当中
+ * RM电机控制模块
+ * 适配 M3508、M2006、GM6020 等系列电机
  ****************************************************/
 
 #include "RM_Motor.h"
 #include "CanMotor.h"
+#include "config.h"
+#include <math.h>
 #include <stdbool.h>
-#include "usart.h"
-#include <stdio.h>
+#include <string.h>
 
-// 直接访问电机管理器（减少函数调用开销）
 extern MotorManager_t MotorManager;
-extern SemaphoreHandle_t g_xRmBufferMutexHandle;
+extern SemaphoreHandle_t g_xRmBufferMutexHandle; // 互斥访问
 
-static float output = 0.0f;
+static float s_rm_motor_pid_output = 0.0f;
 
-#define CtrlMotorLen 8     // 电机控制报文长度默认给8
-#define RM_MOTOR_MAX_NUM 2 // 最大电机数量
+/* 左右蓄力 3508 位置同步 PID：由 MotorRegister 初始化。*/
+static PID_t s_rm_store_sync_pid;
+static uint8_t s_rm_store_sync_pid_inited = 0U;
+float g_RmStoreSyncErrorDeg = 0.0f;
+float g_RmStoreSyncPidOutputDeg = 0.0f;
 
-/*============================== 预计算常量（优化除法为乘法） ==============================*/
-#define ECD_TO_DEGREE (360.0f / 8192.0f)                       // 编码器转角度: 0.0439453125f
-#define RM_M2006_CURRENT_INV (1.0f / RM_M2006_CURRENT_RATIO)   // M2006电流倒数
-#define RM_M3508_CURRENT_INV (1.0f / RM_M3508_CURRENT_RATIO)   // M3508电流倒数
-#define RM_GM6020_CURRENT_INV (1.0f / RM_GM6020_CURRENT_RATIO) // GM6020电流倒数
+#define CtrlMotorLen 8
+#define ECD_TO_DEGREE 0.04394531250f // (360.0f / 8192.0f)
+#define RM_M2006_CURRENT_INV (1.0f / RM_M2006_CURRENT_RATIO)
+#define RM_M3508_CURRENT_INV (1.0f / RM_M3508_CURRENT_RATIO)
+#define RM_GM6020_CURRENT_INV (1.0f / RM_GM6020_CURRENT_RATIO)
+#define RM_DEFAULT_POS_MIN (-10000.0f)
+#define RM_DEFAULT_POS_MAX (10000.0f)
+#define RM_DEFAULT_POS_TOLERANCE (3.0f)
 
-/*============================== 静态函数声明（私有方法） ==============================*/
-
-// 通用解算函数（内部）- 参数为电流系数倒数（优化版本）
-static void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv);
-
-// M2006专用函数
+static inline void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv);
 static void RM_M2006_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void RM_M2006_CalculateInternal(MotorTypeDef *motor);
-
-// M3508专用函数
 static void RM_M3508_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void RM_M3508_CalculateInternal(MotorTypeDef *motor);
-
-// GM6020专用函数
 static void RM_GM6020_InitInternal(MotorTypeDef *motor, uint8_t id);
 static void RM_GM6020_CalculateInternal(MotorTypeDef *motor);
-
-// 通用发送控制和PID计算
-static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
-static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *motor, CAN_TxRetryMode retry_mode);
-static float RM_Motor_PIDCalcInternal(MotorTypeDef *motor, float target);
-static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output);
+static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *motor);
+static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *motor);
+static inline int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output);
 static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle);
+static inline float RM_Motor_ClampFloat(float value, float min, float max);
+static inline bool RM_Motor_IsSameTxGroup(const MotorTypeDef *lhs, const MotorTypeDef *rhs);
 
-/*============================== 电机类静态实例定义 ==============================*/
-
-/// @brief M2006电机类（C610电调）
+// M2006虚拟类
 const RM_MotorClass_t RM_M2006_Class = {
     .name = "M2006",
     .model = RmM2006,
@@ -78,10 +56,9 @@ const RM_MotorClass_t RM_M2006_Class = {
     .id_max = 4,
     .init = RM_M2006_InitInternal,
     .calculate = RM_M2006_CalculateInternal,
-    .send_control = RM_Motor_SendControlInternal,
 };
 
-/// @brief M3508电机类（C620电调）
+// M3508虚拟类
 const RM_MotorClass_t RM_M3508_Class = {
     .name = "M3508",
     .model = RmM3508,
@@ -93,10 +70,9 @@ const RM_MotorClass_t RM_M3508_Class = {
     .id_max = 4,
     .init = RM_M3508_InitInternal,
     .calculate = RM_M3508_CalculateInternal,
-    .send_control = RM_Motor_SendControlInternal,
 };
 
-/// @brief GM6020电机类
+// GM6020虚拟类
 const RM_MotorClass_t RM_GM6020_Class = {
     .name = "GM6020",
     .model = RmGM6020,
@@ -108,168 +84,174 @@ const RM_MotorClass_t RM_GM6020_Class = {
     .id_max = 7,
     .init = RM_GM6020_InitInternal,
     .calculate = RM_GM6020_CalculateInternal,
-    .send_control = RM_Motor_SendControlInternal,
 };
 
-/*============================== 面向对象接口实现 ==============================*/
-
-/// @brief 使用指定的电机类创建电机实例
+// 创建电机对应实体
 void RM_Motor_Create(MotorTypeDef *motor, const RM_MotorClass_t *motor_class, uint8_t id)
 {
     if (motor == NULL || motor_class == NULL)
+    {
         return;
+    }
 
     if (id < motor_class->id_min || id > motor_class->id_max)
+    {
         return;
+    }
 
-    // 关联电机类
     motor->motor_class.rm_motor_class = motor_class;
-
-    // 调用类的初始化函数
     if (motor_class->init != NULL)
     {
         motor_class->init(motor, id);
     }
 }
 
-/// @brief 调用电机的解算函数
+// 电机解算回调函数API
 void RM_Motor_Calculate(MotorTypeDef *motor)
 {
     if (motor == NULL)
+    {
         return;
+    }
 
-    // 优先使用类的虚函数表
-    if (motor->motor_class.rm_motor_class != NULL && motor->motor_class.rm_motor_class->calculate != NULL)
+    if (motor->motor_class.rm_motor_class != NULL &&
+        motor->motor_class.rm_motor_class->calculate != NULL)
     {
         motor->motor_class.rm_motor_class->calculate(motor);
-        return;
     }
-
-    // if (motor->calculate != NULL)
-    // {
-    //     motor->calculate(motor);
-    // }
 }
 
-/// @brief 调用电机的发送控制函数
-uint8_t RM_Motor_SendControl(MotorTypeDef *motor, CAN_TxRetryMode retry_mode)
-{
-    if (motor == NULL)
-        return 0;
-
-    // 优先使用类的虚函数表
-    if (motor->motor_class.rm_motor_class != NULL && motor->motor_class.rm_motor_class->send_control != NULL)
-    {
-        return motor->motor_class.rm_motor_class->send_control(motor, retry_mode);
-    }
-
-    // 兼容旧接口
-    if (motor->SendMotorControl != NULL)
-    {
-        return motor->SendMotorControl(motor, retry_mode);
-    }
-
-    return 0;
-}
-
-/*============================== 电机初始化内部函数 ==============================*/
-
-/// @brief 初始化RM电机基础属性（内部函数）
-static void RM_Motor_InitBase(MotorTypeDef *motor, uint8_t id,
-                              const RM_MotorClass_t *motor_class)
+/// @brief 初始化RM电机(父类函数)
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
+/// @param motor_class 对应RM电机虚拟类
+static inline void RM_Motor_InitBase(MotorTypeDef *motor, uint8_t id, const RM_MotorClass_t *motor_class)
 {
     memset(motor, 0, sizeof(MotorTypeDef));
 
-    // 关联电机类（推荐通过motor_class访问虚函数）
     motor->motor_class.rm_motor_class = motor_class;
-
-    // 基本属性
     motor->MotorID = id;
     motor->MotorInf.band = RM_MOTOR_BAND;
     motor->MotorInf.model = motor_class->model;
-
-    // 从类中复制参数
     motor->params.gear_ratio = motor_class->gear_ratio;
     motor->params.max_current = motor_class->max_current;
     motor->params.current_ratio = motor_class->current_ratio;
 
-    // 默认配置
+    // RM 电机默认配置：
+    // position_min/max 用于位置环目标限位；
+    // position_tolerance 用于位置到位死区；
+    // direction_bias/reverse 用于安装方向修正。
     motor->config.direction_bias = 0.0f;
-    motor->config.position_tolerance = 50.0f;
+    motor->config.position_min = RM_DEFAULT_POS_MIN;
+    motor->config.position_max = RM_DEFAULT_POS_MAX;
+    motor->config.position_tolerance = RM_DEFAULT_POS_TOLERANCE;
     motor->config.reverse = 0;
 
-    // 绑定函数指针（已弃用，保留用于向后兼容，新代码请使用motor_class虚函数表）
-    motor->SendMotorControl = RM_Motor_SendControlInternal;
-    motor->calculate = motor_class->calculate;
+    // S 型规划器默认不注册，只有在电机注册阶段显式配置后才启用。
+    memset(&motor->trap_config, 0, sizeof(motor->trap_config));
 
-    // CAN报文头
+    motor->calculate = motor_class->calculate;
     motor->g_TxHeader.IDE = CAN_ID_STD;
     motor->g_TxHeader.RTR = CAN_RTR_DATA;
     motor->g_TxHeader.DLC = CtrlMotorLen;
 }
 
+/// @brief M2006电机实例化初始化函数
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
 static void RM_M2006_InitInternal(MotorTypeDef *motor, uint8_t id)
 {
     RM_Motor_InitBase(motor, id, &RM_M2006_Class);
     motor->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_2006;
 }
 
+/// @brief M3508电机实例化初始化函数
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
 static void RM_M3508_InitInternal(MotorTypeDef *motor, uint8_t id)
 {
     RM_Motor_InitBase(motor, id, &RM_M3508_Class);
     motor->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_3508;
 }
 
+/// @brief GM6020电机实例化初始化函数
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
 static void RM_GM6020_InitInternal(MotorTypeDef *motor, uint8_t id)
 {
     RM_Motor_InitBase(motor, id, &RM_GM6020_Class);
+    motor->g_TxHeader.StdId = (id <= 4U) ? (g_RM_MOTOR_BIAS_ADDR_6020 - 0x100U) : g_RM_MOTOR_BIAS_ADDR_6020;
+}
 
-    // GM6020的ID 5-7使用不同地址
-    if (id <= 4)
+/// @brief 创建M2006电机实例
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
+void RM_M2006_Create(MotorTypeDef *motor, uint8_t id)
+{
+    if (motor != NULL && id >= 1U && id <= 4U)
     {
-        motor->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_6020 - 0x100; // 0x1FE
+        RM_Motor_Create(motor, &RM_M2006_Class, id);
     }
-    else
+}
+
+/// @brief 创建M3508电机实例
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
+void RM_M3508_Create(MotorTypeDef *motor, uint8_t id)
+{
+    if (motor != NULL && id >= 1U && id <= 4U)
     {
-        motor->g_TxHeader.StdId = g_RM_MOTOR_BIAS_ADDR_6020; // 0x2FE
+        RM_Motor_Create(motor, &RM_M3508_Class, id);
     }
 }
 
-/*============================== 兼容旧接口的初始化函数 ==============================*/
-
-void RM_M2006_Init(MotorTypeDef *motor, uint8_t id)
+/// @brief 创建GM6020电机实例
+/// @param motor 电机对应结构体地址
+/// @param id 电机ID
+void RM_GM6020_Create(MotorTypeDef *motor, uint8_t id)
 {
-    if (motor == NULL || id < 1 || id > 4)
-        return;
-    RM_Motor_Create(motor, &RM_M2006_Class, id);
+    if (motor != NULL && id >= 1U && id <= 7U)
+    {
+        RM_Motor_Create(motor, &RM_GM6020_Class, id);
+    }
 }
 
-void RM_M3508_Init(MotorTypeDef *motor, uint8_t id)
-{
-    if (motor == NULL || id < 1 || id > 4)
-        return;
-    RM_Motor_Create(motor, &RM_M3508_Class, id);
-}
-
-void RM_GM6020_Init(MotorTypeDef *motor, uint8_t id)
-{
-    if (motor == NULL || id < 1 || id > 7)
-        return;
-    RM_Motor_Create(motor, &RM_GM6020_Class, id);
-}
-
-/*============================== 电机配置函数 ==============================*/
-
+/// @brief 设置电机初始参数
+/// @param motor 电机对应结构体地址
+/// @param config 对应参数地址
 void RM_Motor_SetConfig(MotorTypeDef *motor, const RM_MotorConfig_t *config)
 {
     if (motor == NULL || config == NULL)
+    {
         return;
+    }
 
-    motor->config.direction_bias = config->direction_bias;
-    motor->config.position_tolerance = config->position_tolerance;
-    motor->config.reverse = config->reverse;
+    // 上层注册的配置在这里统一写入底层通用配置结构，
+    // 后续 PID、限位、死区等逻辑都只从 motor->config 读取。
+    motor->config.direction_bias = config->direction_bias;         // 换向偏移补偿
+    motor->config.position_min = config->position_min;             // 允许运动最小位置
+    motor->config.position_max = config->position_max;             // 允许运动最大位置
+    motor->config.position_tolerance = config->position_tolerance; // 位置环到位死区
+    motor->config.reverse = config->reverse;                       // 正反向
 }
 
+/// @brief 设置RM电机串级PID参数
+/// @param motor 电机对应结构体地址
+/// @param outer_p 外环P
+/// @param outer_i 外环I
+/// @param outer_d 外环D
+/// @param outer_f 外环F
+/// @param inner_p 内环P
+/// @param inner_i 内环I
+/// @param inner_d 内环D
+/// @param inner_f 内环F
+/// @param outer_max_out 外环输出上限
+/// @param outer_min_out 外环输出下限
+/// @param outer_max_iout 外环积分输入上限
+/// @param inner_max_out 内环输出上限
+/// @param inner_min_out 内环输出下限
+/// @param inner_max_iout 内环积分输入上限
+/// @note  默认使用位置式PID
 void RM_Motor_SetCascadePID(MotorTypeDef *motor,
                             float outer_p, float outer_i, float outer_d, float outer_f,
                             float inner_p, float inner_i, float inner_d, float inner_f,
@@ -277,9 +259,11 @@ void RM_Motor_SetCascadePID(MotorTypeDef *motor,
                             float inner_max_out, float inner_min_out, float inner_max_iout)
 {
     if (motor == NULL)
+    {
         return;
+    }
 
-    motor->use_cascade = 1;
+    motor->use_cascade = 1U;
     CASCADE_PID_Init(&motor->cascade_pid,
                      outer_p, outer_i, outer_d, outer_f,
                      inner_p, inner_i, inner_d, inner_f,
@@ -288,84 +272,63 @@ void RM_Motor_SetCascadePID(MotorTypeDef *motor,
     CASCADE_PID_Clear(&motor->cascade_pid);
 }
 
+/// @brief 速度环PID设置
+/// @param motor 电机对应结构体地址
+/// @param mode PID模式
+/// @param p KP
+/// @param i KI
+/// @param d KD
+/// @param f KF
+/// @param max_out 输出上限
+/// @param min_out 输出下限
+/// @param max_iout 积分输出上限
 void RM_Motor_SetSpeedPID(MotorTypeDef *motor, PID_MODE_e mode,
                           float p, float i, float d, float f,
                           float max_out, float min_out, float max_iout)
 {
     if (motor == NULL)
+    {
         return;
+    }
 
-    motor->use_cascade = 0;
+    motor->use_cascade = 0U;
     PID_Init(&motor->inner_pid, mode, p, i, d, f, max_out, min_out, max_iout);
     PID_Clear(&motor->inner_pid);
 }
 
-/*============================== 发送电机数据专用函数 ==============================*/
-
-static uint8_t RM_Motor_SendControlInternal(MotorTypeDef *st, CAN_TxRetryMode retry_mode)
-{
-    if (st == NULL || st->MotorInf.band != RM_MOTOR_BAND)
-        return 0;
-
-    // 发送之前必须先获取互斥量
-    if (xSemaphoreTake(g_xRmBufferMutexHandle, pdMS_TO_TICKS(2)) != pdTRUE)
-    {
-        return 0;
-    }
-
-    uint8_t res = RM_Motor_SendControlLocked(st, retry_mode);
-    xSemaphoreGive(g_xRmBufferMutexHandle);
-    return res;
-}
-
-static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *st, CAN_TxRetryMode retry_mode)
+/// @brief 负责加锁和发送数据
+/// @param motor 电机对应结构体地址
+/// @return 发送成功与否
+static uint8_t RM_Motor_SendControlLocked(MotorTypeDef *motor)
 {
     uint8_t *send_buffer = MotorManager.RM_MOTOR_DATA_ARRAY;
-
-    // 共享发送缓冲区每次重组前都清零，避免残留旧分组数据。
     memset(send_buffer, 0x00, CtrlMotorLen);
 
-    // 将RM3508电机的数据进行拼接
-    if (st->MotorInf.model == RmM3508)
+    for (uint8_t i = 0; i < MotorManager.registered_count; i++)
     {
-        for (uint8_t a = st->MotorID - 1; a < g_RM_M3508_NUM; a++)
+        MotorTypeDef *other = &MotorManager.MotorList[i];
+        if (!RM_Motor_IsSameTxGroup(motor, other))
         {
-            MotorTypeDef *motor_a = &MotorManager.MotorList[a];
-            uint8_t offset = 2 * a - 2 * (st->MotorID - 1);
-            send_buffer[offset] = motor_a->SendMotorData[0];
-            send_buffer[offset + 1] = motor_a->SendMotorData[1];
+            continue;
         }
+
+        if (other->MotorID < 1U || other->MotorID > 4U)
+        {
+            continue;
+        }
+
+        uint8_t offset = (uint8_t)((other->MotorID - 1U) * 2U);
+        send_buffer[offset] = other->SendMotorData[0];
+        send_buffer[offset + 1U] = other->SendMotorData[1];
     }
 
-    // 将RM2006电机的数据进行拼接
-    if (st->MotorInf.model == RmM2006)
-    {
-        for (uint8_t a = st->MotorID - 1; a <= g_RM_M2006_NUM; a++)
-        {
-            MotorTypeDef *motor_a = &MotorManager.MotorList[a];
-            uint8_t offset = 2 * a - 2 * (st->MotorID - 1);
-            send_buffer[offset] = motor_a->SendMotorData[0];
-            send_buffer[offset + 1] = motor_a->SendMotorData[1];
-        }
-    }
-
-    // 将RM6020电机的数据进行拼接
-    if (st->MotorInf.model == RmGM6020)
-    {
-        for (uint8_t a = st->MotorID - 1; a <= g_RM_GM6020_NUM; a++)
-        {
-            MotorTypeDef *motor_a = &MotorManager.MotorList[a];
-            uint8_t offset = 2 * a - 2 * (st->MotorID - 1);
-            send_buffer[offset] = motor_a->SendMotorData[0];
-            send_buffer[offset + 1] = motor_a->SendMotorData[1];
-        }
-    }
-
-    uint8_t res = Motor_GetHAL_Fast()->can_send(&st->g_TxHeader, send_buffer, retry_mode);
-    return res;
+    return Motor_GetHAL_Fast()->can_send(&motor->g_TxHeader, send_buffer);
 }
 
-void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode retry_mode)
+/// @brief 设置发送数据
+/// @param motor_cfg 电机别名
+/// @param data 电机数据
+static inline void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data)
 {
     if (data == NULL)
     {
@@ -373,7 +336,7 @@ void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode r
     }
 
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL || motor->MotorInf.band != RM_MOTOR_BAND)
+    if (motor->MotorInf.band != RM_MOTOR_BAND)
     {
         return;
     }
@@ -385,258 +348,271 @@ void RM_MotorSetTxData(can_motor_cfg motor_cfg, uint8_t *data, CAN_TxRetryMode r
 
     memset(motor->SendMotorData, 0x00, CtrlMotorLen);
     memcpy(motor->SendMotorData, data, CtrlMotorLen);
-    (void)RM_Motor_SendControlLocked(motor, retry_mode);
+    (void)RM_Motor_SendControlLocked(motor);
     xSemaphoreGive(g_xRmBufferMutexHandle);
 }
 
-/*============================== 电机数据解算函数 ==============================*/
-
-/// @brief RM电机通用解算（内部函数，优化版本：使用乘法代替除法）
-/// @param motor 电机结构体指针
-/// @param current_inv 电流系数的倒数（预计算，避免运行时除法）
+/// @brief 电机解算通用函数
+/// @param motor 电机对应结构体地址
+/// @param current_inv 电机对应的减速比
 static inline void RM_Motor_CalculateCommon(MotorTypeDef *motor, float current_inv)
 {
-    MotorSolvedData_t *pData = &motor->motor_data;
-    uint8_t *ReceiveData = motor->ReceiveMotorData;
+    MotorSolvedData_t *data = &motor->motor_data;
+    uint8_t *rx = motor->ReceiveMotorData;
 
-    // 1. 数据解析
-    int16_t ecd = (((uint16_t)ReceiveData[0]) << 8) | ReceiveData[1];
-    int16_t speed_rpm = (int16_t)((((uint16_t)ReceiveData[2]) << 8) | ReceiveData[3]);
-    int16_t current_raw = (int16_t)((((uint16_t)ReceiveData[4]) << 8) | ReceiveData[5]);
+    int16_t ecd = (int16_t)((((uint16_t)rx[0]) << 8) | rx[1]);
+    int16_t speed_rpm = (int16_t)((((uint16_t)rx[2]) << 8) | rx[3]);
+    int16_t current_raw = (int16_t)((((uint16_t)rx[4]) << 8) | rx[5]);
 
-    // 2. 首次初始化
-    if (pData->init_flag == 0)
+    if (data->init_flag == 0U)
     {
-        pData->last_ecd = ecd;
-        pData->offset_ecd = ecd;
-        pData->init_flag = 1;
-        pData->offset_ecd_angle = ecd * ECD_TO_DEGREE; // 乘法代替除法
+        data->last_ecd = ecd;
+        data->offset_ecd = ecd;
+        data->offset_ecd_angle = ecd * ECD_TO_DEGREE;
+        data->init_flag = 1U;
     }
 
-    // 3. 过零检测 & 多圈累计
-    int16_t err = ecd - pData->last_ecd;
-    pData->total_round += (err > 4096) ? -1 : (err < -4096) ? 1
-                                                            : 0;
-    pData->total_ecd += err + ((err > 4096) ? -8192 : (err < -4096) ? 8192
-                                                                    : 0);
-    pData->last_ecd = ecd;
-
-    // 4. 数据转换（优化：使用预计算常量和乘法）
-    // 单圈角度 (0~360°)
-    pData->solved_data[0] = ecd * ECD_TO_DEGREE;
-
-    // 速度 (rpm) - 低通滤波
-    if (!pData->filter_init)
+    int16_t err = (int16_t)(ecd - data->last_ecd);
+    if (err > 4096)
     {
-        pData->solved_data[1] = (float)speed_rpm;
-        pData->filter_init = 1;
+        data->total_round--;
+        err -= 8192;
+    }
+    else if (err < -4096)
+    {
+        data->total_round++;
+        err += 8192;
+    }
+
+    data->total_ecd += err;
+    data->last_ecd = ecd;
+    data->solved_data[0] = ecd * ECD_TO_DEGREE;
+
+    if (data->filter_init == 0U)
+    {
+        data->solved_data[1] = (float)speed_rpm;
+        data->filter_init = 1U;
     }
     else
     {
-        pData->solved_data[1] = (float)speed_rpm * 0.96f + 0.04f * pData->last_speed;
+        data->solved_data[1] = (float)speed_rpm * 0.96f + data->last_speed * 0.04f;
     }
 
-    // 电流 (A) - 乘法代替除法
-    pData->solved_data[2] = current_raw * current_inv;
+    data->solved_data[2] = current_raw * current_inv;
+    data->solved_data[3] = data->total_round * 360.0f + data->solved_data[0];
+    data->solved_data[4] = (float)speed_rpm * 0.10472f;
+    data->last_speed = data->solved_data[1];
 
-    // 累计角度 (°)
-    pData->solved_data[3] = (pData->total_round * 360.0f + pData->solved_data[0]);
-
-    // 速度 (rad/s)
-    pData->solved_data[4] = speed_rpm * 0.10472f; // 2*PI/60 ≈ 0.10472
-
-    pData->last_speed = pData->solved_data[1];
+    if (motor->MotorInf.model == RmM3508)
+    {
+        data->solved_data[5] = (float)rx[6];
+        data->solved_data[6] = (float)rx[7];
+    }
 }
 
 static void RM_M2006_CalculateInternal(MotorTypeDef *motor)
 {
-    if (motor == NULL)
-        return;
-    RM_Motor_CalculateCommon(motor, RM_M2006_CURRENT_INV); // 使用预计算倒数
+    if (motor != NULL)
+    {
+        RM_Motor_CalculateCommon(motor, RM_M2006_CURRENT_INV);
+    }
 }
 
 static void RM_M3508_CalculateInternal(MotorTypeDef *motor)
 {
-    if (motor == NULL)
-        return;
-    RM_Motor_CalculateCommon(motor, RM_M3508_CURRENT_INV); // 使用预计算倒数
+    if (motor != NULL)
+    {
+        RM_Motor_CalculateCommon(motor, RM_M3508_CURRENT_INV);
+    }
 }
 
 static void RM_GM6020_CalculateInternal(MotorTypeDef *motor)
 {
-    if (motor == NULL)
-        return;
-    RM_Motor_CalculateCommon(motor, RM_GM6020_CURRENT_INV); // 使用预计算倒数
+    if (motor != NULL)
+    {
+        RM_Motor_CalculateCommon(motor, RM_GM6020_CURRENT_INV);
+    }
 }
 
-/*============================== 兼容旧接口的解算函数 ==============================*/
-
-// void RM_M2006_Calculate(MotorTypeDef *motor)
-// {
-//     RM_M2006_CalculateInternal(motor);
-// }
-
-// void RM_M3508_Calculate(MotorTypeDef *motor)
-// {
-//     RM_M3508_CalculateInternal(motor);
-// }
-
-// void RM_GM6020_Calculate(MotorTypeDef *motor)
-// {
-//     RM_GM6020_CalculateInternal(motor);
-// }
-
-/// @brief 通用RM电机解算（根据型号自动选择）
 void RM_MOTOR_CALCU(MotorTypeDef *motor)
 {
-    if (motor == NULL)
-        return;
-
-    // 如果设置了虚函数，使用虚函数
-    if (motor->calculate != NULL)
+    if (motor != NULL && motor->calculate != NULL)
     {
         motor->calculate(motor);
-        return;
     }
-
-    // // 否则根据型号调用对应解算
-    // switch (motor->MotorInf.model)
-    // {
-    // case RmM2006:
-    //     RM_M2006_Calculate(motor);
-    //     break;
-    // case RmM3508:
-    //     RM_M3508_Calculate(motor);
-    //     break;
-    // case RmGM6020:
-    //     RM_GM6020_Calculate(motor);
-    //     break;
-    // default:
-    //     break;
-    // }
 }
-
-/*============================== 辅助函数 ==============================*/
 
 void RM_Motor_Reset_Zero(MotorTypeDef *motor)
 {
-    if (motor != NULL)
+    if (motor == NULL)
     {
-        motor->motor_data.total_round = 0;
-        motor->motor_data.total_ecd = 0;
-        motor->motor_data.offset_ecd = motor->motor_data.last_ecd;
-        motor->motor_data.target_angle = motor->motor_data.solved_data[3];
-        motor->motor_data.last_target = motor->motor_data.target_angle;
-        motor->motor_data.pre_last_target = motor->motor_data.target_angle;
-        motor->motor_data.target_init_flag = 0;
+        return;
     }
+
+    motor->motor_data.total_round = 0;
+    motor->motor_data.total_ecd = 0;
+    motor->motor_data.offset_ecd = motor->motor_data.last_ecd;
+    motor->motor_data.target_angle = motor->motor_data.solved_data[3];
+    motor->motor_data.last_target = motor->motor_data.target_angle;
+    motor->motor_data.pre_last_target = motor->motor_data.target_angle;
+    motor->motor_data.target_init_flag = 0U;
 }
 
 void RM_Motor_Reset_All(void)
 {
-    for (uint8_t i = 0; i < RM_MOTOR_MAX_NUM; i++)
+    for (uint8_t i = 0; i < g_RM_MOTOR_NUM; i++)
     {
-        MotorTypeDef *motor = &MotorManager.MotorList[i];
-        memset(&motor->motor_data, 0, sizeof(MotorSolvedData_t));
+        memset(&MotorManager.MotorList[i].motor_data, 0, sizeof(MotorSolvedData_t));
     }
 }
 
-/*============================== 暴露接口 ==============================*/
-
-void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent, CAN_TxRetryMode retry_mode)
+/// @brief RM电机发送API
+/// @param motor_cfg 电机别名
+/// @param TargetCurrent 电机目标电流值
+void RmMotorSendCfg(can_motor_cfg motor_cfg, int16_t TargetCurrent)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
+    {
         return;
-
-    // 考虑反向
-    if (motor->config.reverse)
-    {
-        TargetCurrent = -TargetCurrent;
     }
 
-    if (TargetCurrent < 0)
+    if (motor->config.reverse != 0U)
     {
-        TargetCurrent = (uint16_t)(~(-TargetCurrent));
+        TargetCurrent = (int16_t)(-TargetCurrent);
     }
-    uint8_t data[8] = {0x00};
-    data[0] = (uint8_t)(TargetCurrent >> 8);
+
+    uint8_t data[8] = {0};
+    data[0] = (uint8_t)((uint16_t)TargetCurrent >> 8);
     data[1] = (uint8_t)TargetCurrent;
-    RM_MotorSetTxData(motor_cfg, data, retry_mode);
+    RM_MotorSetTxData(motor_cfg, data);
 }
 
-float RmMotorRemoveBias(can_motor_cfg motor_cfg, float Target, bool ChangeVel)
+/// @brief 这是一个虚假的限幅函数(目前作用只是四舍五入最后的发送数据)
+/// @param motor_cfg 电机别名
+/// @param motor 电机对应结构体地址
+/// @param pid_output 电机PID输出
+/// @return 四舍五入之后的数值
+static inline int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output)
 {
-    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    bool should_block = false;
+    int16_t final_output = (int16_t)pid_output;
+    float output_for_limit = pid_output;
 
-    if (motor->MotorInf.band != RM_MOTOR_BAND)
+    if (motor == NULL)
     {
-        return Target;
+        return final_output;
     }
 
-    MotorSolvedData_t *pData = &motor->motor_data;
-
-    while (!pData->filter_init)
-        ;
-
-    // 使用配置中的位置容限
-    float tolerance = motor->config.position_tolerance;
-    if (tolerance <= 0.0f)
-        tolerance = 50.0f; // 默认值
-
-    if (pData->target_init_flag == 0)
+    if (motor->config.reverse != 0U)
     {
-        float new_target = pData->solved_data[3] + Target;
-        pData->target_angle = new_target;
-        pData->last_target = new_target;
-        pData->pre_last_target = new_target;
-        pData->target_init_flag = 1;
-        return new_target;
+        output_for_limit = -output_for_limit;
     }
 
-    float current_angle = pData->solved_data[3];
-    float last_target_angle = pData->target_angle;
-
-    if ((current_angle >= last_target_angle - tolerance) &&
-        (current_angle <= last_target_angle + tolerance) && ChangeVel)
+    if (motor_cfg == RM_3508_STORE_LEFT)
     {
-        float new_target = pData->solved_data[3] + Target;
+        float current_pos_deg = motor->motor_data.solved_data[3];
+        should_block = ((current_pos_deg >= STORE3508_LEFT_POS_MAX_DEG) && (output_for_limit > 0.0f)) ||
+                       ((current_pos_deg <= STORE3508_LEFT_POS_MIN_DEG) && (output_for_limit < 0.0f));
+    }
+    else if (motor_cfg == RM_3508_STORE_RIGHT)
+    {
+        float current_pos_deg = motor->motor_data.solved_data[3];
+        should_block = ((current_pos_deg >= STORE3508_RIGHT_POS_MAX_DEG) && (output_for_limit > 0.0f)) ||
+                       ((current_pos_deg <= STORE3508_RIGHT_POS_MIN_DEG) && (output_for_limit < 0.0f));
+    }
+    else if (motor_cfg == RM_3508_GRIPPER)
+    {
+        // GRIPPER 过流/堵转保护的持久状态。当前 RmMotorPID_Calc 只在单一控制任务中周期触发，
+        // static 即可；若将来要在 ISR 或多任务里并发调用，需改为结构体 + 互斥量/原子访问。
+        static uint32_t s_last_tick = 0U;
+        static uint8_t s_tick_init = 0U;
+        static uint8_t s_tripped = 0U;
+        static float s_current_filt = 0.0f;
+        static uint32_t s_over_cur_ms = 0U;
+        static uint32_t s_clear_ms = 0U;
 
-        // 使用配置中的换向补偿
-        float bias = motor->config.direction_bias;
-        if (bias != 0.0f && motor->cascade_pid.inner.calc_count)
+        uint32_t now = HAL_GetTick();
+        float current_abs = fabsf(motor->motor_data.solved_data[2]);
+
+        taskENTER_CRITICAL();
+        uint32_t dt_ms = 0U;
+        if (s_tick_init == 0U)
         {
-            if ((pData->last_target > new_target) && (pData->pre_last_target < pData->last_target))
+            s_tick_init = 1U;
+        }
+        else
+        {
+            dt_ms = now - s_last_tick;
+        }
+        s_last_tick = now;
+
+        s_current_filt += LOAD3508_OVERCURRENT_FILTER_ALPHA * (current_abs - s_current_filt);
+
+        if (s_tripped == 0U)
+        {
+            if (s_current_filt >= LOAD3508_STALL_OVERCURRENT_LIMIT_A)
             {
-                new_target -= bias;
+                s_over_cur_ms += dt_ms;
+                if (s_over_cur_ms >= LOAD3508_STALL_OVERCURRENT_RETURN_MS)
+                {
+                    s_tripped = 1U;
+                    s_clear_ms = 0U;
+                }
             }
-            else if ((pData->last_target < new_target) && (pData->pre_last_target > pData->last_target))
+            else
             {
-                new_target += bias;
+                s_over_cur_ms = 0U;
+            }
+        }
+        else
+        {
+            if (s_current_filt <= LOAD3508_STALL_OVERCURRENT_CLEAR_A)
+            {
+                s_clear_ms += dt_ms;
+                if (s_clear_ms >= LOAD3508_STALL_OVERCURRENT_RETURN_MS)
+                {
+                    s_tripped = 0U;
+                    s_over_cur_ms = 0U;
+                }
+            }
+            else
+            {
+                s_clear_ms = 0U;
             }
         }
 
-        pData->pre_last_target = pData->last_target;
-        pData->last_target = new_target;
-        pData->target_angle = new_target;
+        uint8_t tripped_snapshot = s_tripped;
+        taskEXIT_CRITICAL();
 
-        return new_target;
+        if (tripped_snapshot != 0U)
+        {
+            should_block = true;
+        }
     }
 
-    else
+    if (should_block)
     {
-        return pData->target_angle;
+        if (motor->use_cascade != 0U)
+        {
+            PID_Clear_Integral(&motor->cascade_pid.outer);
+            PID_Clear_Integral(&motor->cascade_pid.inner);
+        }
+        else
+        {
+            PID_Clear_Integral(&motor->inner_pid);
+        }
+        final_output = 0;
     }
+
+    return final_output;
 }
 
-static int16_t RM_Motor_ApplyOutputLimit(can_motor_cfg motor_cfg, MotorTypeDef *motor, float pid_output)
-{
-    (void)motor_cfg;
-    (void)motor;
-
-    return (int16_t)pid_output;
-}
-
+/// @brief 处理角度环方向问题
+/// @param motor 电机对应结构体
+/// @param target_angle 电机目标角度
+/// @param current_angle 电机当前角度
+/// @note  主要用于处理换向时候的积分问题
 static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, float target_angle, float current_angle)
 {
 #if RM_3508_CLEAR_ANGLE_I_ON_DIR_CHANGE
@@ -651,12 +627,10 @@ static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, 
         return;
     }
 
-    const float angle_error = target_angle - current_angle;
-    const float current_target_delta = target_angle - outer_pid->target;
-
-    const bool target_direction_reversed = (current_target_delta * outer_pid->feedforward) < 0.0f;
-    const bool error_direction_reversed = (angle_error * outer_pid->last_error) < 0.0f;
-
+    float angle_error = target_angle - current_angle;
+    float current_target_delta = target_angle - outer_pid->target;
+    bool target_direction_reversed = (current_target_delta * outer_pid->feedforward) < 0.0f;
+    bool error_direction_reversed = (angle_error * outer_pid->last_error) < 0.0f;
     if (target_direction_reversed || error_direction_reversed)
     {
         PID_Clear_Integral(outer_pid);
@@ -668,21 +642,106 @@ static inline void RM_Motor_HandleAngleLoopDirectionChange(MotorTypeDef *motor, 
 #endif
 }
 
-void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target, CAN_TxRetryMode retry_mode)
+/// @brief 上下限限幅
+/// @param value 当前需要限幅的数值
+/// @param min 下限
+/// @param max 上限
+/// @return 限幅后的数值
+static inline float RM_Motor_ClampFloat(float value, float min, float max)
 {
-    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
-    if (motor == NULL)
-        return;
-
-    MotorSolvedData_t *pData = &motor->motor_data;
-    RM_Motor_HandleAngleLoopDirectionChange(motor, target, pData->solved_data[3]);
-
-    output = CASCADE_PID_Calculate(&motor->cascade_pid, target, pData->solved_data[3], pData->solved_data[4]);
-    // output = PID_Calculate(&motor->inner_pid, target, pData->solved_data[4]); // 这个用来测试单环时候调整的
-    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, output), retry_mode);
+    if (value < min)
+    {
+        return min;
+    }
+    if (value > max)
+    {
+        return max;
+    }
+    return value;
 }
 
-void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm, CAN_TxRetryMode retry_mode)
+void RmMotorPID_Calc(can_motor_cfg motor_cfg, float target)
+{
+    MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
+    float current_pos_deg;
+    if (motor == NULL)
+    {
+        return;
+    }
+
+    // 统一使用“相对零点角度”做位置环计算，
+    // 这样目标值、限位、死区都在同一套坐标系下。
+    // 储能 3508 的业务侧目标与 Motor_GetTotalAngle 读数都使用原始坐标，这里保持一致。
+    if ((motor_cfg == RM_3508_STORE_LEFT) || (motor_cfg == RM_3508_STORE_RIGHT))
+    {
+        current_pos_deg = motor->motor_data.solved_data[3];
+    }
+    else
+    {
+        current_pos_deg = motor->motor_data.solved_data[3] - motor->motor_data.offset_ecd_angle;
+    }
+
+    if (motor->MotorInf.model == RmM3508)
+    {
+        // 先按注册的上下限约束目标位置，避免继续往机械极限方向推。
+        float min_limit = motor->config.position_min;
+        float max_limit = motor->config.position_max;
+        if (min_limit > max_limit)
+        {
+            float tmp = min_limit;
+            min_limit = max_limit;
+            max_limit = tmp;
+        }
+
+        target = RM_Motor_ClampFloat(target, min_limit, max_limit);
+
+        // position_tolerance 作为位置环到位死区：
+        // 误差足够小时直接清积分并停输出，避免在小角度附近反复抖动。
+        float tolerance = motor->config.position_tolerance;
+        if (tolerance <= 0.0f)
+        {
+            tolerance = RM_DEFAULT_POS_TOLERANCE;
+        }
+
+        if (fabsf(target - current_pos_deg) <= tolerance)
+        {
+            if (motor->use_cascade != 0U)
+            {
+                PID_Clear_Integral(&motor->cascade_pid.outer);
+                PID_Clear_Integral(&motor->cascade_pid.inner);
+            }
+            else
+            {
+                PID_Clear_Integral(&motor->inner_pid);
+            }
+            RmMotorSendCfg(motor_cfg, 0);
+            return;
+        }
+    }
+
+    RM_Motor_HandleAngleLoopDirectionChange(motor, target, current_pos_deg);
+    MotorSolvedData_t *data = &motor->motor_data;
+    if ((motor_cfg == RM_3508_STORE_LEFT) || (motor_cfg == RM_3508_STORE_RIGHT))
+    {
+        current_pos_deg = data->solved_data[3];
+    }
+    else
+    {
+        current_pos_deg = data->solved_data[3] - data->offset_ecd_angle; // 更新一下
+    }
+    if (motor->use_cascade != 0U)
+    {
+        s_rm_motor_pid_output = CASCADE_PID_Calculate(&motor->cascade_pid, target, current_pos_deg, data->solved_data[4]);
+    }
+    else
+    {
+        s_rm_motor_pid_output = PID_Calculate(&motor->inner_pid, target, data->solved_data[4]);
+    }
+
+    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, s_rm_motor_pid_output));
+}
+
+void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm)
 {
     MotorTypeDef *motor = &MotorManager.MotorList[motor_cfg - 1];
     if (motor == NULL)
@@ -690,9 +749,49 @@ void RmMotorSpeedPID_Calc(can_motor_cfg motor_cfg, float target_speed_rpm, CAN_T
         return;
     }
 
-    MotorSolvedData_t *pData = &motor->motor_data;
+    s_rm_motor_pid_output = PID_Calculate(&motor->inner_pid, target_speed_rpm, motor->motor_data.solved_data[1]);
+    RmMotorSendCfg(motor_cfg, RM_Motor_ApplyOutputLimit(motor_cfg, motor, s_rm_motor_pid_output));
+}
 
-    output = PID_Calculate(&motor->inner_pid, target_speed_rpm, pData->solved_data[1]);
-    output = RM_Motor_ApplyOutputLimit(motor_cfg, motor, output);
-    RmMotorSendCfg(motor_cfg, output, retry_mode);
+/*============================== 双侧蓄力 3508 位置同步 PID ==============================*/
+
+void RM_Motor_InitStoreSyncPid(float kp, float ki, float kd, float kf,
+                               float max_out, float min_out, float max_iout)
+{
+    PID_Init(&s_rm_store_sync_pid, PID_POSITION, kp, ki, kd, kf, max_out, min_out, max_iout);
+    PID_Clear(&s_rm_store_sync_pid);
+    g_RmStoreSyncErrorDeg = 0.0f;
+    g_RmStoreSyncPidOutputDeg = 0.0f;
+    s_rm_store_sync_pid_inited = 1U;
+}
+
+float RM_Motor_UpdateStoreSync(float left_pos_deg, float right_pos_deg)
+{
+    if (s_rm_store_sync_pid_inited == 0U)
+    {
+        g_RmStoreSyncErrorDeg = 0.0f;
+        g_RmStoreSyncPidOutputDeg = 0.0f;
+        return 0.0f;
+    }
+
+    g_RmStoreSyncErrorDeg = left_pos_deg - right_pos_deg;
+    g_RmStoreSyncPidOutputDeg = PID_Calculate(&s_rm_store_sync_pid, 0.0f, g_RmStoreSyncErrorDeg);
+    return g_RmStoreSyncPidOutputDeg;
+}
+
+/// @brief 检查打包帧
+/// @param lhs
+/// @param rhs
+/// @return
+static inline bool RM_Motor_IsSameTxGroup(const MotorTypeDef *lhs, const MotorTypeDef *rhs)
+{
+    if (lhs == NULL || rhs == NULL)
+    {
+        return false;
+    }
+
+    return lhs->MotorInf.band == RM_MOTOR_BAND &&
+           rhs->MotorInf.band == RM_MOTOR_BAND &&
+           lhs->model == rhs->model &&
+           lhs->g_TxHeader.StdId == rhs->g_TxHeader.StdId;
 }

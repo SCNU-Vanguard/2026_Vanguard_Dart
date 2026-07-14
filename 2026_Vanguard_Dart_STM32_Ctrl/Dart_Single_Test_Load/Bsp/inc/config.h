@@ -95,62 +95,10 @@
 #define LOAD3508_STALL_POS_SAMPLE_MS 100U
 #define LOAD3508_OVERCURRENT_TARGET_BLANK_MS 800U
 #define LOAD3508_OVERCURRENT_FILTER_ALPHA (0.08f)
-#if 0
+// TODO: LOAD3508_OVERCURRENT_TARGET_BLANK_MS 当前未被 RM_Motor_ApplyOutputLimit 使用，
+//       GRIPPER 过流保护走的是简化版（持续过流→计时→trip）。若需要“目标刚切换时给空白时间”，
+//       需在 RM_Motor_ApplyOutputLimit 里补相应逻辑并读取本宏。
 
-// 换弹 M3508 的相对零点位置限位，底层电机注册直接使用这组宏。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
-#define LOAD3508_MAX (0.0f)      // 换弹 M3508 相对零点的最大允许位置
-#define LOAD3508_MIN (-10000.0f) // 换弹 M3508 相对零点的最小允许位置
-#define LOAD3508_MAX (0.0f)      // 换弹 M3508 相对零点的最大允许位置
-
-// 两个储能 M3508 各自独立保护/S 型规划参数
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-// 两个储能 M3508 各自独立保护/S 型规划参数
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-#endif
-
-#if 0
-
-// 换弹 M3508 的相对零点位置限位，电机注册时直接使用这组范围。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
-
-// 两个储能 M3508 各自独立使用的异常电流参数。
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-
-// 换弹 M3508 的相对零点位置限位，电机注册时直接使用这组范围。
-#define LOAD3508_MIN (-10000.0f)
-#define LOAD3508_MAX (0.0f)
-
-// 两个储能 M3508 各自独立使用的异常电流参数。
-#define STORE3508_STILL_OVERCURRENT_LIMIT_A (2.5f)
-#define STORE3508_STILL_OVERCURRENT_CLEAR_A (1.2f)
-#define STORE3508_STILL_OVERCURRENT_CONFIRM_MS 1500U
-#define STORE3508_STALL_OVERCURRENT_LIMIT_A (3.0f)
-#define STORE3508_STALL_OVERCURRENT_CLEAR_A (1.5f)
-#define STORE3508_STALL_CONFIRM_MS 1500U
-#endif
-
-#undef LOAD3508_MIN
-#undef LOAD3508_MAX
-#undef STORE3508_STILL_OVERCURRENT_LIMIT_A
-#undef STORE3508_STILL_OVERCURRENT_CLEAR_A
-#undef STORE3508_STILL_OVERCURRENT_CONFIRM_MS
-#undef STORE3508_STALL_OVERCURRENT_LIMIT_A
-#undef STORE3508_STALL_OVERCURRENT_CLEAR_A
-#undef STORE3508_STALL_CONFIRM_MS
 // 换弹夹爪 M3508 的相对零点位置限位。
 #define LOAD3508_MIN (-10000.0f)
 #define LOAD3508_MAX (0.0f)
@@ -178,25 +126,35 @@
 #define STORE3508_TRAP_ARRIVE_ZONE (1.0f)
 #define STORE3508_TRAP_DECEL_ZONE (30.0f)
 
+/* 双侧蓄力 3508 位置同步 PID 参数：ia6b_task 生成 base 目标后，
+ * 由 RM_Motor_UpdateStoreSync 把 (left_pos - right_pos) 推向 0。*/
+#define STORE3508_SYNC_PID_KP (2.0f)
+#define STORE3508_SYNC_PID_KI (0.0f)
+#define STORE3508_SYNC_PID_KD (0.10f)
+#define STORE3508_SYNC_PID_KF (0.00f)
+#define STORE3508_SYNC_PID_MAX_OUT (200.0f)
+#define STORE3508_SYNC_PID_MIN_OUT (0.0f)
+#define STORE3508_SYNC_PID_MAX_IOUT (20.0f)
+
 // 储能电机相关
-#define LeftStoreLoad (-540.0f)   // 换弹位置
-#define RightStoreLoad (540.0f)   // 换弹位置
-#define LeftStoreBottom (-100.0f) // 左侧滑台底部
-#define RightStoreBottom (100.0f) // 右侧滑台底部
-#define LeftStoreTop (0.0f)       // 左侧滑台叉上滑顶部
-#define RightStoreTop (0.0f)      // 右侧滑台叉上滑顶部
-#define LeftSafe (-100.0f)        // 左侧滑台叉上滑顶部
-#define RightSafe (1000.0f)       // 右侧滑台叉上滑顶部
-#define LimitStore 930.0f         // 电机的位置限制
-#define StoreSpeed (6.0f)         // 储能电机移动速度
+#define LeftStoreLoad (30245.0f)    // 换弹位置
+#define RightStoreLoad (30245.0f)   // 换弹位置
+#define LeftStoreBottom (48500.0f)  // 左侧滑台底部
+#define RightStoreBottom (48500.0f) // 右侧滑台底部
+#define LeftStoreTop (0.0f)         // 左侧滑台叉上滑顶部
+#define RightStoreTop (0.0f)        // 右侧滑台叉上滑顶部
+#define LeftSafe (1500.0f)          // 左侧滑台叉上滑顶部
+#define RightSafe (1500.0f)         // 右侧滑台叉上滑顶部
+#define LimitStore 49000.0f         // 电机的位置限制
+#define StoreSpeed (6.0f)           // 储能电机移动速度
 
 // 扳机射程相关
 #define MG996R_store 2500 // 发射扳机待机状态
 #define MG996R_shoot 1200 // 发射扳机发射状态
 
 // 换弹电机斜坡
-#define LOAD_TASK_TRAP_VMAX_DEG_S (3500.0f)
-#define LOAD_TASK_TRAP_AMAX_DEG_S2 (24000.0f)
+#define LOAD_TASK_TRAP_VMAX_DEG_S 10.0f  // (3500.0f)
+#define LOAD_TASK_TRAP_AMAX_DEG_S2 50.0f // (24000.0f)
 #define LOAD_TASK_TRAP_JERK_FACTOR (1.2f)
 #define LOAD_TASK_TRAP_DISABLE_JERK 0
 #define LOAD_TASK_TRAP_RESET_ON_TARGET_CHANGE 1
@@ -242,5 +200,12 @@ static const float g_SetupYaw[4] = {
     SETUP_YAW_DART4, SETUP_YAW_DART3, SETUP_YAW_DART2, SETUP_YAW_DART1};
 static const float g_SetupTrigger[4] = {
     SETUP_TRIGGER_DART4, SETUP_TRIGGER_DART3, SETUP_TRIGGER_DART2, SETUP_TRIGGER_DART1};
+
+#define STORE3508_LEFT_POS_MIN_DEG (0.0f)
+// #define STORE3508_LEFT_POS_MAX_DEG (10000.0f)
+// #define STORE3508_RIGHT_POS_MAX_DEG (10000.0f)
+#define STORE3508_RIGHT_POS_MIN_DEG (0.0f)
+#define STORE3508_LEFT_POS_MAX_DEG (LimitStore)
+#define STORE3508_RIGHT_POS_MAX_DEG (LimitStore)
 
 #endif

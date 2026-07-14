@@ -51,8 +51,11 @@
 /* USER CODE BEGIN Variables */
 static StaticSemaphore_t g_xRmBufferMutexBuffer;
 SemaphoreHandle_t g_xRmBufferMutexHandle;
+float g_testStoreL = 0.0f;
+float g_testStoreR = 0.0f;
 // extern float sine_output;
 // extern float trap_output;
+extern MotorManager_t MotorManager;
 extern float RmMotorAngleData;
 extern float RmMotorSpeedData;
 
@@ -108,6 +111,7 @@ void MX_FREERTOS_Init(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
 
@@ -152,10 +156,11 @@ void StartDefaultTask(void *argument)
     DefaultTask_Control3508();
     DefaultTask_Control2006();
     DefaultTask_Control6020();
-#endif
-    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin);
+    vTaskDelay(2);
+#else
+    HAL_GPIO_TogglePin(Green_GPIO_Port, Green_Pin); // 1500
     vTaskDelay(250);
-    // vTaskDelay(1);
+#endif
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -166,20 +171,44 @@ static void DefaultTask_Control3508(void)
 {
 #if ENABLE_RC_DEBUG_3508
 #if ENABLE_RC_DEBUG_3508_STORE_LEFT
+  g_testStoreL = MotorManager.MotorList[3].motor_data.solved_data[3];
+  g_testStoreR = MotorManager.MotorList[2].motor_data.solved_data[3];
   RmMotorAngleData = g_RcDebug3508LeftPosDeg;
   RmMotorSpeedData = g_RcDebug3508LeftSpeedRpm;
 
 #if LOAD3508_OUTPUT_MODE == LOAD3508_OUTPUT_CASCADE_POS
   if (g_RcDebug3508PosTargetInitialized)
   {
-    RmMotorPID_Calc(RM_3508_STORE_LEFT, g_RcDebug3508LeftTargetPosDeg);
+    /* 同步 PID：以两侧真实位置为输入，输出一个 correction。
+     * 左 = base + correction，右 = base - correction；
+     * 按 PID 惯例 error = 0 - (L - R)，L 超前时 correction 为负，
+     * Left 新目标自动减小、Right 新目标自动增大，拉回同步。
+     * 修正后再送给串级 PID 进行真实跟随。 */
+    float sync_correction = RM_Motor_UpdateStoreSync(g_RcDebug3508LeftPosDeg,
+                                                     g_RcDebug3508RightPosDeg);
+    g_RcDebug3508SyncErrorDeg = g_RmStoreSyncErrorDeg;
+    g_RcDebug3508SyncPidOutputDeg = g_RmStoreSyncPidOutputDeg;
+
+    float left_target_synced = g_RcDebug3508LeftTargetPosDeg + sync_correction;
+    float right_target_synced = g_RcDebug3508RightTargetPosDeg - sync_correction;
+
+    // reverse=1 的那一侧输出电流在 RmMotorSendCfg 里自动翻向。
+    RmMotorPID_Calc(RM_3508_STORE_LEFT, left_target_synced);
+    RmMotorPID_Calc(RM_3508_STORE_RIGHT, right_target_synced);
   }
   else
   {
     RmMotorSendCfg(RM_3508_STORE_LEFT, 0);
+    RmMotorSendCfg(RM_3508_STORE_RIGHT, 0);
   }
 #else
+  // 速度环联调：两侧同时收到相同的逻辑目标转速。
+  // reverse=1 的那一侧会在 RmMotorSendCfg 里自动翻向，
+  // 所以两台电机物理旋向互为镜像，适合传送带式并联调参。
+  g_testStoreL = MotorManager.MotorList[3].motor_data.solved_data[4];
+  g_testStoreR = MotorManager.MotorList[2].motor_data.solved_data[4];
   RmMotorSpeedPID_Calc(RM_3508_STORE_LEFT, g_RcDebug3508TargetSpeedRpm);
+  RmMotorSpeedPID_Calc(RM_3508_STORE_RIGHT, g_RcDebug3508TargetSpeedRpm);
 #endif
 #elif ENABLE_RC_DEBUG_3508_STORE_RIGHT
   RmMotorAngleData = g_RcDebug3508RightPosDeg;

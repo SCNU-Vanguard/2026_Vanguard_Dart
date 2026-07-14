@@ -511,7 +511,7 @@ int fputc(int ch, FILE *f)
   // 使用轮询方式发送单个字符（适用于低频调试）
   // 避免占用USART6（该口用于IBUS遥控接收）
   HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 1); // 短超时避免死锁
-  return ch;
+  return ch; /* 返回当前计算结果。 */
 }
 /* USER CODE END 1 */
 
